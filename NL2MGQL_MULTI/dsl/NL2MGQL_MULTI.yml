@@ -1863,3 +1863,13 @@ workflow:
           \        if not schema or not isinstance(schema, dict):\n            raise\
           \ ValueError('semantic_plan_json_schema 不是合法JSON对象')\n        sanitized_schema\
           \ = _sanitize_json_schema(schema)\n        if not sanitized_schema or not\
+          \ isinstance(sanitized_schema, dict):\n            raise ValueError('清洗后的\
+          \ semantic_plan_json_schema 不是合法JSON对象')\n        authorization_prefix =\
+          \ str(llm_config.get('authorization-prefix') or '')\n        authorization_value\
+          \ = f\"{authorization_prefix}{token}\"\n        request_body = {\n     \
+          \       'model': llm_config.get('model'),\n            'messages': [\n \
+          \               {'role': 'system', 'content': semantic_plan_system_prompt},\n\
+          \                {'role': 'user', 'content': semantic_plan_user_prompt},\n\
+          \            ],\n            'stream': bool(llm_config.get('stream', False)),\n\
+          \            'temperature': llm_config.get('temperature', 0),\n        \
+          \    'top_p': llm_config.get('top_p', 1),\n            'max_completion_tokens':\
