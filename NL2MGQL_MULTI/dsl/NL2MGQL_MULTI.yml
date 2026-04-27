@@ -1787,3 +1787,45 @@ workflow:
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: token-body-1
+            key: ''
+            type: text
+            value: '{{#1775000000005.token_request_body_json#}}'
+          type: json
+        desc: 使用静态token换取动态token
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_获取动态Token
+        type: http-request
+        url: '{{#1775000000005.token_url#}}'
+        variables: []
+      height: 123
+      id: '1775000000010'
+      position:
+        x: 2210
+        y: 120
+      positionAbsolute:
+        x: 2210
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
