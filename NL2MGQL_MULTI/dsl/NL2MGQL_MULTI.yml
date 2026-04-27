@@ -1847,3 +1847,19 @@ workflow:
           def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt:\
           \ str, semantic_plan_json_schema: str,\n         chat_url: str, llm_config_json:\
           \ str, request_id: str):\n    try:\n        code = int(status_code or 0)\n\
+          \        if code < 200 or code >= 300:\n            raise ValueError(f\"\
+          动态token获取失败, status={code}, body={_truncate_text(body, 2000)}\")\n     \
+          \   resp_json = _read_json_text(body)\n        if not resp_json or not isinstance(resp_json,\
+          \ dict):\n            raise ValueError(f\"动态token响应不是合法JSON: {_truncate_text(body,\
+          \ 1200)}\")\n        token = _first_non_empty_string(\n            resp_json.get('result'),\n\
+          \            resp_json.get('token'),\n            resp_json.get('dynamicToken'),\n\
+          \            (resp_json.get('data') or {}).get('result') if isinstance(resp_json.get('data'),\
+          \ dict) else '',\n            (resp_json.get('data') or {}).get('token')\
+          \ if isinstance(resp_json.get('data'), dict) else ''\n        )\n      \
+          \  if not token:\n            raise ValueError(f\"动态token为空, body={_truncate_text(body,\
+          \ 2000)}\")\n        llm_config = _read_json_text(llm_config_json)\n   \
+          \     if not llm_config or not isinstance(llm_config, dict):\n         \
+          \   raise ValueError('llm_config_json 不是合法JSON对象')\n        schema = _read_json_text(semantic_plan_json_schema)\n\
+          \        if not schema or not isinstance(schema, dict):\n            raise\
+          \ ValueError('semantic_plan_json_schema 不是合法JSON对象')\n        sanitized_schema\
+          \ = _sanitize_json_schema(schema)\n        if not sanitized_schema or not\
