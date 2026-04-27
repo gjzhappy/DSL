@@ -1731,3 +1731,59 @@ workflow:
           \ json.dumps(final_payload, ensure_ascii=False),\n        'final_response_summary':\
           \ final_response_summary,\n    }\n"
         code_language: python3
+        desc: 校验语义计划并编译第一阶段 Pipeline
+        outputs:
+          final_response_body:
+            children: null
+            type: string
+          final_response_summary:
+            children: null
+            type: object
+          normalized_execution_plan_json:
+            children: null
+            type: string
+          stage_execution_trace_json:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_遍历语义计划并统一编译执行
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan
+          value_type: object
+          variable: semantic_plan
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+        - value_selector:
+          - '1773909192919'
+          - question
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - env
+          - SN_MONGODB_QUERY_URLS
+          value_type: string
+          variable: query_urls
+      height: 80
+      id: '1775000000007'
+      position:
+        x: 4090
+        y: 280
+      positionAbsolute:
+        x: 4090
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
