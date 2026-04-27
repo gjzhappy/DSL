@@ -1876,3 +1876,768 @@ workflow:
           \ llm_config.get('max_completion_tokens', 12288),\n            'user': llm_config.get('user',\
           \ ''),\n            'response_format': {\n                'type': 'json_schema',\n\
           \                'json_schema': {\n                    'name': 'semantic_execution_plan',\n\
+          \                    'strict': True,\n                    'schema': sanitized_schema,\n\
+          \                }\n            }\n        }\n        return {\n       \
+          \     'request_enabled': 'true',\n            'full_request_error': '',\n\
+          \            'chat_url': chat_url,\n            'authorization_value': authorization_value,\n\
+          \            'llm_request_body_json': json.dumps(request_body, ensure_ascii=False),\n\
+          \            'request_id': request_id,\n        }\n    except Exception\
+          \ as e:\n        return {\n            'request_enabled': 'false',\n   \
+          \         'full_request_error': _truncate_text(str(e), 2000),\n        \
+          \    'chat_url': str(chat_url or '').strip(),\n            'authorization_value':\
+          \ '',\n            'llm_request_body_json': '',\n            'request_id':\
+          \ str(request_id or '').strip(),\n        }\n"
+        code_language: python3
+        desc: 解析动态token并构造满血版LLM请求体；失败时转本地LLM
+        outputs:
+          authorization_value:
+            children: null
+            type: string
+          chat_url:
+            children: null
+            type: string
+          full_request_error:
+            children: null
+            type: string
+          llm_request_body_json:
+            children: null
+            type: string
+          request_enabled:
+            children: null
+            type: string
+          request_id:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_构造满血LLM语义计划请求
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000010'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000010'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_system_prompt
+          value_type: string
+          variable: semantic_plan_system_prompt
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_user_prompt
+          value_type: string
+          variable: semantic_plan_user_prompt
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_json_schema
+          value_type: string
+          variable: semantic_plan_json_schema
+        - value_selector:
+          - '1775000000005'
+          - chat_url
+          value_type: string
+          variable: chat_url
+        - value_selector:
+          - '1775000000005'
+          - llm_config_json
+          value_type: string
+          variable: llm_config_json
+        - value_selector:
+          - '1775000000005'
+          - request_id
+          value_type: string
+          variable: request_id
+      height: 96
+      id: '1775000000011'
+      position:
+        x: 2524
+        y: 120
+      positionAbsolute:
+        x: 2524
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: llm-body-1
+            key: ''
+            type: text
+            value: '{{#1775000000011.llm_request_body_json#}}'
+          type: json
+        desc: 调用内部满血版LLM生成跨Collection AST
+        headers: 'Content-Type:application/json
+
+          Authorization:{{#1775000000011.authorization_value#}}'
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 1
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          connect: 6000
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+          read: 6000
+          write: 5998
+        title: HTTP请求_调用满血LLM
+        type: http-request
+        url: '{{#1775000000011.chat_url#}}'
+        variables: []
+      height: 139
+      id: '1775000000012'
+      position:
+        x: 2838
+        y: 120
+      positionAbsolute:
+        x: 2838
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nimport re\n\n\ndef _truncate_text(text, limit=2000):\n\
+          \    text = '' if text is None else str(text)\n    return text if len(text)\
+          \ <= limit else text[:limit] + '...'\n\n\ndef _read_json_text(text):\n \
+          \   if text is None:\n        return None\n    if isinstance(text, (dict,\
+          \ list)):\n        return text\n    raw = str(text).strip()\n    if not\
+          \ raw:\n        return None\n    return json.loads(raw)\n\n\ndef _content_to_text(content):\n\
+          \    if isinstance(content, str):\n        return content.strip()\n    if\
+          \ isinstance(content, list):\n        parts = []\n        for item in content:\n\
+          \            if isinstance(item, str) and item.strip():\n              \
+          \  parts.append(item.strip())\n            elif isinstance(item, dict):\n\
+          \                text = str(item.get('text') or item.get('content') or '').strip()\n\
+          \                if text:\n                    parts.append(text)\n    \
+          \    return '\\n'.join(parts).strip()\n    return ''\n\n\ndef _extract_chat_text(resp_json):\n\
+          \    if not isinstance(resp_json, dict):\n        return ''\n    choices\
+          \ = resp_json.get('choices')\n    if isinstance(choices, list) and choices:\n\
+          \        first = choices[0] or {}\n        if isinstance(first, dict):\n\
+          \            msg = first.get('message') or {}\n            if isinstance(msg,\
+          \ dict):\n                text = _content_to_text(msg.get('content'))\n\
+          \                if text:\n                    return text\n           \
+          \ text = _content_to_text(first.get('text'))\n            if text:\n   \
+          \             return text\n    output = resp_json.get('output')\n    text\
+          \ = _content_to_text(output)\n    if text:\n        return text\n    if\
+          \ isinstance(output, list):\n        for item in output:\n            if\
+          \ isinstance(item, dict):\n                text = _content_to_text(item.get('content'))\n\
+          \                if text:\n                    return text\n    for key\
+          \ in ('result', 'text', 'content', 'answer'):\n        text = _content_to_text(resp_json.get(key))\n\
+          \        if text:\n            return text\n    data = resp_json.get('data')\n\
+          \    if isinstance(data, dict):\n        for key in ('result', 'text', 'content',\
+          \ 'answer'):\n            text = _content_to_text(data.get(key))\n     \
+          \       if text:\n                return text\n    return ''\n\n\ndef _strip_code_fence(text):\n\
+          \    raw = str(text or '').strip()\n    full_match = re.match(r'^```(?:json)?\\\
+          s*(.*?)\\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)\n    if full_match:\n\
+          \        return full_match.group(1).strip()\n    return raw\n\n\ndef _remove_think_blocks(text):\n\
+          \    raw = str(text or '')\n    raw = re.sub(r'<think>.*?</think>', ' ',\
+          \ raw, flags=re.IGNORECASE | re.DOTALL)\n    return raw.strip()\n\n\ndef\
+          \ _ast_candidate_score(obj):\n    if not isinstance(obj, dict):\n      \
+          \  return -1\n    score = 0\n    keys = set(obj.keys())\n    for key in\
+          \ ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate',\
+          \ 'expands', 'time_range', 'limit'):\n        if key in keys:\n        \
+          \    score += 2\n    if keys:\n        score += 1\n    return score\n\n\n\
+          def _try_decode_object(raw):\n    try:\n        decoder = json.JSONDecoder()\n\
+          \        obj, end = decoder.raw_decode(raw)\n        if isinstance(obj,\
+          \ dict):\n            return obj, raw[:end], raw[end:].strip()\n    except\
+          \ Exception:\n        return None\n    return None\n\n\ndef _extract_json_object_text(text):\n\
+          \    raw = _remove_think_blocks(_strip_code_fence(text))\n    if not raw:\n\
+          \        raise ValueError('LLM返回内容为空')\n    direct = _try_decode_object(raw)\n\
+          \    if direct and not direct[2]:\n        return direct[1]\n    candidates\
+          \ = []\n    for block in re.findall(r'```(?:json)?\\s*(.*?)```', raw, flags=re.IGNORECASE\
+          \ | re.DOTALL):\n        parsed = _try_decode_object(block.strip())\n  \
+          \      if parsed:\n            obj, obj_text, tail = parsed\n          \
+          \  candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))\n\
+          \    seen_positions = set()\n    for match in re.finditer(r'\\{', raw):\n\
+          \        pos = match.start()\n        if pos in seen_positions:\n      \
+          \      continue\n        seen_positions.add(pos)\n        parsed = _try_decode_object(raw[pos:])\n\
+          \        if parsed:\n            obj, obj_text, tail = parsed\n        \
+          \    candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))\n\
+          \    if candidates:\n        candidates.sort(key=lambda item: (-item[0],\
+          \ item[1], -len(item[2])))\n        return candidates[0][2]\n    raise ValueError(f'LLM返回内容不是合法JSON对象:\
+          \ {_truncate_text(raw, 1200)}')\n\n\ndef _pick_response(full_status_code,\
+          \ full_body, local_status_code, local_body):\n    local_body_text = '' if\
+          \ local_body is None else str(local_body).strip()\n    if local_body_text:\n\
+          \        return int(local_status_code or 0), local_body, 'local_llm'\n \
+          \   return int(full_status_code or 0), full_body, 'full_llm'\n\n\ndef main(full_status_code,\
+          \ full_body, local_status_code, local_body):\n    code, body, _source =\
+          \ _pick_response(full_status_code, full_body, local_status_code, local_body)\n\
+          \    if code < 200 or code >= 300:\n        raise ValueError(f\"LLM调用失败,\
+          \ status={code}, body={_truncate_text(body, 2000)}\")\n    if not body:\n\
+          \        raise ValueError('LLM返回body为空')\n    resp_json = _read_json_text(body)\n\
+          \    if not resp_json:\n        raise ValueError(f\"LLM响应不是合法JSON: {_truncate_text(body,\
+          \ 1200)}\")\n    result = _extract_chat_text(resp_json)\n    if not result:\n\
+          \        raise ValueError(f\"LLM返回内容为空, body={_truncate_text(body, 2000)}\"\
+          )\n    semantic_plan_text = _extract_json_object_text(result)\n    semantic_plan\
+          \ = json.loads(semantic_plan_text)\n    if not isinstance(semantic_plan,\
+          \ dict):\n        raise ValueError('LLM返回语义计划不是JSON对象')\n    return {'semantic_plan':\
+          \ semantic_plan, 'semantic_plan_raw_text': result}\n"
+        code_language: python3
+        desc: 统一解析满血/本地LLM响应并提取AST JSON
+        outputs:
+          semantic_plan:
+            children: null
+            type: object
+          semantic_plan_raw_text:
+            children: null
+            type: string
+        selected: true
+        title: 代码执行_提取语义计划结果
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000012'
+          - status_code
+          value_type: number
+          variable: full_status_code
+        - value_selector:
+          - '1775000000012'
+          - body
+          value_type: string
+          variable: full_body
+        - value_selector:
+          - '1775000000019'
+          - status_code
+          value_type: number
+          variable: local_status_code
+        - value_selector:
+          - '1775000000019'
+          - body
+          value_type: string
+          variable: local_body
+      height: 96
+      id: '1775000000013'
+      position:
+        x: 3776.6804920892264
+        y: 280
+      positionAbsolute:
+        x: 3776.6804920892264
+        y: 280
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 19f817f4-cd31-49fb-a97e-9aebd2531262
+            value: 'true'
+            varType: string
+            variable_selector:
+            - env
+            - ENABLE_FULL_LLM
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_是否启用满血LLM
+        type: if-else
+      height: 124
+      id: '1775000000014'
+      position:
+        x: 2210
+        y: 320
+      positionAbsolute:
+        x: 2210
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ad4255b8-c185-494f-a717-76ba66eb92c5
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000011'
+            - request_enabled
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血请求是否可用
+        type: if-else
+      height: 148
+      id: '1775000000015'
+      position:
+        x: 2524
+        y: 258.2072454929678
+      positionAbsolute:
+        x: 2524
+        y: 258.2072454929678
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "def _truncate_text(text, limit=1200):\n    text = '' if text is None\
+          \ else str(text)\n    return text if len(text) <= limit else text[:limit]\
+          \ + '...'\n\n\ndef main(status_code, body):\n    code = int(status_code\
+          \ or 0)\n    body_text = '' if body is None else str(body).strip()\n   \
+          \ ok = 200 <= code < 300 and bool(body_text)\n    return {\n        'full_http_ok':\
+          \ 'true' if ok else 'false',\n        'full_http_error': '' if ok else f\"\
+          status={code}, body={_truncate_text(body, 1200)}\",\n    }\n"
+        code_language: python3
+        desc: 根据满血LLM HTTP状态决定是否回退本地LLM
+        outputs:
+          full_http_error:
+            children: null
+            type: string
+          full_http_ok:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_判断满血LLM状态
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000012'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000012'
+          - body
+          value_type: string
+          variable: body
+      height: 96
+      id: '1775000000016'
+      position:
+        x: 3150
+        y: 190
+      positionAbsolute:
+        x: 3150
+        y: 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 8a92198b-df4d-4bcf-8338-fa4f5b701933
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000016'
+            - full_http_ok
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血LLM是否成功
+        type: if-else
+      height: 148
+      id: '1775000000017'
+      position:
+        x: 3465
+        y: 190
+      positionAbsolute:
+        x: 3465
+        y: 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 满血LLM关闭或失败时，使用本地模型生成AST
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 2048
+            temperature: 0
+          mode: chat
+          name: qwen3:32b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: local-plan-system
+          role: system
+          text: '{{#1775000000005.semantic_plan_system_prompt#}}'
+        - id: local-plan-user
+          role: user
+          text: '{{#1775000000005.semantic_plan_user_prompt#}}'
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              collections:
+                items:
+                  minLength: 1
+                  type: string
+                type: array
+                uniqueItems: true
+              execution_mode:
+                enum:
+                - single_stage
+                - multi_stage
+                type: string
+              final_merge:
+                additionalProperties: false
+                properties:
+                  attach_as:
+                    type: string
+                  left_field:
+                    type: string
+                  left_stage:
+                    type: string
+                  merge_mode:
+                    enum:
+                    - none
+                    - left_join
+                    type: string
+                  right_field:
+                    type: string
+                  right_stage:
+                    type: string
+                required:
+                - merge_mode
+                - left_stage
+                - right_stage
+                - left_field
+                - right_field
+                - attach_as
+                type: object
+              primary_collection:
+                minLength: 1
+                type: string
+              reasoning:
+                minLength: 1
+                type: string
+              stages:
+                items:
+                  additionalProperties: false
+                  properties:
+                    attach_as:
+                      type: string
+                    collection:
+                      minLength: 1
+                      type: string
+                    depends_on:
+                      type: string
+                    entity_field:
+                      type: string
+                    filters:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          field:
+                            minLength: 1
+                            type: string
+                          operator:
+                            enum:
+                            - eq
+                            - in
+                            - gt
+                            - gte
+                            - lt
+                            - lte
+                            - regex
+                            type: string
+                          value:
+                            oneOf:
+                            - type: string
+                            - type: number
+                            - type: integer
+                            - type: boolean
+                            - items:
+                                oneOf:
+                                - type: string
+                                - type: number
+                                - type: integer
+                                - type: boolean
+                              type: array
+                        required:
+                        - field
+                        - operator
+                        - value
+                        type: object
+                      type: array
+                    group_fields:
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                    intent_type:
+                      enum:
+                      - detail_query
+                      - aggregate_summary
+                      - group_top_entity
+                      - group_top_record
+                      - enrich_related
+                      type: string
+                    join_source_field:
+                      type: string
+                    join_target_field:
+                      type: string
+                    limit:
+                      maximum: 200
+                      minimum: 0
+                      type: integer
+                    metric_alias:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_function:
+                      enum:
+                      - ''
+                      - count
+                      - sum
+                      - avg
+                      - max
+                      - min
+                      type: string
+                    projection_fields:
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                    projection_mode:
+                      enum:
+                      - none
+                      - explicit
+                      - all_returnable
+                      type: string
+                    rank_direction:
+                      enum:
+                      - ''
+                      - asc
+                      - desc
+                      type: string
+                    rank_n:
+                      maximum: 200
+                      minimum: 0
+                      type: integer
+                    rank_order_field:
+                      type: string
+                    sort:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          direction:
+                            enum:
+                            - asc
+                            - desc
+                            type: string
+                          field:
+                            minLength: 1
+                            type: string
+                        required:
+                        - field
+                        - direction
+                        type: object
+                      type: array
+                    stage_name:
+                      minLength: 1
+                      type: string
+                    time_range:
+                      additionalProperties: false
+                      properties:
+                        end:
+                          type: string
+                        field:
+                          type: string
+                        mode:
+                          enum:
+                          - none
+                          - relative_days
+                          - absolute
+                          type: string
+                        relative_days:
+                          minimum: 0
+                          type: integer
+                        start:
+                          type: string
+                      required:
+                      - field
+                      - mode
+                      - relative_days
+                      - start
+                      - end
+                      type: object
+                  required:
+                  - stage_name
+                  - collection
+                  - depends_on
+                  - intent_type
+                  - filters
+                  - time_range
+                  - group_fields
+                  - entity_field
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - rank_n
+                  - rank_order_field
+                  - rank_direction
+                  - sort
+                  - limit
+                  - projection_mode
+                  - projection_fields
+                  - join_source_field
+                  - join_target_field
+                  - attach_as
+                  type: object
+                maxItems: 2
+                minItems: 1
+                type: array
+            required:
+            - execution_mode
+            - primary_collection
+            - collections
+            - stages
+            - final_merge
+            - reasoning
+            type: object
+        structured_output_enabled: true
+        title: LLM_本地兜底生成语义计划
+        type: llm
+        vision:
+          enabled: false
+      height: 132
+      id: '1775000000018'
+      position:
+        x: 3114.1045592009455
+        y: 470
+      positionAbsolute:
+        x: 3114.1045592009455
+        y: 470
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\n\n\ndef main(text: str):\n    raw = str(text or '').strip()\n\
+          \    if not raw:\n        raise ValueError('本地LLM返回为空')\n    body = {\n\
+          \        'choices': [\n            {\n                'message': {\n   \
+          \                 'content': raw,\n                }\n            }\n  \
+          \      ]\n    }\n    return {\n        'status_code': 200,\n        'body':\
+          \ json.dumps(body, ensure_ascii=False),\n    }\n"
+        code_language: python3
+        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
+        outputs:
+          body:
+            children: null
+            type: string
+          status_code:
+            children: null
+            type: number
+        selected: false
+        title: 代码执行_包装本地LLM响应
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000018'
+          - text
+          value_type: string
+          variable: text
+      height: 96
+      id: '1775000000019'
+      position:
+        x: 3634.2013852363016
+        y: 470
+      positionAbsolute:
+        x: 3634.2013852363016
+        y: 470
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan
+          value_type: object
+          variable: execution_plan
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan_raw_text
+          value_type: string
+          variable: execution_plan_raw_text
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          value_type: string
+          variable: normalized_execution_plan_json
+        - value_selector:
+          - '1775000000007'
+          - stage_execution_trace_json
+          value_type: string
+          variable: stage_execution_trace_json
+        - value_selector:
+          - '1775000000007'
+          - final_response_body
+          value_type: string
+          variable: final_response_body
+        - value_selector:
+          - '1775000000007'
+          - final_response_summary
+          value_type: object
+          variable: final_response_summary
+        selected: false
+        title: 输出
+        type: end
+      height: 270
+      id: '1773910028939'
+      position:
+        x: 4720
+        y: 280
+      positionAbsolute:
+        x: 4720
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: -2324.12557357958
+      y: 236.22663551024982
+      zoom: 0.7578582832551997
+  rag_pipeline_variables: []
+
