@@ -978,3 +978,296 @@ workflow:
       type: custom
       width: 242
       zIndex: 1002
+    - data:
+        code: "import base64\nimport json\nimport uuid\n\nSEMANTIC_PLAN_SYSTEM_PROMPT\
+          \ = '你是一个 MongoDB 查询执行计划生成器。\\n\\n你的任务是：\\n- 基于用户问题、查询规划 JSON、schema 检索结果，生成一个“可执行的语义计划（semantic\
+          \ execution plan）”\\n- 不要直接生成 MongoDB pipeline\\n- 不要直接生成旧版单 AST\\n- 只输出结构化\
+          \ JSON\\n- 不要输出解释性文字\\n- 不要输出 markdown\\n- 不要输出 schema 摘要\\n\\n目标：\\n- 让后续代码节点可以根据该计划，稳定编译为单阶段或两阶段查询\\\
+          n- 保持灵活，兼容不同问法\\n- 避免把 products / product_name / 第二阶段 enrich 之类逻辑写死在 DSL\
+          \ 中\\n\\n总原则：\\n1. primary_collection 必须等于 planner_json.primary_collection。\\\
+          n2. 只能使用 planner_json 或 schema_context 中明确出现过的 collection 和 field。\\n3.\
+          \ execution_mode 只能是：\\n   - single_stage：一个阶段就能回答\\n   - multi_stage：需要第一阶段先选出实体/键，第二阶段再\
+          \ enrich\\n4. stages 最多 2 个：\\n   - stage1 必须先解决主问题\\n   - stage2 只在确实需要\
+          \ related 明细且 schema 关系明确时才生成\\n5. 不要发明关联字段，不要发明 collection。\\n6. 默认不生成链式多跳关联。\\\
+          n\\n什么时候优先 single_stage：\\n- 纯明细查询\\n- 纯聚合统计\\n- 只查 primary_collection 就足够\\\
+          n\\n什么时候优先 multi_stage：\\n- 用户既要“按组挑出代表实体”，又要“补 related 主数据/详情”\\n- 直接在一个聚合\
+          \ AST 中会出现粒度冲突\\n- 典型情况：\\n  - 每个品牌销售额最高的产品信息\\n  - 每个品牌金额最高的订单及其产品信息\\\
+          n  - 先选 top1/topN 实体，再去 related collection enrich\\n\\nstage.intent_type\
+          \ 定义：\\n1. detail_query\\n   - 普通明细查询\\n   - 直接在一个 collection 上过滤、排序、投影、limit\\\
+          n2. aggregate_summary\\n   - 普通聚合汇总\\n   - 按 group_fields 聚合 metric，然后排序/limit\\\
+          n3. group_top_entity\\n   - 先按 group_fields + entity_field 聚合 metric\\n\
+          \   - 再在每个 group 内取 top1/topN entity\\n   - 适合“每个品牌销售额最高的产品”\\n4. group_top_record\\\
+          n   - 先按 group_fields 分组\\n   - 再在每个 group 内按某个排序字段取 top1/topN 原始记录\\n \
+          \  - 适合“每个品牌金额最高的订单”\\n5. enrich_related\\n   - 第二阶段 enrich\\n   - 使用 stage1\
+          \ 输出中的 join_source_field 去匹配当前 collection 的 join_target_field\\n\\ngroup_top\
+          \ 语义规则：\\n1. 对于 group_top_entity / group_top_record：rank_n 只表示“每个 group\
+          \ 取前 N 条”。\\n2. 如果用户没有明确要求“全局前 N 个 group / 全局只返回 1 个品牌 / topN groups”，stage.limit\
+          \ 必须设置为 0。\\n3. 不要把 rank_n = 1 误写成 stage.limit = 1。\\n4. “各品牌销售第一的产品信息”应返回多个品牌，每个品牌\
+          \ 1 条，而不是全局只返回 1 条。\\n5. 只有用户明确要求“销售额前10个品牌中的第一产品”这类全局裁切时，才允许 stage.limit\
+          \ > 0。\\n\\n关联键规则：\\n1. 不要把任何固定字段当作通用回退关联键，包括 product_name。\\n2. stage2.join_source_field\
+          \ / stage2.join_target_field 必须基于：\\n   - 用户问题语义\\n   - schema_context 中的\
+          \ relation hints / preferred_keys / notes\\n   - stage1 实际产出的字段\\n   显式解析出来。\\\
+          n3. 如果 schema_context 不能支撑稳定关联，就不要生成 stage2 enrich。\\n4. 对于非 enrich stage：join_target_field\
+          \ 和 attach_as 应保持空字符串，不要作为 stage1/stageX 的语义字段保留。\\n5. 只有 enrich_related\
+          \ 阶段才保留 join_target_field 和 attach_as。\\n\\n字段规则：\\n1. collection 必须来自 schema_context。\\\
+          n2. filters 只写当前 stage.collection 的字段。\\n3. time_range 只写当前 stage.collection\
+          \ 的时间条件。\\n4. projection_fields 只写当前 stage.collection 最终要保留的字段。\\n5. projection_mode：\\\
+          n   - none：不强调 projection\\n   - explicit：明确列出 projection_fields\\n   -\
+          \ all_returnable：表示当前 stage.collection 应尽量返回 schema_context 中 returnable\
+          \ = true 且 sensitive != true 的字段\\n6. 对于 sensitive = true 或 returnable =\
+          \ false 的字段，不要放入 projection_fields，除非 schema_context 明确允许。\\n\\nmulti_stage\
+          \ 规则：\\n1. stage1 必须能产出 stage2 需要的 join_source_field。\\n2. stage2.intent_type\
+          \ 必须是 enrich_related。\\n3. stage2.depends_on 必须指向 stage1.stage_name。\\n4.\
+          \ final_merge.merge_mode 在 multi_stage 时通常为 left_join。\\n5. final_merge.left_field\
+          \ / right_field 必须与 stage1 / stage2 的 join 字段一致。\\n6. attach_as 必须是一个明确字段名，例如\
+          \ product_info。\\n\\n时间规则：\\n1. 当用户问题出现“近N天”“最近N天”“过去N天”“last N days”时：\\\
+          n   - time_range.mode 必须为 relative_days\\n   - time_range.relative_days\
+          \ = N\\n   - 不要再把同一时间条件重复写进 filters\\n2. 没有时间条件时：\\n   - time_range.mode\
+          \ = none\\n3. 只有用户明确给出绝对日期区间时，才使用 absolute。\\n\\n输出要求：\\n- 只输出合法 JSON\\\
+          n- 不要输出多余字段\\n- 所有字段类型必须严格匹配 JSON schema\\n- 不要输出 null，能用空字符串、空数组、默认值表达的就不要用\
+          \ null\\n\\n强制示例 1：\\n用户问题：过去30天各个品牌销售额最高的产品信息\\n输出思路：\\n- execution_mode\
+          \ = multi_stage\\n- stage1.collection = orders\\n- stage1.intent_type =\
+          \ group_top_entity\\n- stage1.group_fields = [\"brand\"]\\n- stage1.entity_field\
+          \ = \"product_name\"\\n- stage1.metric_function = \"sum\"\\n- stage1.metric_field\
+          \ = \"amount\"\\n- stage1.metric_alias = \"product_gmv\"\\n- stage1.projection_fields\
+          \ 至少包含 [\"brand\", \"product_name\", \"product_gmv\"]\\n- stage1.limit =\
+          \ 0 （不要把每品牌top1误裁成全局1条）\\n- stage1.join_target_field = \"\"\\n- stage1.attach_as\
+          \ = \"\"\\n- stage2.collection = products\\n- stage2.intent_type = enrich_related\\\
+          n- stage2.join_source_field / join_target_field 需要根据 schema relation hints\
+          \ 解析；在当前 schema 下可解析为 product_name -> product_name\\n- stage2.projection_mode\
+          \ = all_returnable\\n- final_merge.attach_as = \"product_info\"\\n\\n强制示例\
+          \ 2：\\n用户问题：近30天各品牌金额最高的订单及其产品信息\\n输出思路：\\n- execution_mode = multi_stage\\\
+          n- stage1.collection = orders\\n- stage1.intent_type = group_top_record\\\
+          n- stage1.group_fields = [\"brand\"]\\n- stage1.rank_order_field = \"amount\"\
+          \\n- stage1.rank_direction = \"desc\"\\n- stage1.projection_fields 至少包含\
+          \ [\"brand\", \"order_id\", \"product_name\", \"amount\", \"created_at\"\
+          ]\\n- stage1.limit = 0 （不要把每品牌top1误裁成全局1条）\\n- stage1.join_target_field\
+          \ = \"\"\\n- stage1.attach_as = \"\"\\n- stage2.collection = products\\\
+          n- stage2.intent_type = enrich_related\\n- stage2.join_source_field / join_target_field\
+          \ 需要根据 schema relation hints 解析；在当前 schema 下可解析为 product_name -> product_name\\\
+          n- stage2.projection_mode = all_returnable\\n- final_merge.attach_as = \"\
+          product_info\"'\nSEMANTIC_PLAN_JSON_SCHEMA_JSON = '{\"additionalProperties\"\
+          :false,\"properties\":{\"execution_mode\":{\"enum\":[\"single_stage\",\"\
+          multi_stage\"],\"type\":\"string\"},\"primary_collection\":{\"minLength\"\
+          :1,\"type\":\"string\"},\"collections\":{\"type\":\"array\",\"uniqueItems\"\
+          :true,\"items\":{\"minLength\":1,\"type\":\"string\"}},\"reasoning\":{\"\
+          minLength\":1,\"type\":\"string\"},\"stages\":{\"type\":\"array\",\"minItems\"\
+          :1,\"maxItems\":2,\"items\":{\"additionalProperties\":false,\"properties\"\
+          :{\"stage_name\":{\"minLength\":1,\"type\":\"string\"},\"collection\":{\"\
+          minLength\":1,\"type\":\"string\"},\"depends_on\":{\"type\":\"string\"},\"\
+          intent_type\":{\"enum\":[\"detail_query\",\"aggregate_summary\",\"group_top_entity\"\
+          ,\"group_top_record\",\"enrich_related\"],\"type\":\"string\"},\"filters\"\
+          :{\"type\":\"array\",\"items\":{\"additionalProperties\":false,\"properties\"\
+          :{\"field\":{\"minLength\":1,\"type\":\"string\"},\"operator\":{\"enum\"\
+          :[\"eq\",\"in\",\"gt\",\"gte\",\"lt\",\"lte\",\"regex\"],\"type\":\"string\"\
+          },\"value\":{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"number\"},{\"\
+          type\":\"integer\"},{\"type\":\"boolean\"},{\"type\":\"array\",\"items\"\
+          :{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"number\"},{\"type\":\"integer\"\
+          },{\"type\":\"boolean\"}]}}]}},\"required\":[\"field\",\"operator\",\"value\"\
+          ],\"type\":\"object\"}},\"time_range\":{\"additionalProperties\":false,\"\
+          properties\":{\"field\":{\"type\":\"string\"},\"mode\":{\"enum\":[\"none\"\
+          ,\"relative_days\",\"absolute\"],\"type\":\"string\"},\"relative_days\"\
+          :{\"minimum\":0,\"type\":\"integer\"},\"start\":{\"type\":\"string\"},\"\
+          end\":{\"type\":\"string\"}},\"required\":[\"field\",\"mode\",\"relative_days\"\
+          ,\"start\",\"end\"],\"type\":\"object\"},\"group_fields\":{\"type\":\"array\"\
+          ,\"items\":{\"minLength\":1,\"type\":\"string\"}},\"entity_field\":{\"type\"\
+          :\"string\"},\"metric_function\":{\"enum\":[\"\",\"count\",\"sum\",\"avg\"\
+          ,\"max\",\"min\"],\"type\":\"string\"},\"metric_field\":{\"type\":\"string\"\
+          },\"metric_alias\":{\"type\":\"string\"},\"rank_n\":{\"minimum\":0,\"maximum\"\
+          :200,\"type\":\"integer\"},\"rank_order_field\":{\"type\":\"string\"},\"\
+          rank_direction\":{\"enum\":[\"\",\"asc\",\"desc\"],\"type\":\"string\"},\"\
+          sort\":{\"type\":\"array\",\"items\":{\"additionalProperties\":false,\"\
+          properties\":{\"field\":{\"minLength\":1,\"type\":\"string\"},\"direction\"\
+          :{\"enum\":[\"asc\",\"desc\"],\"type\":\"string\"}},\"required\":[\"field\"\
+          ,\"direction\"],\"type\":\"object\"}},\"limit\":{\"minimum\":0,\"maximum\"\
+          :200,\"type\":\"integer\"},\"projection_mode\":{\"enum\":[\"none\",\"explicit\"\
+          ,\"all_returnable\"],\"type\":\"string\"},\"projection_fields\":{\"type\"\
+          :\"array\",\"items\":{\"minLength\":1,\"type\":\"string\"}},\"join_source_field\"\
+          :{\"type\":\"string\"},\"join_target_field\":{\"type\":\"string\"},\"attach_as\"\
+          :{\"type\":\"string\"}},\"required\":[\"stage_name\",\"collection\",\"depends_on\"\
+          ,\"intent_type\",\"filters\",\"time_range\",\"group_fields\",\"entity_field\"\
+          ,\"metric_function\",\"metric_field\",\"metric_alias\",\"rank_n\",\"rank_order_field\"\
+          ,\"rank_direction\",\"sort\",\"limit\",\"projection_mode\",\"projection_fields\"\
+          ,\"join_source_field\",\"join_target_field\",\"attach_as\"],\"type\":\"\
+          object\"}},\"final_merge\":{\"additionalProperties\":false,\"properties\"\
+          :{\"merge_mode\":{\"enum\":[\"none\",\"left_join\"],\"type\":\"string\"\
+          },\"left_stage\":{\"type\":\"string\"},\"right_stage\":{\"type\":\"string\"\
+          },\"left_field\":{\"type\":\"string\"},\"right_field\":{\"type\":\"string\"\
+          },\"attach_as\":{\"type\":\"string\"}},\"required\":[\"merge_mode\",\"left_stage\"\
+          ,\"right_stage\",\"left_field\",\"right_field\",\"attach_as\"],\"type\"\
+          :\"object\"}},\"required\":[\"execution_mode\",\"primary_collection\",\"\
+          collections\",\"stages\",\"final_merge\",\"reasoning\"],\"type\":\"object\"\
+          }'\n\n\ndef _to_bool(value):\n    if isinstance(value, bool):\n        return\
+          \ value\n    text = str(value or \"\").strip().lower()\n    return text\
+          \ in {\"1\", \"true\", \"yes\", \"y\", \"on\"}\n\n\ndef _to_int(value, default):\n\
+          \    try:\n        return int(value)\n    except Exception:\n        return\
+          \ int(default)\n\n\ndef main(\n    arg1: list,\n    arg2: str,\n    arg3:\
+          \ str,\n    llm_token_url: str,\n    llm_chat_url: str,\n    llm_app_id:\
+          \ str,\n    llm_static_token: str,\n    llm_model: str,\n    llm_user: str,\n\
+          \    llm_auth_prefix: str,\n    llm_timeout_ms,\n    llm_temperature,\n\
+          \    llm_top_p,\n    llm_max_completion_tokens,\n    llm_stream,\n):\n \
+          \   planner = json.loads(arg2) if isinstance(arg2, str) else (arg2 or {})\n\
+          \    sections = []\n\n    for raw in (arg1 or []):\n        item = json.loads(raw)\
+          \ if isinstance(raw, str) else (raw or {})\n        collection_name = str(item.get(\"\
+          collection_name\") or \"\").strip()\n        role = str(item.get(\"role\"\
+          ) or \"\").strip()\n        context_text = str(item.get(\"context_text\"\
+          ) or \"\").strip()\n        sections.append(\n            f\"## collection={collection_name}\\\
+          n\"\n            f\"role={role}\\n\"\n            f\"{context_text}\"\n\
+          \        )\n    planner_json = json.dumps(planner, ensure_ascii=False, indent=2)\n\
+          \    schema_context = (\n        f\"### 用户问题\\n{arg3}\\n\\n\"\n        f\"\
+          ### 查询规划JSON\\n{planner_json}\\n\\n\"\n        f\"### schema检索结果\\n\" +\
+          \ \"\\n\\n\".join(sections)\n    )\n    semantic_plan_user_prompt = f\"\
+          用户问题:\\n{arg3}\\n\\nSchema上下文:\\n{schema_context}\"\n    llm_config = {\n\
+          \        \"tokenUrl\": str(llm_token_url or \"\").strip(),\n        \"chatUrl\"\
+          : str(llm_chat_url or \"\").strip(),\n        \"appId\": str(llm_app_id\
+          \ or \"\").strip(),\n        \"staticToken\": str(llm_static_token or \"\
+          \"),\n        \"model\": str(llm_model or \"\").strip(),\n        \"user\"\
+          : str(llm_user or \"\").strip(),\n        \"authorization-prefix\": str(llm_auth_prefix\
+          \ or \"\"),\n        \"timeout-millis\": _to_int(llm_timeout_ms, 600000),\n\
+          \        \"temperature\": llm_temperature if llm_temperature is not None\
+          \ else 0,\n        \"top_p\": llm_top_p if llm_top_p is not None else 1,\n\
+          \        \"max_completion_tokens\": _to_int(llm_max_completion_tokens, 12288),\n\
+          \        \"stream\": _to_bool(llm_stream),\n    }\n\n    if not llm_config[\"\
+          tokenUrl\"]:\n        raise ValueError(\"LLM_TOKEN_URL is required\")\n\
+          \    if not llm_config[\"chatUrl\"]:\n        raise ValueError(\"LLM_CHAT_URL\
+          \ is required\")\n    if not llm_config[\"appId\"]:\n        raise ValueError(\"\
+          LLM_APP_ID is required\")\n    if not llm_config[\"staticToken\"]:\n   \
+          \     raise ValueError(\"LLM_STATIC_TOKEN is required\")\n    if not llm_config[\"\
+          model\"]:\n        raise ValueError(\"LLM_MODEL is required\")\n\n    token_request_body\
+          \ = {\n        \"appId\": llm_config[\"appId\"],\n        \"credential\"\
+          : base64.b64encode(str(llm_config.get(\"staticToken\") or \"\").encode(\"\
+          utf-8\")).decode(\"utf-8\"),\n    }\n\n    return {\n        \"schema_context\"\
+          : schema_context,\n        \"planner_json\": planner_json,\n        \"semantic_plan_system_prompt\"\
+          : SEMANTIC_PLAN_SYSTEM_PROMPT,\n        \"semantic_plan_user_prompt\": semantic_plan_user_prompt,\n\
+          \        \"semantic_plan_json_schema\": SEMANTIC_PLAN_JSON_SCHEMA_JSON,\n\
+          \        \"token_url\": llm_config[\"tokenUrl\"],\n        \"chat_url\"\
+          : llm_config[\"chatUrl\"],\n        \"llm_config_json\": json.dumps(llm_config,\
+          \ ensure_ascii=False),\n        \"token_request_body_json\": json.dumps(token_request_body,\
+          \ ensure_ascii=False),\n        \"request_id\": f\"llm_{uuid.uuid4().hex}\"\
+          ,\n    }"
+        code_language: python3
+        desc: 汇总Schema上下文，准备语义计划提示词与内部LLM调用请求
+        outputs:
+          chat_url:
+            children: null
+            type: string
+          llm_config_json:
+            children: null
+            type: string
+          planner_json:
+            children: null
+            type: string
+          request_id:
+            children: null
+            type: string
+          schema_context:
+            children: null
+            type: string
+          semantic_plan_json_schema:
+            children: null
+            type: string
+          semantic_plan_system_prompt:
+            children: null
+            type: string
+          semantic_plan_user_prompt:
+            children: null
+            type: string
+          token_request_body_json:
+            children: null
+            type: string
+          token_url:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_合并Schema上下文并准备语义计划提示词
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000001'
+          - output
+          value_type: array[string]
+          variable: arg1
+        - value_selector:
+          - '1774083951307'
+          - planner_json
+          value_type: string
+          variable: arg2
+        - value_selector:
+          - '1773909192919'
+          - question
+          value_type: string
+          variable: arg3
+        - value_selector:
+          - env
+          - LLM_TOKEN_URL
+          value_type: string
+          variable: llm_token_url
+        - value_selector:
+          - env
+          - LLM_CHAT_URL
+          value_type: string
+          variable: llm_chat_url
+        - value_selector:
+          - env
+          - LLM_APP_ID
+          value_type: string
+          variable: llm_app_id
+        - value_selector:
+          - env
+          - LLM_STATIC_TOKEN
+          value_type: string
+          variable: llm_static_token
+        - value_selector:
+          - env
+          - LLM_MODEL
+          value_type: string
+          variable: llm_model
+        - value_selector:
+          - env
+          - LLM_USER
+          value_type: string
+          variable: llm_user
+        - value_selector:
+          - env
+          - LLM_AUTH_PREFIX
+          value_type: string
+          variable: llm_auth_prefix
+        - value_selector:
+          - env
+          - LLM_TIMEOUT_MS
+          value_type: number
+          variable: llm_timeout_ms
+        - value_selector:
+          - env
+          - LLM_TEMPERATURE
+          value_type: number
+          variable: llm_temperature
+        - value_selector:
+          - env
+          - LLM_TOP_P
+          value_type: number
+          variable: llm_top_p
+        - value_selector:
+          - env
+          - LLM_MAX_COMPLETION_TOKENS
+          value_type: number
+          variable: llm_max_completion_tokens
+        - value_selector:
+          - env
+          - LLM_STREAM
+          value_type: string
+          variable: llm_stream
+      height: 96
+      id: '1775000000005'
+      position:
+        x: 1911.0104777110073
+        y: 320
+      positionAbsolute:
+        x: 1911.0104777110073
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
