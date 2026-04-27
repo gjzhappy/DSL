@@ -1873,3 +1873,6 @@ workflow:
           \            ],\n            'stream': bool(llm_config.get('stream', False)),\n\
           \            'temperature': llm_config.get('temperature', 0),\n        \
           \    'top_p': llm_config.get('top_p', 1),\n            'max_completion_tokens':\
+          \ llm_config.get('max_completion_tokens', 12288),\n            'user': llm_config.get('user',\
+          \ ''),\n            'response_format': {\n                'type': 'json_schema',\n\
+          \                'json_schema': {\n                    'name': 'semantic_execution_plan',\n\
