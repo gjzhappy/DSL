@@ -1326,17 +1326,7 @@ workflow:
           \        j += 1\n            block_text = '\\n'.join(block)\n          \
           \  if 'returnable: true' in block_text and 'sensitive: true' not in block_text:\n\
           \                fields.append(field_name)\n            i = j\n        \
-          \    continue\n        i += 1\n    return fields\n\n\ndef _normalize_time_range(value,\
-          \ collection_name, default_field='created_at'):\n    if not isinstance(value,\
-          \ dict):\n        return {\n            'collection': collection_name,\n\
-          \            'field': default_field,\n            'mode': 'none',\n    \
-          \        'relative_days': 0,\n            'start': '',\n            'end':\
-          \ '',\n        }\n    mode = str(value.get('mode') or 'none').strip() or\
-          \ 'none'\n    return {\n        'collection': collection_name,\n       \
-          \ 'field': str(value.get('field') or default_field).strip() or default_field,\n\
-          \        'mode': mode,\n        'relative_days': int(value.get('relative_days')\
-          \ or 0),\n        'start': str(value.get('start') or '').strip(),\n    \
-          \    'end': str(value.get('end') or '').strip(),\n    }\n\n\ndef _apply_time_range(time_range):\n\
+          \    continue\n        i += 1\n    return fields\n\n\ndef _normalize_stage_filters(value, stage_name):\n    if value is None:\n        return []\n    if not isinstance(value, list):\n        raise ValueError(f"{stage_name}.filters must be an array")\n    normalized = []\n    seen = set()\n    for idx, item in enumerate(value):\n        if not isinstance(item, dict):\n            raise ValueError(f"{stage_name}.filters[{idx}] must be an object")\n        field = _ensure_non_empty_string(item.get('field'), f"{stage_name}.filters[{idx}].field")\n        operator = _ensure_non_empty_string(item.get('operator'), f"{stage_name}.filters[{idx}].operator")\n        norm_item = {'field': field, 'operator': operator, 'value': item.get('value')}\n        fingerprint = json.dumps(norm_item, ensure_ascii=False, sort_keys=True, default=str)\n        if fingerprint in seen:\n            continue\n        seen.add(fingerprint)\n        normalized.append(norm_item)\n    return normalized\n\n\ndef _normalize_time_range(value, collection_name, default_field='created_at'):\n    if not isinstance(value, dict):\n        return {\n            'collection': collection_name,\n            'field': default_field,\n            'mode': 'none',\n            'relative_days': 0,\n            'start': '',\n            'end': '',\n        }\n    mode = str(value.get('mode') or 'none').strip() or 'none'\n    field = str(value.get('field') or default_field).strip() or default_field\n    relative_days = int(value.get('relative_days') or 0)\n    start = str(value.get('start') or '').strip()\n    end = str(value.get('end') or '').strip()\n    if mode == 'relative_days':\n        start = ''\n        end = ''\n    elif mode == 'none':\n        relative_days = 0\n        start = ''\n        end = ''\n    return {\n        'collection': collection_name,\n        'field': field,\n        'mode': mode,\n        'relative_days': relative_days,\n        'start': start,\n        'end': end,\n    }\n\n\ndef _sanitize_stage_before_compile(stage):\n    sanitized = dict(stage or {})\n    stage_name = str((stage or {}).get('stage_name') or 'stage')\n    time_range = dict((stage or {}).get('time_range') or {})\n    mode = str(time_range.get('mode') or 'none').strip() or 'none'\n    field = str(time_range.get('field') or 'created_at').strip() or 'created_at'\n    relative_days = int(time_range.get('relative_days') or 0)\n    if relative_days < 0:\n        relative_days = 0\n    if mode == 'relative_days':\n        sanitized_time_range = {\n            'collection': str((stage or {}).get('collection') or ''),\n            'field': field,\n            'mode': 'relative_days',\n            'relative_days': relative_days,\n            'start': '',\n            'end': '',\n        }\n    elif mode == 'absolute':\n        sanitized_time_range = {\n            'collection': str((stage or {}).get('collection') or ''),\n            'field': field,\n            'mode': 'absolute',\n            'relative_days': 0,\n            'start': str(time_range.get('start') or '').strip(),\n            'end': str(time_range.get('end') or '').strip(),\n        }\n    else:\n        sanitized_time_range = {\n            'collection': str((stage or {}).get('collection') or ''),\n            'field': field,\n            'mode': 'none',\n            'relative_days': 0,\n            'start': '',\n            'end': '',\n        }\n\n    dedup_filters = []\n    seen = set()\n    for f in _normalize_stage_filters((stage or {}).get('filters') or [], stage_name):\n        if str(f.get('field') or '').strip() == field:\n            continue\n        fingerprint = json.dumps(f, ensure_ascii=False, sort_keys=True, default=str)\n        if fingerprint in seen:\n            continue\n        seen.add(fingerprint)\n        dedup_filters.append(f)\n\n    sanitized['time_range'] = sanitized_time_range\n    sanitized['filters'] = dedup_filters\n    return sanitized\n\n\ndef _apply_time_range(time_range):\n\
           \    mode = str((time_range or {}).get('mode') or 'none').strip()\n    if\
           \ mode == 'none':\n        return None\n    field = str((time_range or {}).get('field')\
           \ or 'created_at').strip() or 'created_at'\n    if mode == 'relative_days':\n\
@@ -1407,7 +1397,7 @@ workflow:
           \ must be >= 0')\n        stage = {\n            'stage_name': stage_name,\n\
           \            'collection': collection,\n            'depends_on': str(raw.get('depends_on')\
           \ or '').strip(),\n            'intent_type': intent_type,\n           \
-          \ 'filters': raw.get('filters') or [],\n            'time_range': _normalize_time_range(raw.get('time_range'),\
+          \ 'filters': _normalize_stage_filters(raw.get('filters') or [], stage_name),\n            'time_range': _normalize_time_range(raw.get('time_range'),\
           \ collection),\n            'group_fields': _ensure_string_list(raw.get('group_fields')\
           \ or [], f'stages[{idx}].group_fields'),\n            'entity_field': str(raw.get('entity_field')\
           \ or '').strip(),\n            'metric_function': str(raw.get('metric_function')\
@@ -1679,8 +1669,7 @@ workflow:
           \ = _parse_query_urls(query_urls)\n    if not urls:\n        raise ValueError('SN_MONGODB_QUERY_URLS\
           \ is empty')\n\n    normalized_execution_plan = _normalize_plan(plan, planner)\n\
           \    stage_outputs = {}\n    stage_execution_trace = []\n\n    for stage\
-          \ in normalized_execution_plan.get('stages') or []:\n        validated_ast,\
-          \ pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)\n\
+          \ in normalized_execution_plan.get('stages') or []:\n        sanitized_stage = _sanitize_stage_before_compile(stage)\n        validated_ast, pipeline, skip_query = _compile_stage(sanitized_stage, schema_context, stage_outputs)\n\
           \        pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)\n\
           \        selected_url = ''\n        request_id = uuid.uuid4().hex\n    \
           \    request_body = {}\n        status_code = 0\n        response_body =\
@@ -1697,9 +1686,7 @@ workflow:
           \    rows = _find_best_rows(response_json)\n        else:\n            response_body\
           \ = json.dumps({'msg': 'skip query', 'code': 200, 'data': {'rows': []}},\
           \ ensure_ascii=False)\n            rows = []\n            reason = 'no join\
-          \ values from previous stage'\n\n        trace_item = {\n            'stage_name':\
-          \ stage['stage_name'],\n            'collection': stage['collection'],\n\
-          \            'intent_type': stage['intent_type'],\n            'validated_ast':\
+          \ values from previous stage'\n\n        trace_item = {\n            'stage_name': sanitized_stage['stage_name'],\n            'collection': sanitized_stage['collection'],\n            'intent_type': sanitized_stage['intent_type'],\n            'validated_ast':\
           \ validated_ast,\n            'pipeline': pipeline,\n            'pipeline_json':\
           \ pipeline_json,\n            'selected_url': selected_url,\n          \
           \  'request_id': request_id,\n            'query_request_body': request_body,\n\
@@ -1707,7 +1694,7 @@ workflow:
           \ response_body,\n            'query_response_headers': response_headers,\n\
           \            'rows': rows,\n            'skipped': bool(skip_query),\n \
           \           'skip_reason': reason,\n        }\n        stage_execution_trace.append(trace_item)\n\
-          \        stage_outputs[stage['stage_name']] = trace_item\n\n    execution_mode\
+          \        stage_outputs[sanitized_stage['stage_name']] = trace_item\n\n    execution_mode\
           \ = normalized_execution_plan.get('execution_mode')\n    final_merge = normalized_execution_plan.get('final_merge')\
           \ or {}\n    if execution_mode == 'multi_stage' and final_merge.get('left_stage')\
           \ and final_merge.get('right_stage'):\n        left_rows = (stage_outputs.get(final_merge['left_stage'])\
