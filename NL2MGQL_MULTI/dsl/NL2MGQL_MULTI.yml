@@ -1829,3 +1829,21 @@ workflow:
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        code: "import json\n\nUNSUPPORTED_JSON_SCHEMA_KEYS = {\n    'uniqueItems',\n\
+          }\n\n\ndef _truncate_text(text, limit=2000):\n    text = '' if text is None\
+          \ else str(text)\n    return text if len(text) <= limit else text[:limit]\
+          \ + '...'\n\n\ndef _read_json_text(text):\n    if text is None:\n      \
+          \  return None\n    if isinstance(text, (dict, list)):\n        return text\n\
+          \    raw = str(text).strip()\n    if not raw:\n        return None\n   \
+          \ return json.loads(raw)\n\n\ndef _first_non_empty_string(*values):\n  \
+          \  for value in values:\n        if isinstance(value, str) and value.strip():\n\
+          \            return value.strip()\n    return ''\n\n\ndef _sanitize_json_schema(value):\n\
+          \    if isinstance(value, dict):\n        cleaned = {}\n        for key,\
+          \ item in value.items():\n            if key in UNSUPPORTED_JSON_SCHEMA_KEYS:\n\
+          \                continue\n            cleaned[key] = _sanitize_json_schema(item)\n\
+          \        return cleaned\n    if isinstance(value, list):\n        return\
+          \ [_sanitize_json_schema(item) for item in value]\n    return value\n\n\n\
+          def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt:\
+          \ str, semantic_plan_json_schema: str,\n         chat_url: str, llm_config_json:\
+          \ str, request_id: str):\n    try:\n        code = int(status_code or 0)\n\
