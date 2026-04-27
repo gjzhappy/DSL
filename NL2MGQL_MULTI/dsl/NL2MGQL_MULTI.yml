@@ -1,1 +1,980 @@
+app:
+  description: ''
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  icon_type: emoji
+  mode: workflow
+  name: NL2MGQL_MULTI
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: package
+  value:
+    plugin_unique_identifier: langgenius/ollama:0.0.7@8fc496b3892344da47db6125c76fc0dbfd8020753f198032751d83f561d9443e
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - description: 用静态 token 换动态 token 的接口
+    id: 4fef4aee-cdc8-4b9c-bef8-be75bfeafa43
+    name: LLM_TOKEN_URL
+    selector:
+    - env
+    - LLM_TOKEN_URL
+    value: http://oauth2-his.huawei.com/ApiCommonQuery/appToken/getRestAppDynamicToken
+    value_type: string
+  - description: 外部大模型 chat completions 接口
+    id: aaf46df7-eda4-4af2-95a7-971629b6ebd1
+    name: LLM_CHAT_URL
+    selector:
+    - env
+    - LLM_CHAT_URL
+    value: http://nginx:18080/llm-proxy/chat/completions
+    value_type: string
+  - description: 租户 app_id
+    id: d1219080-48bb-40b2-902a-049cd1b071cc
+    name: LLM_APP_ID
+    selector:
+    - env
+    - LLM_APP_ID
+    value: com.huawei.kirin.his.hulian
+    value_type: string
+  - description: 租户静态 token
+    id: ef60ecae-37ce-45dd-8b52-a7df7400772f
+    name: LLM_STATIC_TOKEN
+    selector:
+    - env
+    - LLM_STATIC_TOKEN
+    value: ''
+    value_type: secret
+  - description: 申请到的模型名称GLM-V5
+    id: 4a0f75cc-7fcf-466f-9b3b-1f60b3b31576
+    name: LLM_MODEL
+    selector:
+    - env
+    - LLM_MODEL
+    value: Qwen-V3.5-397B-A17B
+    value_type: string
+  - description: 用户标识
+    id: f326eaab-9215-418d-ab63-28bcde87deee
+    name: LLM_USER
+    selector:
+    - env
+    - LLM_USER
+    value: g30044897
+    value_type: string
+  - description: Authorization 前缀, 如果接口要求直接传动态 token，就留空 '', 如果接口要求 'Bearer xxxxx'，就填
+      'Bearer '
+    id: 542f3651-d41b-479a-974c-7044f390c8cf
+    name: LLM_AUTH_PREFIX
+    selector:
+    - env
+    - LLM_AUTH_PREFIX
+    value: ' '
+    value_type: string
+  - description: 超时时间，单位毫秒
+    id: df20a6d1-0f26-4192-9e2c-73a5fc1bdbb7
+    name: LLM_TIMEOUT_MS
+    selector:
+    - env
+    - LLM_TIMEOUT_MS
+    value: 600000
+    value_type: integer
+  - description: 生成参数
+    id: 003e61b1-0da6-480e-a06b-9e12d84210a1
+    name: LLM_TEMPERATURE
+    selector:
+    - env
+    - LLM_TEMPERATURE
+    value: 0
+    value_type: integer
+  - description: ''
+    id: a5254cee-4f24-464f-beef-6fa1a2e08741
+    name: LLM_TOP_P
+    selector:
+    - env
+    - LLM_TOP_P
+    value: 1
+    value_type: integer
+  - description: ''
+    id: d36a4797-0db7-494c-93c5-34c41d5c4545
+    name: LLM_MAX_COMPLETION_TOKENS
+    selector:
+    - env
+    - LLM_MAX_COMPLETION_TOKENS
+    value: 12288
+    value_type: integer
+  - description: ''
+    id: b3d9a608-402d-40b3-84d8-9d88b532ff8f
+    name: LLM_STREAM
+    selector:
+    - env
+    - LLM_STREAM
+    value: 'false'
+    value_type: string
+  - description: Mongo pipeline查询接口地址列表，多个地址可用逗号或换行分隔
+    id: 7642c715-0253-4e1a-b10c-2d4829ec2cb0
+    name: SN_MONGODB_QUERY_URLS
+    selector:
+    - env
+    - SN_MONGODB_QUERY_URLS
+    value: http://100.105.21.157:9201/simulation/datacenter/mongo/pipeline/query
+    value_type: string
+  - description: 是否优先请求满血LLM。true=先请求满血LLM，失败后回退本地LLM；false=直接走本地LLM。
+    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c713
+    name: ENABLE_FULL_LLM
+    selector:
+    - env
+    - ENABLE_FULL_LLM
+    value: 'false'
+    value_type: string
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: 1773909192919-source-1773975766025-target
+      source: '1773909192919'
+      sourceHandle: source
+      target: '1773975766025'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1773975766025-source-1774083951307-target
+      source: '1773975766025'
+      sourceHandle: source
+      target: '1774083951307'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: iteration
+      id: 1774083951307-source-1775000000001-target
+      source: '1774083951307'
+      sourceHandle: source
+      target: '1775000000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: iteration
+        targetType: code
+      id: 1775000000001-source-1775000000005-target
+      source: '1775000000001'
+      sourceHandle: source
+      target: '1775000000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: true
+        iteration_id: '1775000000001'
+        sourceType: iteration-start
+        targetType: code
+      id: 1775000000001start-source-1775000000002-target
+      source: 1775000000001start
+      sourceHandle: source
+      target: '1775000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1775000000001'
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: 1775000000002-source-1775000000003-target
+      source: '1775000000002'
+      sourceHandle: source
+      target: '1775000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1775000000001'
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: 1775000000003-source-1775000000004-target
+      source: '1775000000003'
+      sourceHandle: source
+      target: '1775000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: 1775000000010-source-1775000000011-target
+      source: '1775000000010'
+      sourceHandle: source
+      target: '1775000000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1775000000013-source-1775000000007-target
+      source: '1775000000013'
+      sourceHandle: source
+      target: '1775000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1775000000005-source-1775000000014-target
+      source: '1775000000005'
+      sourceHandle: source
+      target: '1775000000014'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: http-request
+      id: 1775000000014-true-1775000000010-target
+      source: '1775000000014'
+      sourceHandle: 'true'
+      target: '1775000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: llm
+      id: 1775000000014-false-1775000000018-target
+      selected: false
+      source: '1775000000014'
+      sourceHandle: 'false'
+      target: '1775000000018'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1775000000011-source-1775000000015-target
+      source: '1775000000011'
+      sourceHandle: source
+      target: '1775000000015'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: http-request
+      id: 1775000000015-true-1775000000012-target
+      source: '1775000000015'
+      sourceHandle: 'true'
+      target: '1775000000012'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: llm
+      id: 1775000000015-false-1775000000018-target
+      source: '1775000000015'
+      sourceHandle: 'false'
+      target: '1775000000018'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: 1775000000012-source-1775000000016-target
+      source: '1775000000012'
+      sourceHandle: source
+      target: '1775000000016'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1775000000016-source-1775000000017-target
+      source: '1775000000016'
+      sourceHandle: source
+      target: '1775000000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1775000000017-true-1775000000013-target
+      source: '1775000000017'
+      sourceHandle: 'true'
+      target: '1775000000013'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: llm
+      id: 1775000000017-false-1775000000018-target
+      source: '1775000000017'
+      sourceHandle: 'false'
+      target: '1775000000018'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1775000000018-source-1775000000019-target
+      source: '1775000000018'
+      sourceHandle: source
+      target: '1775000000019'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1775000000019-source-1775000000013-target
+      source: '1775000000019'
+      sourceHandle: source
+      target: '1775000000013'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: end
+      id: 1775000000007-source-1773910028939-target
+      source: '1775000000007'
+      sourceHandle: source
+      target: '1773910028939'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables:
+        - default: ''
+          hint: ''
+          label: question
+          options: []
+          placeholder: ''
+          required: true
+          type: text-input
+          variable: question
+      height: 109
+      id: '1773909192919'
+      position:
+        x: -80
+        y: 320
+      positionAbsolute:
+        x: -80
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.1
+          mode: chat
+          name: qwen3:32b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: planner-system
+          role: system
+          text: '你是一个 MongoDB 查询规划器，只负责根据用户问题判断最可能对应的主 collection 和相关 collection。
 
+
+            任务目标：
+
+            - 根据用户的自然语言问题，输出查询规划结果
+
+            - 只输出结构化 JSON
+
+            - 不要输出解释性自然语言
+
+            - 不要生成 AST
+
+            - 不要生成 MongoDB 查询语句
+
+            - 不要猜测不存在的 collection
+
+            - 不要输出 markdown
+
+            - 不要输出多余字段
+
+
+            输入说明：
+
+            - 用户只会提供 question
+
+            - primary_collection 必须根据用户问题的“主业务对象”来判断
+
+            - related_collections 只表示为了补充主查询结果而可能需要一起参与的其他 collection
+
+
+            当前可选 collection 及其定义如下，必须严格以这些定义为准：
+
+
+            1. orders
+
+            Aliases: 订单, 订单表, 订单集合, 下单记录, 销售订单
+
+            Purpose:
+
+            - 订单主集合
+
+            - 用于订单明细查询
+
+            - 用于订单状态筛选
+
+            - 用于品牌 / 省份 / 时间维度统计
+
+            - 用于销售额聚合分析
+
+            - 一条文档通常代表一笔订单
+
+            关键字段：
+
+            - order_id
+
+            - product_name
+
+            - brand
+
+            - category
+
+            - province
+
+            - status
+
+            - payment_status
+
+            - amount
+
+            - quantity
+
+            - created_at
+
+            典型问题：
+
+            - 近30天已支付订单有多少
+
+            - 各品牌销售额 Top10
+
+            - 最近7天每天订单数趋势
+
+            - 按省份统计订单量
+
+            - 某个订单号的订单详情
+
+            - 近30天手机类目销量最高的品牌
+
+
+            2. products
+
+            Aliases: 商品, 商品表, 商品集合, SKU主数据, 商品主数据
+
+            Purpose:
+
+            - 商品主数据集合
+
+            - 用于商品基础信息查询
+
+            - 用于品牌 / 类目 / 价格维度统计
+
+            - 用于上架状态分析
+
+            - 一条文档通常代表一个商品或 SKU 主体
+
+            关键字段：
+
+            - product_id
+
+            - sku_id
+
+            - spu_id
+
+            - product_name
+
+            - brand
+
+            - category
+
+            - status
+
+            - price
+
+            - stock
+
+            - created_at
+
+            典型问题：
+
+            - 华为品牌有哪些商品
+
+            - 最近30天新建的商品最近20条
+
+            - 各品牌商品数 Top10
+
+            - 手机类目平均价格是多少
+
+            - 当前在售商品中价格最高的前20个商品
+
+            - 某个 SKU 的商品详情
+
+
+            primary_collection 规则：
+
+            - 订单交易、订单数、销量、销售额、GMV、时间趋势、支付情况 => orders
+
+            - 商品详情、SKU/SPU、商品价格、库存、上架状态、商品清单 => products
+
+
+            related_collections 规则：
+
+            - 只有明确需要补充另一张表信息时才返回
+
+            - 不要包含 primary_collection 本身
+
+            - 最多返回 3 个
+
+
+
+            输出要求：
+
+            - 严格按 JSON Schema 输出
+
+            - 不要输出 markdown
+
+            - 不要输出多余字段
+
+            - confidence 取值 0 到 1
+
+            - reason 保持一句话
+
+
+            强制示例：
+
+            1) 近30天各品牌销售额 Top10
+
+            - primary_collection = orders
+
+            - related_collections = []
+
+
+            2) 华为品牌有哪些商品
+
+            - primary_collection = products
+
+            - related_collections = []
+
+
+            3) 近30天已支付订单中，各品牌销售额前10的所有 product 信息
+
+            - primary_collection = orders
+
+            - related_collections = ["products"]
+
+            '
+        - id: planner-user
+          role: user
+          text: 用户问题:{{#1773909192919.question#}}
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              confidence:
+                description: 判断置信度，范围 0 到 1
+                maximum: 1
+                minimum: 0
+                type: number
+              primary_collection:
+                description: 主业务对象对应的主 collection
+                enum:
+                - orders
+                - products
+                - unknown
+                type: string
+              reason:
+                description: 简短说明判断依据，控制在一句话内
+                type: string
+              related_collections:
+                description: 可能需要补充参与的其他 collection
+                items:
+                  enum:
+                  - orders
+                  - products
+                  type: string
+                maxItems: 3
+                type: array
+                uniqueItems: true
+            required:
+            - primary_collection
+            - related_collections
+            - confidence
+            - reason
+            type: object
+        structured_output_enabled: true
+        title: LLM_查询规划
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1773975766025'
+      position:
+        x: 240
+        y: 320
+      positionAbsolute:
+        x: 240
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\n\ndef main(question: str, planner):\n    if isinstance(planner,\
+          \ str):\n        planner = json.loads(planner)\n\n    primary = str((planner\
+          \ or {}).get(\"primary_collection\") or \"\").strip()\n    related = (planner\
+          \ or {}).get(\"related_collections\") or []\n\n    ordered = []\n    seen\
+          \ = set()\n    for item in [primary] + list(related):\n        name = str(item\
+          \ or \"\").strip()\n        if not name or name == \"unknown\" or name in\
+          \ seen:\n            continue\n        seen.add(name)\n        ordered.append(name)\n\
+          \n    collection_tasks = []\n    for name in ordered:\n        role = \"\
+          primary\" if name == primary else \"related\"\n        query_text = (\n\
+          \            f\"用户问题: {question}\\n\"\n            f\"当前目标 collection: {name}\\\
+          n\"\n            \"请检索该 collection 的 schema、字段含义、典型过滤字段、聚合指标、\"\n      \
+          \      \"与其他 collection 的关联线索、以及任何能帮助生成 Mongo 聚合 AST 的信息。\"\n        )\n\
+          \        collection_tasks.append({\n            \"collection_name\": name,\n\
+          \            \"role\": role,\n            \"query_text\": query_text\n \
+          \       })\n\n    return {\n        \"result\": ordered,\n        \"collection_tasks\"\
+          : collection_tasks,\n        \"planner_json\": json.dumps(planner, ensure_ascii=False,\
+          \ indent=2)\n    }\n"
+        code_language: python3
+        desc: 构建待检索的 collection 任务
+        outputs:
+          collection_tasks:
+            children: null
+            type: array[object]
+          planner_json:
+            children: null
+            type: string
+          result:
+            children: null
+            type: array[string]
+        selected: false
+        title: 代码执行_构建检索任务
+        type: code
+        variables:
+        - value_selector:
+          - '1773909192919'
+          - question
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+      height: 80
+      id: '1774083951307'
+      position:
+        x: 561.0104777110068
+        y: 320
+      positionAbsolute:
+        x: 561.0104777110068
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: ''
+        error_handle_mode: terminated
+        height: 360
+        is_parallel: false
+        iterator_selector:
+        - '1774083951307'
+        - collection_tasks
+        output_selector:
+        - '1775000000004'
+        - output
+        output_type: array[string]
+        parallel_nums: 10
+        selected: false
+        start_node_id: 1775000000001start
+        title: 遍历Collections检索Schema
+        type: iteration
+        width: 980
+      height: 360
+      id: '1775000000001'
+      position:
+        x: 892.8392659156048
+        y: 320
+      positionAbsolute:
+        x: 892.8392659156048
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 980
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1775000000001start
+      parentId: '1775000000001'
+      position:
+        x: 24
+        y: 68
+      positionAbsolute:
+        x: 916.8392659156048
+        y: 388
+      selectable: false
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: "import json\n\ndef main(item):\n    data = item\n    if isinstance(data,\
+          \ str):\n        data = json.loads(data)\n\n    collection_name = str((data\
+          \ or {}).get(\"collection_name\") or \"\").strip()\n    role = str((data\
+          \ or {}).get(\"role\") or \"\").strip()\n    query_text = str((data or {}).get(\"\
+          query_text\") or \"\").strip()\n\n    return {\n        \"collection_name\"\
+          : collection_name,\n        \"role\": role,\n        \"query_text\": query_text\n\
+          \    }\n"
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        isIterationStart: true
+        iteration_id: '1775000000001'
+        outputs:
+          collection_name:
+            children: null
+            type: string
+          query_text:
+            children: null
+            type: string
+          role:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_解析当前任务
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000001'
+          - item
+          variable: item
+      height: 52
+      id: '1775000000002'
+      parentId: '1775000000001'
+      position:
+        x: 96
+        y: 64
+      positionAbsolute:
+        x: 988.8392659156048
+        y: 384
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1001
+    - data:
+        dataset_ids:
+        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
+        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        isInIteration: true
+        iteration_id: '1775000000001'
+        metadata_filtering_conditions:
+          conditions:
+          - comparison_operator: is
+            id: ca7255e8-5829-4063-9def-1e9ec392f49b
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: '{{#1775000000002.collection_name#}}'
+          logical_operator: and
+        metadata_filtering_mode: manual
+        multiple_retrieval_config:
+          reranking_enable: false
+          reranking_mode: weighted_score
+          top_k: 4
+          weights:
+            keyword_setting:
+              keyword_weight: 0.3
+            vector_setting:
+              embedding_model_name: nomic-embed-text:v1.5
+              embedding_provider_name: langgenius/ollama/ollama
+              vector_weight: 0.7
+            weight_type: customized
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1775000000002'
+        - query_text
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索_当前CollectionSchema
+        type: knowledge-retrieval
+      height: 90
+      id: '1775000000003'
+      parentId: '1775000000001'
+      position:
+        x: 365.9999999999998
+        y: 65
+      positionAbsolute:
+        x: 1258.8392659156045
+        y: 385
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: "import json\n\ndef main(collection_name: str, role: str, docs):\n \
+          \   docs = docs or []\n    parts = []\n    for idx, item in enumerate(docs):\n\
+          \        title = str((item or {}).get(\"title\") or \"\").strip()\n    \
+          \    content = str((item or {}).get(\"content\") or \"\").strip()\n    \
+          \    metadata = (item or {}).get(\"metadata\") or {}\n        score = metadata.get(\"\
+          score\", \"\")\n        chunk = f\"[{idx+1}] title={title} score={score}\\\
+          n{content}\".strip()\n        if chunk:\n            parts.append(chunk)\n\
+          \n    payload = {\n        \"collection_name\": collection_name,\n     \
+          \   \"role\": role,\n        \"context_text\": \"\\n\\n\".join(parts)\n\
+          \    }\n\n    return {\n        \"output\": json.dumps(payload, ensure_ascii=False)\n\
+          \    }\n"
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        iteration_id: '1775000000001'
+        outputs:
+          output:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_打包Schema结果
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000002'
+          - collection_name
+          value_type: string
+          variable: collection_name
+        - value_selector:
+          - '1775000000002'
+          - role
+          value_type: string
+          variable: role
+        - value_selector:
+          - '1775000000003'
+          - result
+          value_type: array[object]
+          variable: docs
+      height: 52
+      id: '1775000000004'
+      parentId: '1775000000001'
+      position:
+        x: 690
+        y: 64
+      positionAbsolute:
+        x: 1582.8392659156048
+        y: 384
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
