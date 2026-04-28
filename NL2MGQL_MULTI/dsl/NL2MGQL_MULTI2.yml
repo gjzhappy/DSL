@@ -547,6 +547,26 @@
               reasoning:
                 minLength: 1
                 type: string
+              visualization:
+                additionalProperties: false
+                properties:
+                  chart_type:
+                    enum:
+                    - bar
+                    - line
+                    - pie
+                    type: string
+                  enabled:
+                    type: boolean
+                  series_name:
+                    type: string
+                  title:
+                    type: string
+                  x_field:
+                    type: string
+                  y_field:
+                    type: string
+                type: object
               stages:
                 items:
                   additionalProperties: false
@@ -695,8 +715,6 @@
                       - field
                       - mode
                       - relative_days
-                      - start
-                      - end
                       type: object
                   required:
                   - stage_name
@@ -851,4 +869,3 @@
       y: 236.22663551024982
       zoom: 0.7578582832551997
   rag_pipeline_variables: []
-
