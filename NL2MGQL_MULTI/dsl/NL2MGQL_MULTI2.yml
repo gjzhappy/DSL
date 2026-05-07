@@ -547,6 +547,26 @@
               reasoning:
                 minLength: 1
                 type: string
+              visualization:
+                additionalProperties: false
+                properties:
+                  chart_type:
+                    enum:
+                    - bar
+                    - line
+                    - pie
+                    type: string
+                  enabled:
+                    type: boolean
+                  series_name:
+                    type: string
+                  title:
+                    type: string
+                  x_field:
+                    type: string
+                  y_field:
+                    type: string
+                type: object
               stages:
                 items:
                   additionalProperties: false
@@ -695,8 +715,6 @@
                       - field
                       - mode
                       - relative_days
-                      - start
-                      - end
                       type: object
                   required:
                   - stage_name
@@ -789,6 +807,995 @@
       type: custom
       width: 242
     - data:
+        cases:
+        - case_id: bar
+          conditions:
+          - comparison_operator: is
+            id: chart-type-bar
+            value: bar
+            varType: string
+            variable_selector:
+            - '1775000000007'
+            - chart_type
+          id: bar
+          logical_operator: and
+        - case_id: line
+          conditions:
+          - comparison_operator: is
+            id: chart-type-line
+            value: line
+            varType: string
+            variable_selector:
+            - '1775000000007'
+            - chart_type
+          id: line
+          logical_operator: and
+        - case_id: pie
+          conditions:
+          - comparison_operator: is
+            id: chart-type-pie
+            value: pie
+            varType: string
+            variable_selector:
+            - '1775000000007'
+            - chart_type
+          id: pie
+          logical_operator: and
+        - case_id: area
+          conditions:
+          - comparison_operator: is
+            id: chart-type-area
+            value: area
+            varType: string
+            variable_selector:
+            - '1775000000007'
+            - chart_type
+          id: area
+          logical_operator: and
+        - case_id: boxplot
+          conditions:
+          - comparison_operator: is
+            id: chart-type-boxplot
+            value: boxplot
+            varType: string
+            variable_selector:
+            - '1775000000007'
+            - chart_type
+          id: boxplot
+          logical_operator: and
+        desc: 根据最终数据和 visualization 决策选择 AntV 图表插件
+        selected: false
+        title: 条件分支_选择AntV图表插件
+        type: if-else
+      height: 220
+      id: '1779000000001'
+      position:
+        x: 4400
+        y: 280
+      positionAbsolute:
+        x: 4400
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_team_authorization: true
+        paramSchemas:
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Chart data, JSON string generated from final query rows.
+            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
+          label:
+            en_US: data
+            zh_Hans: 图表数据
+          llm_description: Chart data JSON string.
+          max: null
+          min: null
+          name: data
+          options: []
+          placeholder: null
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: 600
+          form: form
+          human_description:
+            en_US: Set the width of chart, default is 600.
+            zh_Hans: 请设置图表宽度，默认值为 600。
+          label:
+            en_US: width
+            zh_Hans: 宽
+          llm_description: Set the width of chart, default is 600.
+          max: null
+          min: null
+          name: width
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: 400
+          form: form
+          human_description:
+            en_US: Set the height of chart, default is 400.
+            zh_Hans: 请设置图表高度，默认值为 400。
+          label:
+            en_US: height
+            zh_Hans: 高
+          llm_description: Set the height of chart, default is 400.
+          max: null
+          min: null
+          name: height
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the title of chart.
+            zh_Hans: 请设置图表名称。
+          label:
+            en_US: title
+            zh_Hans: 图表名称
+          llm_description: Set the title of chart.
+          max: null
+          min: null
+          name: title
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisXTitle of chart.
+            zh_Hans: 请填写图表 X 轴名称。
+          label:
+            en_US: axisXTitle
+            zh_Hans: 图表 X 轴名称
+          llm_description: Set the axisXTitle of chart.
+          max: null
+          min: null
+          name: axisXTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisYTitle of chart.
+            zh_Hans: 请填写图表 Y 轴名称。
+          label:
+            en_US: axisYTitle
+            zh_Hans: 图表 Y 轴名称
+          llm_description: Set the axisYTitle of chart.
+          max: null
+          min: null
+          name: axisYTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        params:
+          axisXTitle: ''
+          axisYTitle: ''
+          data: ''
+          height: ''
+          style: ''
+          theme: ''
+          title: ''
+          width: ''
+        plugin_id: antv/visualization
+        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
+        provider_id: antv/visualization/visualization
+        provider_name: antv/visualization/visualization
+        provider_type: builtin
+        selected: false
+        title: 生成柱状图
+        tool_configurations:
+          height:
+            type: constant
+            value: 400
+          style:
+            type: mixed
+            value: null
+          theme:
+            type: constant
+            value: default
+          width:
+            type: constant
+            value: 600
+        tool_description: 根据最终查询结果自动生成 生成柱状图。
+        tool_label: 生成柱状图
+        tool_name: generate_bar_chart
+        tool_node_version: '2'
+        tool_parameters:
+          axisXTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_x_title#}}'
+          axisYTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_y_title#}}'
+          data:
+            type: mixed
+            value: '{{#1775000000007.chart_data#}}'
+          title:
+            type: mixed
+            value: '{{#1775000000007.chart_title#}}'
+        type: tool
+      height: 166
+      id: '1779000000010'
+      position:
+        x: 4700
+        y: 80
+      positionAbsolute:
+        x: 4700
+        y: 80
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_team_authorization: true
+        paramSchemas:
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Chart data, JSON string generated from final query rows.
+            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
+          label:
+            en_US: data
+            zh_Hans: 图表数据
+          llm_description: Chart data JSON string.
+          max: null
+          min: null
+          name: data
+          options: []
+          placeholder: null
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: 600
+          form: form
+          human_description:
+            en_US: Set the width of chart, default is 600.
+            zh_Hans: 请设置图表宽度，默认值为 600。
+          label:
+            en_US: width
+            zh_Hans: 宽
+          llm_description: Set the width of chart, default is 600.
+          max: null
+          min: null
+          name: width
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: 400
+          form: form
+          human_description:
+            en_US: Set the height of chart, default is 400.
+            zh_Hans: 请设置图表高度，默认值为 400。
+          label:
+            en_US: height
+            zh_Hans: 高
+          llm_description: Set the height of chart, default is 400.
+          max: null
+          min: null
+          name: height
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the title of chart.
+            zh_Hans: 请设置图表名称。
+          label:
+            en_US: title
+            zh_Hans: 图表名称
+          llm_description: Set the title of chart.
+          max: null
+          min: null
+          name: title
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisXTitle of chart.
+            zh_Hans: 请填写图表 X 轴名称。
+          label:
+            en_US: axisXTitle
+            zh_Hans: 图表 X 轴名称
+          llm_description: Set the axisXTitle of chart.
+          max: null
+          min: null
+          name: axisXTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisYTitle of chart.
+            zh_Hans: 请填写图表 Y 轴名称。
+          label:
+            en_US: axisYTitle
+            zh_Hans: 图表 Y 轴名称
+          llm_description: Set the axisYTitle of chart.
+          max: null
+          min: null
+          name: axisYTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        params:
+          axisXTitle: ''
+          axisYTitle: ''
+          data: ''
+          height: ''
+          style: ''
+          theme: ''
+          title: ''
+          width: ''
+        plugin_id: antv/visualization
+        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
+        provider_id: antv/visualization/visualization
+        provider_name: antv/visualization/visualization
+        provider_type: builtin
+        selected: false
+        title: 生成折线图
+        tool_configurations:
+          height:
+            type: constant
+            value: 400
+          style:
+            type: mixed
+            value: null
+          theme:
+            type: constant
+            value: default
+          width:
+            type: constant
+            value: 600
+        tool_description: 根据最终查询结果自动生成 生成折线图。
+        tool_label: 生成折线图
+        tool_name: generate_line_chart
+        tool_node_version: '2'
+        tool_parameters:
+          axisXTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_x_title#}}'
+          axisYTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_y_title#}}'
+          data:
+            type: mixed
+            value: '{{#1775000000007.chart_data#}}'
+          title:
+            type: mixed
+            value: '{{#1775000000007.chart_title#}}'
+        type: tool
+      height: 166
+      id: '1779000000011'
+      position:
+        x: 4700
+        y: 260
+      positionAbsolute:
+        x: 4700
+        y: 260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_team_authorization: true
+        paramSchemas:
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Chart data, JSON string generated from final query rows.
+            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
+          label:
+            en_US: data
+            zh_Hans: 图表数据
+          llm_description: Chart data JSON string.
+          max: null
+          min: null
+          name: data
+          options: []
+          placeholder: null
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: 600
+          form: form
+          human_description:
+            en_US: Set the width of chart, default is 600.
+            zh_Hans: 请设置图表宽度，默认值为 600。
+          label:
+            en_US: width
+            zh_Hans: 宽
+          llm_description: Set the width of chart, default is 600.
+          max: null
+          min: null
+          name: width
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: 400
+          form: form
+          human_description:
+            en_US: Set the height of chart, default is 400.
+            zh_Hans: 请设置图表高度，默认值为 400。
+          label:
+            en_US: height
+            zh_Hans: 高
+          llm_description: Set the height of chart, default is 400.
+          max: null
+          min: null
+          name: height
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the title of chart.
+            zh_Hans: 请设置图表名称。
+          label:
+            en_US: title
+            zh_Hans: 图表名称
+          llm_description: Set the title of chart.
+          max: null
+          min: null
+          name: title
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisXTitle of chart.
+            zh_Hans: 请填写图表 X 轴名称。
+          label:
+            en_US: axisXTitle
+            zh_Hans: 图表 X 轴名称
+          llm_description: Set the axisXTitle of chart.
+          max: null
+          min: null
+          name: axisXTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisYTitle of chart.
+            zh_Hans: 请填写图表 Y 轴名称。
+          label:
+            en_US: axisYTitle
+            zh_Hans: 图表 Y 轴名称
+          llm_description: Set the axisYTitle of chart.
+          max: null
+          min: null
+          name: axisYTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        params:
+          axisXTitle: ''
+          axisYTitle: ''
+          data: ''
+          height: ''
+          style: ''
+          theme: ''
+          title: ''
+          width: ''
+        plugin_id: antv/visualization
+        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
+        provider_id: antv/visualization/visualization
+        provider_name: antv/visualization/visualization
+        provider_type: builtin
+        selected: false
+        title: 生成饼图
+        tool_configurations:
+          height:
+            type: constant
+            value: 400
+          style:
+            type: mixed
+            value: null
+          theme:
+            type: constant
+            value: default
+          width:
+            type: constant
+            value: 600
+        tool_description: 根据最终查询结果自动生成 生成饼图。
+        tool_label: 生成饼图
+        tool_name: generate_pie_chart
+        tool_node_version: '2'
+        tool_parameters:
+          axisXTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_x_title#}}'
+          axisYTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_y_title#}}'
+          data:
+            type: mixed
+            value: '{{#1775000000007.chart_data#}}'
+          title:
+            type: mixed
+            value: '{{#1775000000007.chart_title#}}'
+        type: tool
+      height: 166
+      id: '1779000000012'
+      position:
+        x: 4700
+        y: 440
+      positionAbsolute:
+        x: 4700
+        y: 440
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_team_authorization: true
+        paramSchemas:
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Chart data, JSON string generated from final query rows.
+            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
+          label:
+            en_US: data
+            zh_Hans: 图表数据
+          llm_description: Chart data JSON string.
+          max: null
+          min: null
+          name: data
+          options: []
+          placeholder: null
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: 600
+          form: form
+          human_description:
+            en_US: Set the width of chart, default is 600.
+            zh_Hans: 请设置图表宽度，默认值为 600。
+          label:
+            en_US: width
+            zh_Hans: 宽
+          llm_description: Set the width of chart, default is 600.
+          max: null
+          min: null
+          name: width
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: 400
+          form: form
+          human_description:
+            en_US: Set the height of chart, default is 400.
+            zh_Hans: 请设置图表高度，默认值为 400。
+          label:
+            en_US: height
+            zh_Hans: 高
+          llm_description: Set the height of chart, default is 400.
+          max: null
+          min: null
+          name: height
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the title of chart.
+            zh_Hans: 请设置图表名称。
+          label:
+            en_US: title
+            zh_Hans: 图表名称
+          llm_description: Set the title of chart.
+          max: null
+          min: null
+          name: title
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisXTitle of chart.
+            zh_Hans: 请填写图表 X 轴名称。
+          label:
+            en_US: axisXTitle
+            zh_Hans: 图表 X 轴名称
+          llm_description: Set the axisXTitle of chart.
+          max: null
+          min: null
+          name: axisXTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisYTitle of chart.
+            zh_Hans: 请填写图表 Y 轴名称。
+          label:
+            en_US: axisYTitle
+            zh_Hans: 图表 Y 轴名称
+          llm_description: Set the axisYTitle of chart.
+          max: null
+          min: null
+          name: axisYTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        params:
+          axisXTitle: ''
+          axisYTitle: ''
+          data: ''
+          height: ''
+          style: ''
+          theme: ''
+          title: ''
+          width: ''
+        plugin_id: antv/visualization
+        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
+        provider_id: antv/visualization/visualization
+        provider_name: antv/visualization/visualization
+        provider_type: builtin
+        selected: false
+        title: 生成面积图
+        tool_configurations:
+          height:
+            type: constant
+            value: 400
+          style:
+            type: mixed
+            value: null
+          theme:
+            type: constant
+            value: default
+          width:
+            type: constant
+            value: 600
+        tool_description: 根据最终查询结果自动生成 生成面积图。
+        tool_label: 生成面积图
+        tool_name: generate_area_chart
+        tool_node_version: '2'
+        tool_parameters:
+          axisXTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_x_title#}}'
+          axisYTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_y_title#}}'
+          data:
+            type: mixed
+            value: '{{#1775000000007.chart_data#}}'
+          title:
+            type: mixed
+            value: '{{#1775000000007.chart_title#}}'
+        type: tool
+      height: 166
+      id: '1779000000013'
+      position:
+        x: 4700
+        y: 620
+      positionAbsolute:
+        x: 4700
+        y: 620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_team_authorization: true
+        paramSchemas:
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Chart data, JSON string generated from final query rows.
+            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
+          label:
+            en_US: data
+            zh_Hans: 图表数据
+          llm_description: Chart data JSON string.
+          max: null
+          min: null
+          name: data
+          options: []
+          placeholder: null
+          precision: null
+          required: true
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: 600
+          form: form
+          human_description:
+            en_US: Set the width of chart, default is 600.
+            zh_Hans: 请设置图表宽度，默认值为 600。
+          label:
+            en_US: width
+            zh_Hans: 宽
+          llm_description: Set the width of chart, default is 600.
+          max: null
+          min: null
+          name: width
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: 400
+          form: form
+          human_description:
+            en_US: Set the height of chart, default is 400.
+            zh_Hans: 请设置图表高度，默认值为 400。
+          label:
+            en_US: height
+            zh_Hans: 高
+          llm_description: Set the height of chart, default is 400.
+          max: null
+          min: null
+          name: height
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: number
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the title of chart.
+            zh_Hans: 请设置图表名称。
+          label:
+            en_US: title
+            zh_Hans: 图表名称
+          llm_description: Set the title of chart.
+          max: null
+          min: null
+          name: title
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisXTitle of chart.
+            zh_Hans: 请填写图表 X 轴名称。
+          label:
+            en_US: axisXTitle
+            zh_Hans: 图表 X 轴名称
+          llm_description: Set the axisXTitle of chart.
+          max: null
+          min: null
+          name: axisXTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        - auto_generate: null
+          default: null
+          form: llm
+          human_description:
+            en_US: Set the axisYTitle of chart.
+            zh_Hans: 请填写图表 Y 轴名称。
+          label:
+            en_US: axisYTitle
+            zh_Hans: 图表 Y 轴名称
+          llm_description: Set the axisYTitle of chart.
+          max: null
+          min: null
+          name: axisYTitle
+          options: []
+          placeholder: null
+          precision: null
+          required: false
+          scope: null
+          template: null
+          type: string
+        params:
+          axisXTitle: ''
+          axisYTitle: ''
+          data: ''
+          height: ''
+          style: ''
+          theme: ''
+          title: ''
+          width: ''
+        plugin_id: antv/visualization
+        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
+        provider_id: antv/visualization/visualization
+        provider_name: antv/visualization/visualization
+        provider_type: builtin
+        selected: false
+        title: 生成箱线图
+        tool_configurations:
+          height:
+            type: constant
+            value: 400
+          style:
+            type: mixed
+            value: null
+          theme:
+            type: constant
+            value: default
+          width:
+            type: constant
+            value: 600
+        tool_description: 根据最终查询结果自动生成 生成箱线图。
+        tool_label: 生成箱线图
+        tool_name: generate_boxplot_chart
+        tool_node_version: '2'
+        tool_parameters:
+          axisXTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_x_title#}}'
+          axisYTitle:
+            type: mixed
+            value: '{{#1775000000007.chart_axis_y_title#}}'
+          data:
+            type: mixed
+            value: '{{#1775000000007.chart_data#}}'
+          title:
+            type: mixed
+            value: '{{#1775000000007.chart_title#}}'
+        type: tool
+      height: 166
+      id: '1779000000014'
+      position:
+        x: 4700
+        y: 800
+      positionAbsolute:
+        x: 4700
+        y: 800
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
         outputs:
         - value_selector:
           - '1773975766025'
@@ -851,4 +1858,3 @@
       y: 236.22663551024982
       zoom: 0.7578582832551997
   rag_pipeline_variables: []
-
