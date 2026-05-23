@@ -1,3 +1,14 @@
+            children: null
+            type: string
+          semantic_plan_system_prompt:
+            children: null
+            type: string
+          semantic_plan_user_prompt:
+            children: null
+            type: string
+          token_request_body_json:
+            children: null
+            type: string
           token_url:
             children: null
             type: string
@@ -987,14 +998,3 @@
                   y_num = _to_float(row.get(y_field))
                   y_num = y_num if y_num is not None else 0
                   categories.append(x_val)
-                  series_values.append(y_num)
-                  pie_data.append({'name': x_val, 'value': y_num})
-          
-              if not categories:
-                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½å¾è¡¨éç½®çæå¤±è´¥ï¼no valid chart points'
-          
-              if chart_type == 'pie':
-                  option = {
-                      'title': {'text': title} if title else {},
-                      'tooltip': {'trigger': 'item'},
-                      'series': [{'type': 'pie', 'data': pie_data}],

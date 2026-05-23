@@ -1,3 +1,18 @@
+                  - filters
+                  - time_range
+                  - group_fields
+                  - entity_field
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - rank_n
+                  - rank_order_field
+                  - rank_direction
+                  - sort
+                  - limit
+                  - projection_mode
+                  - projection_fields
+                  - join_source_field
                   - join_target_field
                   - attach_as
                   type: object
@@ -32,7 +47,7 @@
       width: 242
     - data:
         code: "import json\n\n\ndef main(text: str):\n    raw = str(text or '').strip()\n\
-          \    if not raw:\n        raise ValueError('本地LLM返回为空')\n    body = {\n\
+          \    if not raw:\n        raise ValueError('本地LLM返�为空')\n    body = {\n\
           \        'choices': [\n            {\n                'message': {\n   \
           \                 'content': raw,\n                }\n            }\n  \
           \      ]\n    }\n    return {\n        'status_code': 200,\n        'body':\

@@ -1,3 +1,14 @@
+                  series_values.append(y_num)
+                  pie_data.append({'name': x_val, 'value': y_num})
+          
+              if not categories:
+                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½å¾è¡¨éç½®çæå¤±è´¥ï¼no valid chart points'
+          
+              if chart_type == 'pie':
+                  option = {
+                      'title': {'text': title} if title else {},
+                      'tooltip': {'trigger': 'item'},
+                      'series': [{'type': 'pie', 'data': pie_data}],
                   }
               else:
                   series_type = 'line' if chart_type == 'line' else 'bar'
@@ -9,14 +20,14 @@
                       'series': [{'type': series_type, 'data': series_values}],
                   }
           
+              nl = chr(10)
               fence = chr(96) * 3
               echarts_markdown = (
                   fence
-                  + "echarts
-          "
+                  + "echarts"
+                  + nl
                   + json.dumps(option, ensure_ascii=False, indent=2)
-                  + "
-          "
+                  + nl
                   + fence
               )
               return True, option, echarts_markdown, x_field, y_field, chart_type, ''
@@ -143,13 +154,17 @@
               visualization = normalized_execution_plan.get('visualization') or {}
               chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'column'})
               chart_option = _build_echarts_option(visualization, merged_rows)
-                            chart_payload = {
-                  'enabled': bool(chart_option),
+              chart_x_field = str(chart_decision.get('x_field') or '')
+              chart_y_field = str(chart_decision.get('y_field') or '')
+              chart_enabled, chart_option, chart_markdown, _, _, _, _ = _build_chart_payload(visualization, merged_rows, {'bar', 'column'})
+              chart_payload = {
+                  'enabled': bool(chart_enabled and chart_option),
                   'renderer': 'echarts',
                   'library': 'echarts',
-                                                      'option': chart_option,
+                  'option': chart_option,
+                  'echarts_markdown': chart_markdown,
                   'decision': chart_decision,
-                                }
+              }
           
               no_data_message = ''
               if visualization.get('enabled') and not (merged_rows or []):
@@ -361,7 +376,7 @@
           \ '',\n            'llm_request_body_json': '',\n            'request_id':\
           \ str(request_id or '').strip(),\n        }\n"
         code_language: python3
-        desc: 解析动态token并构造满血版LLM请求体；失败时转本地LLM
+        desc: 解析动态token并构造满血版LLM请求体�失败时转本地LLM
         outputs:
           authorization_value:
             children: null
@@ -531,7 +546,7 @@
           \ dict):\n            return obj, raw[:end], raw[end:].strip()\n    except\
           \ Exception:\n        return None\n    return None\n\n\ndef _extract_json_object_text(text):\n\
           \    raw = _remove_think_blocks(_strip_code_fence(text))\n    if not raw:\n\
-          \        raise ValueError('LLM返回内容为空')\n    direct = _try_decode_object(raw)\n\
+          \        raise ValueError('LLM返�内容为空')\n    direct = _try_decode_object(raw)\n\
           \    if direct and not direct[2]:\n        return direct[1]\n    candidates\
           \ = []\n    for block in re.findall(r'```(?:json)?\\s*(.*?)```', raw, flags=re.IGNORECASE\
           \ | re.DOTALL):\n        parsed = _try_decode_object(block.strip())\n  \
@@ -543,7 +558,7 @@
           \        if parsed:\n            obj, obj_text, tail = parsed\n        \
           \    candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))\n\
           \    if candidates:\n        candidates.sort(key=lambda item: (-item[0],\
-          \ item[1], -len(item[2])))\n        return candidates[0][2]\n    raise ValueError(f'LLM返回内容不是合法JSON对象:\
+          \ item[1], -len(item[2])))\n        return candidates[0][2]\n    raise ValueError(f'LLM返�内容不是合法JSON对象:\
           \ {_truncate_text(raw, 1200)}')\n\n\ndef _pick_response(full_status_code,\
           \ full_body, local_status_code, local_body):\n    local_body_text = '' if\
           \ local_body is None else str(local_body).strip()\n    if local_body_text:\n\
@@ -553,13 +568,13 @@
           \ _pick_response(full_status_code, full_body, local_status_code, local_body)\n\
           \    if code < 200 or code >= 300:\n        raise ValueError(f\"LLM调用失败,\
           \ status={code}, body={_truncate_text(body, 2000)}\")\n    if not body:\n\
-          \        raise ValueError('LLM返回body为空')\n    resp_json = _read_json_text(body)\n\
+          \        raise ValueError('LLM返�body为空')\n    resp_json = _read_json_text(body)\n\
           \    if not resp_json:\n        raise ValueError(f\"LLM响应不是合法JSON: {_truncate_text(body,\
           \ 1200)}\")\n    result = _extract_chat_text(resp_json)\n    if not result:\n\
-          \        raise ValueError(f\"LLM返回内容为空, body={_truncate_text(body, 2000)}\"\
+          \        raise ValueError(f\"LLM返�内容为空, body={_truncate_text(body, 2000)}\"\
           )\n    semantic_plan_text = _extract_json_object_text(result)\n    semantic_plan\
           \ = json.loads(semantic_plan_text)\n    if not isinstance(semantic_plan,\
-          \ dict):\n        raise ValueError('LLM返回语义计划不是JSON对象')\n    return {'semantic_plan':\
+          \ dict):\n        raise ValueError('LLM返�语义计划不是JSON对象')\n    return {'semantic_plan':\
           \ semantic_plan, 'semantic_plan_raw_text': result}\n"
         code_language: python3
         desc: 统一解析满血/本地LLM响应并提取AST JSON
@@ -676,7 +691,7 @@
           \ 'true' if ok else 'false',\n        'full_http_error': '' if ok else f\"\
           status={code}, body={_truncate_text(body, 1200)}\",\n    }\n"
         code_language: python3
-        desc: 根据满血LLM HTTP状态决定是否回退本地LLM
+        desc: 根据满血LLM HTTP状态决定是否�退本地LLM
         outputs:
           full_http_error:
             children: null
@@ -983,18 +998,3 @@
                   - collection
                   - depends_on
                   - intent_type
-                  - filters
-                  - time_range
-                  - group_fields
-                  - entity_field
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - rank_n
-                  - rank_order_field
-                  - rank_direction
-                  - sort
-                  - limit
-                  - projection_mode
-                  - projection_fields
-                  - join_source_field
