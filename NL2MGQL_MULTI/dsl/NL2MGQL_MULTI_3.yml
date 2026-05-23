@@ -1,0 +1,133 @@
+                  - join_target_field
+                  - attach_as
+                  type: object
+                maxItems: 2
+                minItems: 1
+                type: array
+            required:
+            - execution_mode
+            - primary_collection
+            - collections
+            - stages
+            - final_merge
+            - reasoning
+            type: object
+        structured_output_enabled: true
+        title: LLM_本地兜底生成语义计划
+        type: llm
+        vision:
+          enabled: false
+      height: 132
+      id: '1775000000018'
+      position:
+        x: 3114.1045592009455
+        y: 470
+      positionAbsolute:
+        x: 3114.1045592009455
+        y: 470
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\n\n\ndef main(text: str):\n    raw = str(text or '').strip()\n\
+          \    if not raw:\n        raise ValueError('本地LLM返回为空')\n    body = {\n\
+          \        'choices': [\n            {\n                'message': {\n   \
+          \                 'content': raw,\n                }\n            }\n  \
+          \      ]\n    }\n    return {\n        'status_code': 200,\n        'body':\
+          \ json.dumps(body, ensure_ascii=False),\n    }\n"
+        code_language: python3
+        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
+        outputs:
+          body:
+            children: null
+            type: string
+          status_code:
+            children: null
+            type: number
+        selected: false
+        title: 代码执行_包装本地LLM响应
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000018'
+          - text
+          value_type: string
+          variable: text
+      height: 96
+      id: '1775000000019'
+      position:
+        x: 3634.2013852363016
+        y: 470
+      positionAbsolute:
+        x: 3634.2013852363016
+        y: 470
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan
+          value_type: object
+          variable: execution_plan
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan_raw_text
+          value_type: string
+          variable: execution_plan_raw_text
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          value_type: string
+          variable: normalized_execution_plan_json
+        - value_selector:
+          - '1775000000007'
+          - stage_execution_trace_json
+          value_type: string
+          variable: stage_execution_trace_json
+        - value_selector:
+          - '1775000000007'
+          - final_response_body
+          value_type: string
+          variable: final_response_body
+        - value_selector:
+          - '1775000000007'
+          - final_response_summary
+          value_type: object
+          variable: final_response_summary
+        selected: false
+        title: 输出
+        type: end
+      height: 270
+      id: '1773910028939'
+      position:
+        x: 4720
+        y: 280
+      positionAbsolute:
+        x: 4720
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: -2324.12557357958
+      y: 236.22663551024982
+      zoom: 0.7578582832551997
+  rag_pipeline_variables: []
