@@ -319,8 +319,15 @@ def _build_local_chart(visualization, normalized_execution_plan, rows, chart_dec
             'series': [{'type': series_type, 'data': series_values}],
         }
 
-    markdown = "```echarts\n" + json.dumps(option, ensure_ascii=False, indent=2) + "\n```"
-    return True, option, markdown, x_field, y_field, chart_type, ''
+    fence = chr(96) * 3
+    echarts_markdown = (
+        fence
+        + "echarts\n"
+        + json.dumps(option, ensure_ascii=False, indent=2)
+        + "\n"
+        + fence
+    )
+    return True, option, echarts_markdown, x_field, y_field, chart_type, ''
 
 
 def _build_echarts_option(visualization, rows):
