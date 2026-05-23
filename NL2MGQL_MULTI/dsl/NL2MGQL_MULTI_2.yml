@@ -1,141 +1,3 @@
-                  headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
-                  return int(getattr(e, 'code', 0) or 0), body_text, headers
-          
-          
-          def _merge_rows(left_rows, right_rows, left_field, right_field, attach_as):
-              right_index = {}
-              for row in right_rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  key = row.get(right_field)
-                  if isinstance(key, list):
-                      for item in key:
-                          if item is not None:
-                              right_index.setdefault(str(item), []).append(row)
-                  elif key is not None:
-                      right_index.setdefault(str(key), []).append(row)
-              merged = []
-              for row in left_rows or []:
-                  if not isinstance(row, dict):
-                      merged.append(row)
-                      continue
-                  item = dict(row)
-                  key = item.get(left_field)
-                  matches = []
-                  if isinstance(key, list):
-                      for val in key:
-                          matches.extend(right_index.get(str(val), []))
-                  elif key is not None:
-                      matches = right_index.get(str(key), [])
-                  if len(matches) == 1:
-                      item[attach_as] = matches[0]
-                  elif matches:
-                      item[attach_as] = matches
-                  merged.append(item)
-              return merged
-          
-          
-          def _normalize_visualization(value):
-              if not isinstance(value, dict):
-                  return {'enabled': False}
-              chart_type = str(value.get('chart_type') or '').strip().lower()
-              if chart_type not in {'bar', 'line', 'pie', 'area', 'boxplot'}:
-                  chart_type = 'bar'
-              x_field = str(value.get('x_field') or '').strip()
-              y_field = str(value.get('y_field') or '').strip()
-              series_name = str(value.get('series_name') or '').strip() or 'value'
-              title = str(value.get('title') or '').strip()
-              enabled = bool(value.get('enabled', bool(x_field and y_field)))
-              if chart_type == 'pie':
-                  enabled = bool(value.get('enabled', bool(x_field and y_field)))
-              return {
-                  'enabled': enabled,
-                  'chart_type': chart_type,
-                  'x_field': x_field,
-                  'y_field': y_field,
-                  'series_name': series_name,
-                  'title': title,
-              }
-          
-          
-          def _to_float(value):
-              if isinstance(value, bool):
-                  return 1.0 if value else 0.0
-              if isinstance(value, (int, float)):
-                  return float(value)
-              text = str(value or '').strip()
-              if not text:
-                  return None
-              text = text.replace(',', '')
-              try:
-                  return float(text)
-              except Exception:
-                  return None
-          
-          
-          def _pick_chart_fields(visualization, normalized_execution_plan, rows):
-              first_row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
-              stages = (normalized_execution_plan or {}).get('stages') or []
-              stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}
-              group_fields = stage0.get('group_fields') or []
-              metric_alias = str(stage0.get('metric_alias') or '').strip()
-          
-              x_field = str((visualization or {}).get('x_field') or '').strip()
-              y_field = str((visualization or {}).get('y_field') or '').strip()
-          
-              if not x_field and group_fields:
-                  x_field = str(group_fields[0] or '').strip()
-              if not y_field and metric_alias:
-                  y_field = metric_alias
-          
-              if not y_field and isinstance(first_row, dict):
-                  for k, v in first_row.items():
-                      if _to_float(v) is not None:
-                          y_field = str(k)
-                          break
-          
-              if not x_field and isinstance(first_row, dict):
-                  for k, v in first_row.items():
-                      if _to_float(v) is None:
-                          x_field = str(k)
-                          break
-          
-              return x_field, y_field
-          
-          
-          def _build_local_chart(visualization, normalized_execution_plan, rows, chart_decision, question=''):
-              chart_type = str((visualization or {}).get('chart_type') or '').strip().lower() or str((chart_decision or {}).get('chart_type') or '').strip().lower() or 'bar'
-              if chart_type == 'column':
-                  chart_type = 'bar'
-              x_field, y_field = _pick_chart_fields(visualization, normalized_execution_plan, rows)
-              if not x_field or not y_field:
-                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½æ æ³ç¡®å®å¾è¡¨æ¨ªè½´æçºµè½´å­æ®µã'
-          
-              title = str((visualization or {}).get('title') or '').strip() or str(question or '').strip()
-              series_values = []
-              categories = []
-              pie_data = []
-              for row in rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  x_raw = row.get(x_field)
-                  x_val = str(x_raw).strip() if x_raw is not None else ''
-                  if not x_val:
-                      x_val = 'æªåç±»'
-                  y_num = _to_float(row.get(y_field))
-                  y_num = y_num if y_num is not None else 0
-                  categories.append(x_val)
-                  series_values.append(y_num)
-                  pie_data.append({'name': x_val, 'value': y_num})
-          
-              if not categories:
-                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½å¾è¡¨éç½®çæå¤±è´¥ï¼no valid chart points'
-          
-              if chart_type == 'pie':
-                  option = {
-                      'title': {'text': title} if title else {},
-                      'tooltip': {'trigger': 'item'},
-                      'series': [{'type': 'pie', 'data': pie_data}],
                   }
               else:
                   series_type = 'line' if chart_type == 'line' else 'bar'
@@ -206,55 +68,7 @@
                       'data': y_axis,
                   }],
               }
-          
-          
-          def _build_antv_tool_payload(chart_decision, visualization, rows):
-              if not chart_decision.get('enabled'):
-                  return {}
-              chart_type = str(chart_decision.get('chart_type') or 'bar')
-              x_field = str((visualization or {}).get('x_field') or '').strip()
-              y_field = str((visualization or {}).get('y_field') or '').strip()
-              title = str((visualization or {}).get('title') or '').strip()
-              if not x_field or not y_field:
-                  return {}
-              data = []
-              for row in rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  if row.get(x_field) is None or row.get(y_field) is None:
-                      continue
-                  point = {'value': row.get(y_field)}
-                  if chart_type in {'line', 'area'}:
-                      point['time'] = row.get(x_field)
-                  else:
-                      point['category'] = row.get(x_field)
-                  group = row.get('group')
-                  if group is not None:
-                      point['group'] = group
-                  data.append(point)
-              if not data:
-                  return {}
-              tool_name_map = {
-                  'bar': 'generate_bar_chart',
-                  'line': 'generate_line_chart',
-                  'pie': 'generate_pie_chart',
-                  'area': 'generate_area_chart',
-                  'boxplot': 'generate_boxplot_chart',
-              }
-              tool_name = tool_name_map.get(chart_type, 'generate_bar_chart')
-              return {
-                  'plugin_unique_identifier': 'antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c',
-                  'provider_name': 'antv/visualization/visualization',
-                  'tool_name': tool_name,
-                  'params': {
-                      'data': json.dumps(data, ensure_ascii=False),
-                      'title': title,
-                      'axisXTitle': x_field,
-                      'axisYTitle': y_field,
-                  }
-              }
-          
-          
+
           def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str):
               plan = _ensure_obj(semantic_plan, 'semantic_plan')
               planner = _ensure_obj(planner, 'planner')
@@ -329,17 +143,13 @@
               visualization = normalized_execution_plan.get('visualization') or {}
               chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'column'})
               chart_option = _build_echarts_option(visualization, merged_rows)
-              antv_tool_payload = _build_antv_tool_payload(chart_decision, visualization, merged_rows)
-              chart_payload = {
+                            chart_payload = {
                   'enabled': bool(chart_option),
-                  'renderer': 'antv',
+                  'renderer': 'echarts',
                   'library': 'echarts',
-                  'plugin_unique_identifier': 'antv/visualization:0.2.0',
-                  'plugin_tool': 'render_chart',
-                  'option': chart_option,
+                                                      'option': chart_option,
                   'decision': chart_decision,
-                  'antv_tool_payload': antv_tool_payload,
-              }
+                                }
           
               no_data_message = ''
               if visualization.get('enabled') and not (merged_rows or []):
@@ -366,12 +176,12 @@
                   'stage_execution_trace_json': json.dumps(stage_execution_trace, ensure_ascii=False),
                   'final_response_body': json.dumps(final_payload, ensure_ascii=False),
                   'final_response_summary': final_response_summary,
-                  'chart_enabled': 'true' if antv_tool_payload else 'false',
-                  'chart_type': str(chart_decision.get('chart_type') or '') if antv_tool_payload else '',
-                  'chart_data': ((antv_tool_payload.get('params') or {}).get('data') or ''),
-                  'chart_title': ((antv_tool_payload.get('params') or {}).get('title') or ''),
-                  'chart_axis_x_title': ((antv_tool_payload.get('params') or {}).get('axisXTitle') or ''),
-                  'chart_axis_y_title': ((antv_tool_payload.get('params') or {}).get('axisYTitle') or ''),
+                  'chart_enabled': 'true' if bool(chart_option) else 'false',
+                  'chart_type': str(chart_decision.get('chart_type') or '') if bool(chart_option) else '',
+                  'chart_data': json.dumps(chart_option, ensure_ascii=False) if bool(chart_option) else '',
+                  'chart_title': str((visualization or {}).get('title') or ''),
+                  'chart_axis_x_title': str(chart_x_field or ''),
+                  'chart_axis_y_title': str(chart_y_field or ''),
               }
           
 
@@ -998,3 +808,193 @@
                 type: string
               reasoning:
                 minLength: 1
+                type: string
+              visualization:
+                additionalProperties: false
+                properties:
+                  chart_type:
+                    enum:
+                    - bar
+                    - line
+                    - pie
+                    type: string
+                  enabled:
+                    type: boolean
+                  series_name:
+                    type: string
+                  title:
+                    type: string
+                  x_field:
+                    type: string
+                  y_field:
+                    type: string
+                type: object
+              stages:
+                items:
+                  additionalProperties: false
+                  properties:
+                    attach_as:
+                      type: string
+                    collection:
+                      minLength: 1
+                      type: string
+                    depends_on:
+                      type: string
+                    entity_field:
+                      type: string
+                    filters:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          field:
+                            minLength: 1
+                            type: string
+                          operator:
+                            enum:
+                            - eq
+                            - in
+                            - gt
+                            - gte
+                            - lt
+                            - lte
+                            - regex
+                            type: string
+                          value:
+                            oneOf:
+                            - type: string
+                            - type: number
+                            - type: integer
+                            - type: boolean
+                            - items:
+                                oneOf:
+                                - type: string
+                                - type: number
+                                - type: integer
+                                - type: boolean
+                              type: array
+                        required:
+                        - field
+                        - operator
+                        - value
+                        type: object
+                      type: array
+                    group_fields:
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                    intent_type:
+                      enum:
+                      - detail_query
+                      - aggregate_summary
+                      - group_top_entity
+                      - group_top_record
+                      - enrich_related
+                      type: string
+                    join_source_field:
+                      type: string
+                    join_target_field:
+                      type: string
+                    limit:
+                      maximum: 200
+                      minimum: 0
+                      type: integer
+                    metric_alias:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_function:
+                      enum:
+                      - ''
+                      - count
+                      - sum
+                      - avg
+                      - max
+                      - min
+                      type: string
+                    projection_fields:
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                    projection_mode:
+                      enum:
+                      - none
+                      - explicit
+                      - all_returnable
+                      type: string
+                    rank_direction:
+                      enum:
+                      - ''
+                      - asc
+                      - desc
+                      type: string
+                    rank_n:
+                      maximum: 200
+                      minimum: 0
+                      type: integer
+                    rank_order_field:
+                      type: string
+                    sort:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          direction:
+                            enum:
+                            - asc
+                            - desc
+                            type: string
+                          field:
+                            minLength: 1
+                            type: string
+                        required:
+                        - field
+                        - direction
+                        type: object
+                      type: array
+                    stage_name:
+                      minLength: 1
+                      type: string
+                    time_range:
+                      additionalProperties: false
+                      properties:
+                        end:
+                          type: string
+                        field:
+                          type: string
+                        mode:
+                          enum:
+                          - none
+                          - relative_days
+                          - absolute
+                          type: string
+                        relative_days:
+                          minimum: 0
+                          type: integer
+                        start:
+                          type: string
+                      required:
+                      - field
+                      - mode
+                      - relative_days
+                      type: object
+                  required:
+                  - stage_name
+                  - collection
+                  - depends_on
+                  - intent_type
+                  - filters
+                  - time_range
+                  - group_fields
+                  - entity_field
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - rank_n
+                  - rank_order_field
+                  - rank_direction
+                  - sort
+                  - limit
+                  - projection_mode
+                  - projection_fields
+                  - join_source_field
