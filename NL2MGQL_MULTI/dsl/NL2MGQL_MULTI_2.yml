@@ -1,3 +1,936 @@
+                  headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
+                  return int(getattr(e, 'code', 0) or 0), body_text, headers
+          
+          
+          def _merge_rows(left_rows, right_rows, left_field, right_field, attach_as):
+              right_index = {}
+              for row in right_rows or []:
+                  if not isinstance(row, dict):
+                      continue
+                  key = row.get(right_field)
+                  if isinstance(key, list):
+                      for item in key:
+                          if item is not None:
+                              right_index.setdefault(str(item), []).append(row)
+                  elif key is not None:
+                      right_index.setdefault(str(key), []).append(row)
+              merged = []
+              for row in left_rows or []:
+                  if not isinstance(row, dict):
+                      merged.append(row)
+                      continue
+                  item = dict(row)
+                  key = item.get(left_field)
+                  matches = []
+                  if isinstance(key, list):
+                      for val in key:
+                          matches.extend(right_index.get(str(val), []))
+                  elif key is not None:
+                      matches = right_index.get(str(key), [])
+                  if len(matches) == 1:
+                      item[attach_as] = matches[0]
+                  elif matches:
+                      item[attach_as] = matches
+                  merged.append(item)
+              return merged
+          
+          
+          def _normalize_visualization(value):
+              if not isinstance(value, dict):
+                  return {'enabled': False}
+              chart_type = str(value.get('chart_type') or '').strip().lower()
+              if chart_type not in {'bar', 'line', 'pie', 'area', 'boxplot'}:
+                  chart_type = 'bar'
+              x_field = str(value.get('x_field') or '').strip()
+              y_field = str(value.get('y_field') or '').strip()
+              series_name = str(value.get('series_name') or '').strip() or 'value'
+              title = str(value.get('title') or '').strip()
+              enabled = bool(value.get('enabled', bool(x_field and y_field)))
+              if chart_type == 'pie':
+                  enabled = bool(value.get('enabled', bool(x_field and y_field)))
+              return {
+                  'enabled': enabled,
+                  'chart_type': chart_type,
+                  'x_field': x_field,
+                  'y_field': y_field,
+                  'series_name': series_name,
+                  'title': title,
+              }
+          
+          
+          def _to_float(value):
+              if isinstance(value, bool):
+                  return 1.0 if value else 0.0
+              if isinstance(value, (int, float)):
+                  return float(value)
+              text = str(value or '').strip()
+              if not text:
+                  return None
+              text = text.replace(',', '')
+              try:
+                  return float(text)
+              except Exception:
+                  return None
+          
+          
+          def _pick_chart_fields(visualization, normalized_execution_plan, rows):
+              first_row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
+              stages = (normalized_execution_plan or {}).get('stages') or []
+              stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}
+              group_fields = stage0.get('group_fields') or []
+              metric_alias = str(stage0.get('metric_alias') or '').strip()
+          
+              x_field = str((visualization or {}).get('x_field') or '').strip()
+              y_field = str((visualization or {}).get('y_field') or '').strip()
+          
+              if not x_field and group_fields:
+                  x_field = str(group_fields[0] or '').strip()
+              if not y_field and metric_alias:
+                  y_field = metric_alias
+          
+              if not y_field and isinstance(first_row, dict):
+                  for k, v in first_row.items():
+                      if _to_float(v) is not None:
+                          y_field = str(k)
+                          break
+          
+              if not x_field and isinstance(first_row, dict):
+                  for k, v in first_row.items():
+                      if _to_float(v) is None:
+                          x_field = str(k)
+                          break
+          
+              return x_field, y_field
+          
+          
+          def _build_local_chart(visualization, normalized_execution_plan, rows, chart_decision, question=''):
+              chart_type = str((visualization or {}).get('chart_type') or '').strip().lower() or str((chart_decision or {}).get('chart_type') or '').strip().lower() or 'bar'
+              if chart_type == 'column':
+                  chart_type = 'bar'
+              x_field, y_field = _pick_chart_fields(visualization, normalized_execution_plan, rows)
+              if not x_field or not y_field:
+                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½æ æ³ç¡®å®å¾è¡¨æ¨ªè½´æçºµè½´å­æ®µã'
+          
+              title = str((visualization or {}).get('title') or '').strip() or str(question or '').strip()
+              series_values = []
+              categories = []
+              pie_data = []
+              for row in rows or []:
+                  if not isinstance(row, dict):
+                      continue
+                  x_raw = row.get(x_field)
+                  x_val = str(x_raw).strip() if x_raw is not None else ''
+                  if not x_val:
+                      x_val = 'æªåç±»'
+                  y_num = _to_float(row.get(y_field))
+                  y_num = y_num if y_num is not None else 0
+                  categories.append(x_val)
+                  series_values.append(y_num)
+                  pie_data.append({'name': x_val, 'value': y_num})
+          
+              if not categories:
+                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½å¾è¡¨éç½®çæå¤±è´¥ï¼no valid chart points'
+          
+              if chart_type == 'pie':
+                  option = {
+                      'title': {'text': title} if title else {},
+                      'tooltip': {'trigger': 'item'},
+                      'series': [{'type': 'pie', 'data': pie_data}],
+                  }
+              else:
+                  series_type = 'line' if chart_type == 'line' else 'bar'
+                  option = {
+                      'title': {'text': title} if title else {},
+                      'tooltip': {'trigger': 'axis'},
+                      'xAxis': {'type': 'category', 'data': categories},
+                      'yAxis': {'type': 'value'},
+                      'series': [{'type': series_type, 'data': series_values}],
+                  }
+          
+              fence = chr(96) * 3
+              echarts_markdown = (
+                  fence
+                  + "echarts
+          "
+                  + json.dumps(option, ensure_ascii=False, indent=2)
+                  + "
+          "
+                  + fence
+              )
+              return True, option, echarts_markdown, x_field, y_field, chart_type, ''
+          
+          
+          def _build_echarts_option(visualization, rows):
+              if not isinstance(visualization, dict) or not visualization.get('enabled'):
+                  return {}
+              if not isinstance(rows, list) or not rows:
+                  return {}
+              chart_type = str(visualization.get('chart_type') or 'bar').strip().lower()
+              x_field = str(visualization.get('x_field') or '').strip()
+              y_field = str(visualization.get('y_field') or '').strip()
+              title = str(visualization.get('title') or '').strip()
+              series_name = str(visualization.get('series_name') or 'value').strip() or 'value'
+              if not x_field or not y_field:
+                  return {}
+              points = []
+              for row in rows:
+                  if not isinstance(row, dict):
+                      continue
+                  x = row.get(x_field)
+                  y = row.get(y_field)
+                  if x is None or y is None:
+                      continue
+                  points.append((x, y))
+              if not points:
+                  return {}
+              if chart_type == 'pie':
+                  return {
+                      'title': {'text': title} if title else {},
+                      'tooltip': {'trigger': 'item'},
+                      'series': [{
+                          'name': series_name,
+                          'type': 'pie',
+                          'data': [{'name': str(x), 'value': y} for x, y in points],
+                      }],
+                  }
+              x_axis = [str(x) for x, _ in points]
+              y_axis = [y for _, y in points]
+              return {
+                  'title': {'text': title} if title else {},
+                  'tooltip': {'trigger': 'axis'},
+                  'xAxis': {'type': 'category', 'data': x_axis},
+                  'yAxis': {'type': 'value'},
+                  'series': [{
+                      'name': series_name,
+                      'type': 'line' if chart_type == 'line' else 'bar',
+                      'data': y_axis,
+                  }],
+              }
+          
+          
+          def _build_antv_tool_payload(chart_decision, visualization, rows):
+              if not chart_decision.get('enabled'):
+                  return {}
+              chart_type = str(chart_decision.get('chart_type') or 'bar')
+              x_field = str((visualization or {}).get('x_field') or '').strip()
+              y_field = str((visualization or {}).get('y_field') or '').strip()
+              title = str((visualization or {}).get('title') or '').strip()
+              if not x_field or not y_field:
+                  return {}
+              data = []
+              for row in rows or []:
+                  if not isinstance(row, dict):
+                      continue
+                  if row.get(x_field) is None or row.get(y_field) is None:
+                      continue
+                  point = {'value': row.get(y_field)}
+                  if chart_type in {'line', 'area'}:
+                      point['time'] = row.get(x_field)
+                  else:
+                      point['category'] = row.get(x_field)
+                  group = row.get('group')
+                  if group is not None:
+                      point['group'] = group
+                  data.append(point)
+              if not data:
+                  return {}
+              tool_name_map = {
+                  'bar': 'generate_bar_chart',
+                  'line': 'generate_line_chart',
+                  'pie': 'generate_pie_chart',
+                  'area': 'generate_area_chart',
+                  'boxplot': 'generate_boxplot_chart',
+              }
+              tool_name = tool_name_map.get(chart_type, 'generate_bar_chart')
+              return {
+                  'plugin_unique_identifier': 'antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c',
+                  'provider_name': 'antv/visualization/visualization',
+                  'tool_name': tool_name,
+                  'params': {
+                      'data': json.dumps(data, ensure_ascii=False),
+                      'title': title,
+                      'axisXTitle': x_field,
+                      'axisYTitle': y_field,
+                  }
+              }
+          
+          
+          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str):
+              plan = _ensure_obj(semantic_plan, 'semantic_plan')
+              planner = _ensure_obj(planner, 'planner')
+              urls = _parse_query_urls(query_urls)
+              if not urls:
+                  raise ValueError('SN_MONGODB_QUERY_URLS is empty')
+          
+              normalized_execution_plan = _normalize_plan(plan, planner, question)
+              stage_outputs = {}
+              stage_execution_trace = []
+          
+              for stage in normalized_execution_plan.get('stages') or []:
+                  stage = _sanitize_stage_for_compile(stage)
+                  validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
+                  pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
+                  selected_url = ''
+                  request_id = uuid.uuid4().hex
+                  request_body = {}
+                  status_code = 0
+                  response_body = ''
+                  response_headers = {}
+                  rows = []
+                  reason = ''
+                  if not skip_query:
+                      selected_url = random.choice(urls)
+                      request_body = {
+                          'validated_ast': validated_ast or {},
+                          'pipeline_json': pipeline_json,
+                          'validation_message': 'ok',
+                          'request_id': request_id,
+                      }
+                      status_code, response_body, response_headers = _post_json(selected_url, request_body)
+                      if status_code < 200 or status_code >= 300:
+                          raise ValueError(f"stage `{stage['stage_name']}` query failed: status={status_code}, body={response_body[:1200]}")
+                      response_json = _read_json_text(response_body)
+                      rows = _find_best_rows(response_json)
+                  else:
+                      response_body = json.dumps({'msg': 'skip query', 'code': 200, 'data': {'rows': []}}, ensure_ascii=False)
+                      rows = []
+                      reason = 'no join values from previous stage'
+          
+                  trace_item = {
+                      'stage_name': stage['stage_name'],
+                      'collection': stage['collection'],
+                      'intent_type': stage['intent_type'],
+                      'sanitize_report': stage.get('sanitize_report') or {},
+                      'validated_ast': validated_ast,
+                      'pipeline': pipeline,
+                      'pipeline_json': pipeline_json,
+                      'selected_url': selected_url,
+                      'request_id': request_id,
+                      'query_request_body': request_body,
+                      'query_status_code': status_code,
+                      'query_response_body': response_body,
+                      'query_response_headers': response_headers,
+                      'rows': rows,
+                      'skipped': bool(skip_query),
+                      'skip_reason': reason,
+                  }
+                  stage_execution_trace.append(trace_item)
+                  stage_outputs[stage['stage_name']] = trace_item
+          
+              execution_mode = normalized_execution_plan.get('execution_mode')
+              final_merge = normalized_execution_plan.get('final_merge') or {}
+              if execution_mode == 'multi_stage' and final_merge.get('left_stage') and final_merge.get('right_stage'):
+                  left_rows = (stage_outputs.get(final_merge['left_stage']) or {}).get('rows') or []
+                  right_rows = (stage_outputs.get(final_merge['right_stage']) or {}).get('rows') or []
+                  merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), final_merge.get('attach_as') or 'related_info')
+              else:
+                  first_stage_name = normalized_execution_plan['stages'][0]['stage_name']
+                  merged_rows = (stage_outputs.get(first_stage_name) or {}).get('rows') or []
+              visualization = normalized_execution_plan.get('visualization') or {}
+              chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'column'})
+              chart_option = _build_echarts_option(visualization, merged_rows)
+              antv_tool_payload = _build_antv_tool_payload(chart_decision, visualization, merged_rows)
+              chart_payload = {
+                  'enabled': bool(chart_option),
+                  'renderer': 'antv',
+                  'library': 'echarts',
+                  'plugin_unique_identifier': 'antv/visualization:0.2.0',
+                  'plugin_tool': 'render_chart',
+                  'option': chart_option,
+                  'decision': chart_decision,
+                  'antv_tool_payload': antv_tool_payload,
+              }
+          
+              no_data_message = ''
+              if visualization.get('enabled') and not (merged_rows or []):
+                  no_data_message = 'æ¥è¯¢æåï¼ä½ç»æä¸ºç©ºï¼æ æ³çæå¾è¡¨ã'
+              final_payload = {
+                  'question': str(question or '').strip(),
+                  'normalized_execution_plan': normalized_execution_plan,
+                  'stage_execution_trace': stage_execution_trace,
+                  'merged_rows': merged_rows,
+                  'chart': chart_payload,
+                  'message': no_data_message,
+              }
+              final_response_summary = {
+                  'question': str(question or '').strip(),
+                  'execution_mode': str(normalized_execution_plan.get('execution_mode') or ''),
+                  'stage_count': len(normalized_execution_plan.get('stages') or []),
+                  'merged_row_count': len(merged_rows or []),
+                  'has_chart': bool((chart_payload or {}).get('enabled')),
+                  'chart_type': str(chart_decision.get('chart_type') or ''),
+                  'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
+              }
+              return {
+                  'normalized_execution_plan_json': json.dumps(normalized_execution_plan, ensure_ascii=False),
+                  'stage_execution_trace_json': json.dumps(stage_execution_trace, ensure_ascii=False),
+                  'final_response_body': json.dumps(final_payload, ensure_ascii=False),
+                  'final_response_summary': final_response_summary,
+                  'chart_enabled': 'true' if antv_tool_payload else 'false',
+                  'chart_type': str(chart_decision.get('chart_type') or '') if antv_tool_payload else '',
+                  'chart_data': ((antv_tool_payload.get('params') or {}).get('data') or ''),
+                  'chart_title': ((antv_tool_payload.get('params') or {}).get('title') or ''),
+                  'chart_axis_x_title': ((antv_tool_payload.get('params') or {}).get('axisXTitle') or ''),
+                  'chart_axis_y_title': ((antv_tool_payload.get('params') or {}).get('axisYTitle') or ''),
+              }
+          
+
+        code_language: python3
+        desc: 校验语义计划并编译第一阶段 Pipeline
+        outputs:
+          final_response_body:
+            children: null
+            type: string
+          final_response_summary:
+            children: null
+            type: object
+          normalized_execution_plan_json:
+            children: null
+            type: string
+          stage_execution_trace_json:
+            children: null
+            type: string
+          chart_enabled:
+            children: null
+            type: string
+          chart_type:
+            children: null
+            type: string
+          chart_data:
+            children: null
+            type: string
+          chart_title:
+            children: null
+            type: string
+          chart_axis_x_title:
+            children: null
+            type: string
+          chart_axis_y_title:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_遍历语义计划并统一编译执行
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan
+          value_type: object
+          variable: semantic_plan
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+        - value_selector:
+          - '1773909192919'
+          - question
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - env
+          - SN_MONGODB_QUERY_URLS
+          value_type: string
+          variable: query_urls
+      height: 80
+      id: '1775000000007'
+      position:
+        x: 4090
+        y: 280
+      positionAbsolute:
+        x: 4090
+        y: 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: token-body-1
+            key: ''
+            type: text
+            value: '{{#1775000000005.token_request_body_json#}}'
+          type: json
+        desc: 使用静态token换取动态token
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_获取动态Token
+        type: http-request
+        url: '{{#1775000000005.token_url#}}'
+        variables: []
+      height: 123
+      id: '1775000000010'
+      position:
+        x: 2210
+        y: 120
+      positionAbsolute:
+        x: 2210
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\n\nUNSUPPORTED_JSON_SCHEMA_KEYS = {\n    'uniqueItems',\n\
+          }\n\n\ndef _truncate_text(text, limit=2000):\n    text = '' if text is None\
+          \ else str(text)\n    return text if len(text) <= limit else text[:limit]\
+          \ + '...'\n\n\ndef _read_json_text(text):\n    if text is None:\n      \
+          \  return None\n    if isinstance(text, (dict, list)):\n        return text\n\
+          \    raw = str(text).strip()\n    if not raw:\n        return None\n   \
+          \ return json.loads(raw)\n\n\ndef _first_non_empty_string(*values):\n  \
+          \  for value in values:\n        if isinstance(value, str) and value.strip():\n\
+          \            return value.strip()\n    return ''\n\n\ndef _sanitize_json_schema(value):\n\
+          \    if isinstance(value, dict):\n        cleaned = {}\n        for key,\
+          \ item in value.items():\n            if key in UNSUPPORTED_JSON_SCHEMA_KEYS:\n\
+          \                continue\n            cleaned[key] = _sanitize_json_schema(item)\n\
+          \        return cleaned\n    if isinstance(value, list):\n        return\
+          \ [_sanitize_json_schema(item) for item in value]\n    return value\n\n\n\
+          def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt:\
+          \ str, semantic_plan_json_schema: str,\n         chat_url: str, llm_config_json:\
+          \ str, request_id: str):\n    try:\n        code = int(status_code or 0)\n\
+          \        if code < 200 or code >= 300:\n            raise ValueError(f\"\
+          动态token获取失败, status={code}, body={_truncate_text(body, 2000)}\")\n     \
+          \   resp_json = _read_json_text(body)\n        if not resp_json or not isinstance(resp_json,\
+          \ dict):\n            raise ValueError(f\"动态token响应不是合法JSON: {_truncate_text(body,\
+          \ 1200)}\")\n        token = _first_non_empty_string(\n            resp_json.get('result'),\n\
+          \            resp_json.get('token'),\n            resp_json.get('dynamicToken'),\n\
+          \            (resp_json.get('data') or {}).get('result') if isinstance(resp_json.get('data'),\
+          \ dict) else '',\n            (resp_json.get('data') or {}).get('token')\
+          \ if isinstance(resp_json.get('data'), dict) else ''\n        )\n      \
+          \  if not token:\n            raise ValueError(f\"动态token为空, body={_truncate_text(body,\
+          \ 2000)}\")\n        llm_config = _read_json_text(llm_config_json)\n   \
+          \     if not llm_config or not isinstance(llm_config, dict):\n         \
+          \   raise ValueError('llm_config_json 不是合法JSON对象')\n        schema = _read_json_text(semantic_plan_json_schema)\n\
+          \        if not schema or not isinstance(schema, dict):\n            raise\
+          \ ValueError('semantic_plan_json_schema 不是合法JSON对象')\n        sanitized_schema\
+          \ = _sanitize_json_schema(schema)\n        if not sanitized_schema or not\
+          \ isinstance(sanitized_schema, dict):\n            raise ValueError('清洗后的\
+          \ semantic_plan_json_schema 不是合法JSON对象')\n        authorization_prefix =\
+          \ str(llm_config.get('authorization-prefix') or '')\n        authorization_value\
+          \ = f\"{authorization_prefix}{token}\"\n        request_body = {\n     \
+          \       'model': llm_config.get('model'),\n            'messages': [\n \
+          \               {'role': 'system', 'content': semantic_plan_system_prompt},\n\
+          \                {'role': 'user', 'content': semantic_plan_user_prompt},\n\
+          \            ],\n            'stream': bool(llm_config.get('stream', False)),\n\
+          \            'temperature': llm_config.get('temperature', 0),\n        \
+          \    'top_p': llm_config.get('top_p', 1),\n            'max_completion_tokens':\
+          \ llm_config.get('max_completion_tokens', 12288),\n            'user': llm_config.get('user',\
+          \ ''),\n            'response_format': {\n                'type': 'json_schema',\n\
+          \                'json_schema': {\n                    'name': 'semantic_execution_plan',\n\
+          \                    'strict': True,\n                    'schema': sanitized_schema,\n\
+          \                }\n            }\n        }\n        return {\n       \
+          \     'request_enabled': 'true',\n            'full_request_error': '',\n\
+          \            'chat_url': chat_url,\n            'authorization_value': authorization_value,\n\
+          \            'llm_request_body_json': json.dumps(request_body, ensure_ascii=False),\n\
+          \            'request_id': request_id,\n        }\n    except Exception\
+          \ as e:\n        return {\n            'request_enabled': 'false',\n   \
+          \         'full_request_error': _truncate_text(str(e), 2000),\n        \
+          \    'chat_url': str(chat_url or '').strip(),\n            'authorization_value':\
+          \ '',\n            'llm_request_body_json': '',\n            'request_id':\
+          \ str(request_id or '').strip(),\n        }\n"
+        code_language: python3
+        desc: 解析动态token并构造满血版LLM请求体；失败时转本地LLM
+        outputs:
+          authorization_value:
+            children: null
+            type: string
+          chat_url:
+            children: null
+            type: string
+          full_request_error:
+            children: null
+            type: string
+          llm_request_body_json:
+            children: null
+            type: string
+          request_enabled:
+            children: null
+            type: string
+          request_id:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_构造满血LLM语义计划请求
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000010'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000010'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_system_prompt
+          value_type: string
+          variable: semantic_plan_system_prompt
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_user_prompt
+          value_type: string
+          variable: semantic_plan_user_prompt
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_json_schema
+          value_type: string
+          variable: semantic_plan_json_schema
+        - value_selector:
+          - '1775000000005'
+          - chat_url
+          value_type: string
+          variable: chat_url
+        - value_selector:
+          - '1775000000005'
+          - llm_config_json
+          value_type: string
+          variable: llm_config_json
+        - value_selector:
+          - '1775000000005'
+          - request_id
+          value_type: string
+          variable: request_id
+      height: 96
+      id: '1775000000011'
+      position:
+        x: 2524
+        y: 120
+      positionAbsolute:
+        x: 2524
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config: null
+          type: no-auth
+        body:
+          data:
+          - id: llm-body-1
+            key: ''
+            type: text
+            value: '{{#1775000000011.llm_request_body_json#}}'
+          type: json
+        desc: 调用内部满血版LLM生成跨Collection AST
+        headers: 'Content-Type:application/json
+
+          Authorization:{{#1775000000011.authorization_value#}}'
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 1
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          connect: 6000
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+          read: 6000
+          write: 5998
+        title: HTTP请求_调用满血LLM
+        type: http-request
+        url: '{{#1775000000011.chat_url#}}'
+        variables: []
+      height: 139
+      id: '1775000000012'
+      position:
+        x: 2838
+        y: 120
+      positionAbsolute:
+        x: 2838
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nimport re\n\n\ndef _truncate_text(text, limit=2000):\n\
+          \    text = '' if text is None else str(text)\n    return text if len(text)\
+          \ <= limit else text[:limit] + '...'\n\n\ndef _read_json_text(text):\n \
+          \   if text is None:\n        return None\n    if isinstance(text, (dict,\
+          \ list)):\n        return text\n    raw = str(text).strip()\n    if not\
+          \ raw:\n        return None\n    return json.loads(raw)\n\n\ndef _content_to_text(content):\n\
+          \    if isinstance(content, str):\n        return content.strip()\n    if\
+          \ isinstance(content, list):\n        parts = []\n        for item in content:\n\
+          \            if isinstance(item, str) and item.strip():\n              \
+          \  parts.append(item.strip())\n            elif isinstance(item, dict):\n\
+          \                text = str(item.get('text') or item.get('content') or '').strip()\n\
+          \                if text:\n                    parts.append(text)\n    \
+          \    return '\\n'.join(parts).strip()\n    return ''\n\n\ndef _extract_chat_text(resp_json):\n\
+          \    if not isinstance(resp_json, dict):\n        return ''\n    choices\
+          \ = resp_json.get('choices')\n    if isinstance(choices, list) and choices:\n\
+          \        first = choices[0] or {}\n        if isinstance(first, dict):\n\
+          \            msg = first.get('message') or {}\n            if isinstance(msg,\
+          \ dict):\n                text = _content_to_text(msg.get('content'))\n\
+          \                if text:\n                    return text\n           \
+          \ text = _content_to_text(first.get('text'))\n            if text:\n   \
+          \             return text\n    output = resp_json.get('output')\n    text\
+          \ = _content_to_text(output)\n    if text:\n        return text\n    if\
+          \ isinstance(output, list):\n        for item in output:\n            if\
+          \ isinstance(item, dict):\n                text = _content_to_text(item.get('content'))\n\
+          \                if text:\n                    return text\n    for key\
+          \ in ('result', 'text', 'content', 'answer'):\n        text = _content_to_text(resp_json.get(key))\n\
+          \        if text:\n            return text\n    data = resp_json.get('data')\n\
+          \    if isinstance(data, dict):\n        for key in ('result', 'text', 'content',\
+          \ 'answer'):\n            text = _content_to_text(data.get(key))\n     \
+          \       if text:\n                return text\n    return ''\n\n\ndef _strip_code_fence(text):\n\
+          \    raw = str(text or '').strip()\n    full_match = re.match(r'^```(?:json)?\\\
+          s*(.*?)\\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)\n    if full_match:\n\
+          \        return full_match.group(1).strip()\n    return raw\n\n\ndef _remove_think_blocks(text):\n\
+          \    raw = str(text or '')\n    raw = re.sub(r'<think>.*?</think>', ' ',\
+          \ raw, flags=re.IGNORECASE | re.DOTALL)\n    return raw.strip()\n\n\ndef\
+          \ _ast_candidate_score(obj):\n    if not isinstance(obj, dict):\n      \
+          \  return -1\n    score = 0\n    keys = set(obj.keys())\n    for key in\
+          \ ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate',\
+          \ 'expands', 'time_range', 'limit'):\n        if key in keys:\n        \
+          \    score += 2\n    if keys:\n        score += 1\n    return score\n\n\n\
+          def _try_decode_object(raw):\n    try:\n        decoder = json.JSONDecoder()\n\
+          \        obj, end = decoder.raw_decode(raw)\n        if isinstance(obj,\
+          \ dict):\n            return obj, raw[:end], raw[end:].strip()\n    except\
+          \ Exception:\n        return None\n    return None\n\n\ndef _extract_json_object_text(text):\n\
+          \    raw = _remove_think_blocks(_strip_code_fence(text))\n    if not raw:\n\
+          \        raise ValueError('LLM返回内容为空')\n    direct = _try_decode_object(raw)\n\
+          \    if direct and not direct[2]:\n        return direct[1]\n    candidates\
+          \ = []\n    for block in re.findall(r'```(?:json)?\\s*(.*?)```', raw, flags=re.IGNORECASE\
+          \ | re.DOTALL):\n        parsed = _try_decode_object(block.strip())\n  \
+          \      if parsed:\n            obj, obj_text, tail = parsed\n          \
+          \  candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))\n\
+          \    seen_positions = set()\n    for match in re.finditer(r'\\{', raw):\n\
+          \        pos = match.start()\n        if pos in seen_positions:\n      \
+          \      continue\n        seen_positions.add(pos)\n        parsed = _try_decode_object(raw[pos:])\n\
+          \        if parsed:\n            obj, obj_text, tail = parsed\n        \
+          \    candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))\n\
+          \    if candidates:\n        candidates.sort(key=lambda item: (-item[0],\
+          \ item[1], -len(item[2])))\n        return candidates[0][2]\n    raise ValueError(f'LLM返回内容不是合法JSON对象:\
+          \ {_truncate_text(raw, 1200)}')\n\n\ndef _pick_response(full_status_code,\
+          \ full_body, local_status_code, local_body):\n    local_body_text = '' if\
+          \ local_body is None else str(local_body).strip()\n    if local_body_text:\n\
+          \        return int(local_status_code or 0), local_body, 'local_llm'\n \
+          \   return int(full_status_code or 0), full_body, 'full_llm'\n\n\ndef main(full_status_code,\
+          \ full_body, local_status_code, local_body):\n    code, body, _source =\
+          \ _pick_response(full_status_code, full_body, local_status_code, local_body)\n\
+          \    if code < 200 or code >= 300:\n        raise ValueError(f\"LLM调用失败,\
+          \ status={code}, body={_truncate_text(body, 2000)}\")\n    if not body:\n\
+          \        raise ValueError('LLM返回body为空')\n    resp_json = _read_json_text(body)\n\
+          \    if not resp_json:\n        raise ValueError(f\"LLM响应不是合法JSON: {_truncate_text(body,\
+          \ 1200)}\")\n    result = _extract_chat_text(resp_json)\n    if not result:\n\
+          \        raise ValueError(f\"LLM返回内容为空, body={_truncate_text(body, 2000)}\"\
+          )\n    semantic_plan_text = _extract_json_object_text(result)\n    semantic_plan\
+          \ = json.loads(semantic_plan_text)\n    if not isinstance(semantic_plan,\
+          \ dict):\n        raise ValueError('LLM返回语义计划不是JSON对象')\n    return {'semantic_plan':\
+          \ semantic_plan, 'semantic_plan_raw_text': result}\n"
+        code_language: python3
+        desc: 统一解析满血/本地LLM响应并提取AST JSON
+        outputs:
+          semantic_plan:
+            children: null
+            type: object
+          semantic_plan_raw_text:
+            children: null
+            type: string
+        selected: true
+        title: 代码执行_提取语义计划结果
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000012'
+          - status_code
+          value_type: number
+          variable: full_status_code
+        - value_selector:
+          - '1775000000012'
+          - body
+          value_type: string
+          variable: full_body
+        - value_selector:
+          - '1775000000019'
+          - status_code
+          value_type: number
+          variable: local_status_code
+        - value_selector:
+          - '1775000000019'
+          - body
+          value_type: string
+          variable: local_body
+      height: 96
+      id: '1775000000013'
+      position:
+        x: 3776.6804920892264
+        y: 280
+      positionAbsolute:
+        x: 3776.6804920892264
+        y: 280
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 19f817f4-cd31-49fb-a97e-9aebd2531262
+            value: 'true'
+            varType: string
+            variable_selector:
+            - env
+            - ENABLE_FULL_LLM
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_是否启用满血LLM
+        type: if-else
+      height: 124
+      id: '1775000000014'
+      position:
+        x: 2210
+        y: 320
+      positionAbsolute:
+        x: 2210
+        y: 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ad4255b8-c185-494f-a717-76ba66eb92c5
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000011'
+            - request_enabled
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血请求是否可用
+        type: if-else
+      height: 148
+      id: '1775000000015'
+      position:
+        x: 2524
+        y: 258.2072454929678
+      positionAbsolute:
+        x: 2524
+        y: 258.2072454929678
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "def _truncate_text(text, limit=1200):\n    text = '' if text is None\
+          \ else str(text)\n    return text if len(text) <= limit else text[:limit]\
+          \ + '...'\n\n\ndef main(status_code, body):\n    code = int(status_code\
+          \ or 0)\n    body_text = '' if body is None else str(body).strip()\n   \
+          \ ok = 200 <= code < 300 and bool(body_text)\n    return {\n        'full_http_ok':\
+          \ 'true' if ok else 'false',\n        'full_http_error': '' if ok else f\"\
+          status={code}, body={_truncate_text(body, 1200)}\",\n    }\n"
+        code_language: python3
+        desc: 根据满血LLM HTTP状态决定是否回退本地LLM
+        outputs:
+          full_http_error:
+            children: null
+            type: string
+          full_http_ok:
+            children: null
+            type: string
+        selected: false
+        title: 代码执行_判断满血LLM状态
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000012'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000012'
+          - body
+          value_type: string
+          variable: body
+      height: 96
+      id: '1775000000016'
+      position:
+        x: 3150
+        y: 190
+      positionAbsolute:
+        x: 3150
+        y: 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 8a92198b-df4d-4bcf-8338-fa4f5b701933
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000016'
+            - full_http_ok
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血LLM是否成功
+        type: if-else
+      height: 148
+      id: '1775000000017'
+      position:
+        x: 3465
+        y: 190
+      positionAbsolute:
+        x: 3465
+        y: 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     - data:
         context:
           enabled: false
@@ -65,1315 +998,3 @@
                 type: string
               reasoning:
                 minLength: 1
-                type: string
-              visualization:
-                additionalProperties: false
-                properties:
-                  chart_type:
-                    enum:
-                    - bar
-                    - line
-                    - pie
-                    type: string
-                  enabled:
-                    type: boolean
-                  series_name:
-                    type: string
-                  title:
-                    type: string
-                  x_field:
-                    type: string
-                  y_field:
-                    type: string
-                type: object
-              stages:
-                items:
-                  additionalProperties: false
-                  properties:
-                    attach_as:
-                      type: string
-                    collection:
-                      minLength: 1
-                      type: string
-                    depends_on:
-                      type: string
-                    entity_field:
-                      type: string
-                    filters:
-                      items:
-                        additionalProperties: false
-                        properties:
-                          field:
-                            minLength: 1
-                            type: string
-                          operator:
-                            enum:
-                            - eq
-                            - in
-                            - gt
-                            - gte
-                            - lt
-                            - lte
-                            - regex
-                            type: string
-                          value:
-                            oneOf:
-                            - type: string
-                            - type: number
-                            - type: integer
-                            - type: boolean
-                            - items:
-                                oneOf:
-                                - type: string
-                                - type: number
-                                - type: integer
-                                - type: boolean
-                              type: array
-                        required:
-                        - field
-                        - operator
-                        - value
-                        type: object
-                      type: array
-                    group_fields:
-                      items:
-                        minLength: 1
-                        type: string
-                      type: array
-                    intent_type:
-                      enum:
-                      - detail_query
-                      - aggregate_summary
-                      - group_top_entity
-                      - group_top_record
-                      - enrich_related
-                      type: string
-                    join_source_field:
-                      type: string
-                    join_target_field:
-                      type: string
-                    limit:
-                      maximum: 200
-                      minimum: 0
-                      type: integer
-                    metric_alias:
-                      type: string
-                    metric_field:
-                      type: string
-                    metric_function:
-                      enum:
-                      - ''
-                      - count
-                      - sum
-                      - avg
-                      - max
-                      - min
-                      type: string
-                    projection_fields:
-                      items:
-                        minLength: 1
-                        type: string
-                      type: array
-                    projection_mode:
-                      enum:
-                      - none
-                      - explicit
-                      - all_returnable
-                      type: string
-                    rank_direction:
-                      enum:
-                      - ''
-                      - asc
-                      - desc
-                      type: string
-                    rank_n:
-                      maximum: 200
-                      minimum: 0
-                      type: integer
-                    rank_order_field:
-                      type: string
-                    sort:
-                      items:
-                        additionalProperties: false
-                        properties:
-                          direction:
-                            enum:
-                            - asc
-                            - desc
-                            type: string
-                          field:
-                            minLength: 1
-                            type: string
-                        required:
-                        - field
-                        - direction
-                        type: object
-                      type: array
-                    stage_name:
-                      minLength: 1
-                      type: string
-                    time_range:
-                      additionalProperties: false
-                      properties:
-                        end:
-                          type: string
-                        field:
-                          type: string
-                        mode:
-                          enum:
-                          - none
-                          - relative_days
-                          - absolute
-                          type: string
-                        relative_days:
-                          minimum: 0
-                          type: integer
-                        start:
-                          type: string
-                      required:
-                      - field
-                      - mode
-                      - relative_days
-                      type: object
-                  required:
-                  - stage_name
-                  - collection
-                  - depends_on
-                  - intent_type
-                  - filters
-                  - time_range
-                  - group_fields
-                  - entity_field
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - rank_n
-                  - rank_order_field
-                  - rank_direction
-                  - sort
-                  - limit
-                  - projection_mode
-                  - projection_fields
-                  - join_source_field
-                  - join_target_field
-                  - attach_as
-                  type: object
-                maxItems: 2
-                minItems: 1
-                type: array
-            required:
-            - execution_mode
-            - primary_collection
-            - collections
-            - stages
-            - final_merge
-            - reasoning
-            type: object
-        structured_output_enabled: true
-        title: LLM_本地兜底生成语义计划
-        type: llm
-        vision:
-          enabled: false
-      height: 132
-      id: '1775000000018'
-      position:
-        x: 3114.1045592009455
-        y: 470
-      positionAbsolute:
-        x: 3114.1045592009455
-        y: 470
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: "import json\n\n\ndef main(text: str):\n    raw = str(text or '').strip()\n\
-          \    if not raw:\n        raise ValueError('本地LLM返回为空')\n    body = {\n\
-          \        'choices': [\n            {\n                'message': {\n   \
-          \                 'content': raw,\n                }\n            }\n  \
-          \      ]\n    }\n    return {\n        'status_code': 200,\n        'body':\
-          \ json.dumps(body, ensure_ascii=False),\n    }\n"
-        code_language: python3
-        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
-        outputs:
-          body:
-            children: null
-            type: string
-          status_code:
-            children: null
-            type: number
-        selected: false
-        title: 代码执行_包装本地LLM响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000018'
-          - text
-          value_type: string
-          variable: text
-      height: 96
-      id: '1775000000019'
-      position:
-        x: 3634.2013852363016
-        y: 470
-      positionAbsolute:
-        x: 3634.2013852363016
-        y: 470
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: bar
-          conditions:
-          - comparison_operator: is
-            id: chart-type-bar
-            value: bar
-            varType: string
-            variable_selector:
-            - '1775000000007'
-            - chart_type
-          id: bar
-          logical_operator: and
-        - case_id: line
-          conditions:
-          - comparison_operator: is
-            id: chart-type-line
-            value: line
-            varType: string
-            variable_selector:
-            - '1775000000007'
-            - chart_type
-          id: line
-          logical_operator: and
-        - case_id: pie
-          conditions:
-          - comparison_operator: is
-            id: chart-type-pie
-            value: pie
-            varType: string
-            variable_selector:
-            - '1775000000007'
-            - chart_type
-          id: pie
-          logical_operator: and
-        - case_id: area
-          conditions:
-          - comparison_operator: is
-            id: chart-type-area
-            value: area
-            varType: string
-            variable_selector:
-            - '1775000000007'
-            - chart_type
-          id: area
-          logical_operator: and
-        - case_id: boxplot
-          conditions:
-          - comparison_operator: is
-            id: chart-type-boxplot
-            value: boxplot
-            varType: string
-            variable_selector:
-            - '1775000000007'
-            - chart_type
-          id: boxplot
-          logical_operator: and
-        desc: 根据最终数据和 visualization 决策选择 AntV 图表插件
-        selected: false
-        title: 条件分支_选择AntV图表插件
-        type: if-else
-      height: 220
-      id: '1779000000001'
-      position:
-        x: 4400
-        y: 280
-      positionAbsolute:
-        x: 4400
-        y: 280
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        is_team_authorization: true
-        paramSchemas:
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Chart data, JSON string generated from final query rows.
-            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
-          label:
-            en_US: data
-            zh_Hans: 图表数据
-          llm_description: Chart data JSON string.
-          max: null
-          min: null
-          name: data
-          options: []
-          placeholder: null
-          precision: null
-          required: true
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: 600
-          form: form
-          human_description:
-            en_US: Set the width of chart, default is 600.
-            zh_Hans: 请设置图表宽度，默认值为 600。
-          label:
-            en_US: width
-            zh_Hans: 宽
-          llm_description: Set the width of chart, default is 600.
-          max: null
-          min: null
-          name: width
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: 400
-          form: form
-          human_description:
-            en_US: Set the height of chart, default is 400.
-            zh_Hans: 请设置图表高度，默认值为 400。
-          label:
-            en_US: height
-            zh_Hans: 高
-          llm_description: Set the height of chart, default is 400.
-          max: null
-          min: null
-          name: height
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the title of chart.
-            zh_Hans: 请设置图表名称。
-          label:
-            en_US: title
-            zh_Hans: 图表名称
-          llm_description: Set the title of chart.
-          max: null
-          min: null
-          name: title
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisXTitle of chart.
-            zh_Hans: 请填写图表 X 轴名称。
-          label:
-            en_US: axisXTitle
-            zh_Hans: 图表 X 轴名称
-          llm_description: Set the axisXTitle of chart.
-          max: null
-          min: null
-          name: axisXTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisYTitle of chart.
-            zh_Hans: 请填写图表 Y 轴名称。
-          label:
-            en_US: axisYTitle
-            zh_Hans: 图表 Y 轴名称
-          llm_description: Set the axisYTitle of chart.
-          max: null
-          min: null
-          name: axisYTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        params:
-          axisXTitle: ''
-          axisYTitle: ''
-          data: ''
-          height: ''
-          style: ''
-          theme: ''
-          title: ''
-          width: ''
-        plugin_id: antv/visualization
-        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
-        provider_id: antv/visualization/visualization
-        provider_name: antv/visualization/visualization
-        provider_type: builtin
-        selected: false
-        title: 生成柱状图
-        tool_configurations:
-          height:
-            type: constant
-            value: 400
-          style:
-            type: mixed
-            value: null
-          theme:
-            type: constant
-            value: default
-          width:
-            type: constant
-            value: 600
-        tool_description: 根据最终查询结果自动生成 生成柱状图。
-        tool_label: 生成柱状图
-        tool_name: generate_bar_chart
-        tool_node_version: '2'
-        tool_parameters:
-          axisXTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_x_title#}}'
-          axisYTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_y_title#}}'
-          data:
-            type: mixed
-            value: '{{#1775000000007.chart_data#}}'
-          title:
-            type: mixed
-            value: '{{#1775000000007.chart_title#}}'
-        type: tool
-      height: 166
-      id: '1779000000010'
-      position:
-        x: 4700
-        y: 80
-      positionAbsolute:
-        x: 4700
-        y: 80
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        is_team_authorization: true
-        paramSchemas:
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Chart data, JSON string generated from final query rows.
-            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
-          label:
-            en_US: data
-            zh_Hans: 图表数据
-          llm_description: Chart data JSON string.
-          max: null
-          min: null
-          name: data
-          options: []
-          placeholder: null
-          precision: null
-          required: true
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: 600
-          form: form
-          human_description:
-            en_US: Set the width of chart, default is 600.
-            zh_Hans: 请设置图表宽度，默认值为 600。
-          label:
-            en_US: width
-            zh_Hans: 宽
-          llm_description: Set the width of chart, default is 600.
-          max: null
-          min: null
-          name: width
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: 400
-          form: form
-          human_description:
-            en_US: Set the height of chart, default is 400.
-            zh_Hans: 请设置图表高度，默认值为 400。
-          label:
-            en_US: height
-            zh_Hans: 高
-          llm_description: Set the height of chart, default is 400.
-          max: null
-          min: null
-          name: height
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the title of chart.
-            zh_Hans: 请设置图表名称。
-          label:
-            en_US: title
-            zh_Hans: 图表名称
-          llm_description: Set the title of chart.
-          max: null
-          min: null
-          name: title
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisXTitle of chart.
-            zh_Hans: 请填写图表 X 轴名称。
-          label:
-            en_US: axisXTitle
-            zh_Hans: 图表 X 轴名称
-          llm_description: Set the axisXTitle of chart.
-          max: null
-          min: null
-          name: axisXTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisYTitle of chart.
-            zh_Hans: 请填写图表 Y 轴名称。
-          label:
-            en_US: axisYTitle
-            zh_Hans: 图表 Y 轴名称
-          llm_description: Set the axisYTitle of chart.
-          max: null
-          min: null
-          name: axisYTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        params:
-          axisXTitle: ''
-          axisYTitle: ''
-          data: ''
-          height: ''
-          style: ''
-          theme: ''
-          title: ''
-          width: ''
-        plugin_id: antv/visualization
-        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
-        provider_id: antv/visualization/visualization
-        provider_name: antv/visualization/visualization
-        provider_type: builtin
-        selected: false
-        title: 生成折线图
-        tool_configurations:
-          height:
-            type: constant
-            value: 400
-          style:
-            type: mixed
-            value: null
-          theme:
-            type: constant
-            value: default
-          width:
-            type: constant
-            value: 600
-        tool_description: 根据最终查询结果自动生成 生成折线图。
-        tool_label: 生成折线图
-        tool_name: generate_line_chart
-        tool_node_version: '2'
-        tool_parameters:
-          axisXTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_x_title#}}'
-          axisYTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_y_title#}}'
-          data:
-            type: mixed
-            value: '{{#1775000000007.chart_data#}}'
-          title:
-            type: mixed
-            value: '{{#1775000000007.chart_title#}}'
-        type: tool
-      height: 166
-      id: '1779000000011'
-      position:
-        x: 4700
-        y: 260
-      positionAbsolute:
-        x: 4700
-        y: 260
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        is_team_authorization: true
-        paramSchemas:
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Chart data, JSON string generated from final query rows.
-            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
-          label:
-            en_US: data
-            zh_Hans: 图表数据
-          llm_description: Chart data JSON string.
-          max: null
-          min: null
-          name: data
-          options: []
-          placeholder: null
-          precision: null
-          required: true
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: 600
-          form: form
-          human_description:
-            en_US: Set the width of chart, default is 600.
-            zh_Hans: 请设置图表宽度，默认值为 600。
-          label:
-            en_US: width
-            zh_Hans: 宽
-          llm_description: Set the width of chart, default is 600.
-          max: null
-          min: null
-          name: width
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: 400
-          form: form
-          human_description:
-            en_US: Set the height of chart, default is 400.
-            zh_Hans: 请设置图表高度，默认值为 400。
-          label:
-            en_US: height
-            zh_Hans: 高
-          llm_description: Set the height of chart, default is 400.
-          max: null
-          min: null
-          name: height
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the title of chart.
-            zh_Hans: 请设置图表名称。
-          label:
-            en_US: title
-            zh_Hans: 图表名称
-          llm_description: Set the title of chart.
-          max: null
-          min: null
-          name: title
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisXTitle of chart.
-            zh_Hans: 请填写图表 X 轴名称。
-          label:
-            en_US: axisXTitle
-            zh_Hans: 图表 X 轴名称
-          llm_description: Set the axisXTitle of chart.
-          max: null
-          min: null
-          name: axisXTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisYTitle of chart.
-            zh_Hans: 请填写图表 Y 轴名称。
-          label:
-            en_US: axisYTitle
-            zh_Hans: 图表 Y 轴名称
-          llm_description: Set the axisYTitle of chart.
-          max: null
-          min: null
-          name: axisYTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        params:
-          axisXTitle: ''
-          axisYTitle: ''
-          data: ''
-          height: ''
-          style: ''
-          theme: ''
-          title: ''
-          width: ''
-        plugin_id: antv/visualization
-        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
-        provider_id: antv/visualization/visualization
-        provider_name: antv/visualization/visualization
-        provider_type: builtin
-        selected: false
-        title: 生成饼图
-        tool_configurations:
-          height:
-            type: constant
-            value: 400
-          style:
-            type: mixed
-            value: null
-          theme:
-            type: constant
-            value: default
-          width:
-            type: constant
-            value: 600
-        tool_description: 根据最终查询结果自动生成 生成饼图。
-        tool_label: 生成饼图
-        tool_name: generate_pie_chart
-        tool_node_version: '2'
-        tool_parameters:
-          axisXTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_x_title#}}'
-          axisYTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_y_title#}}'
-          data:
-            type: mixed
-            value: '{{#1775000000007.chart_data#}}'
-          title:
-            type: mixed
-            value: '{{#1775000000007.chart_title#}}'
-        type: tool
-      height: 166
-      id: '1779000000012'
-      position:
-        x: 4700
-        y: 440
-      positionAbsolute:
-        x: 4700
-        y: 440
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        is_team_authorization: true
-        paramSchemas:
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Chart data, JSON string generated from final query rows.
-            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
-          label:
-            en_US: data
-            zh_Hans: 图表数据
-          llm_description: Chart data JSON string.
-          max: null
-          min: null
-          name: data
-          options: []
-          placeholder: null
-          precision: null
-          required: true
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: 600
-          form: form
-          human_description:
-            en_US: Set the width of chart, default is 600.
-            zh_Hans: 请设置图表宽度，默认值为 600。
-          label:
-            en_US: width
-            zh_Hans: 宽
-          llm_description: Set the width of chart, default is 600.
-          max: null
-          min: null
-          name: width
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: 400
-          form: form
-          human_description:
-            en_US: Set the height of chart, default is 400.
-            zh_Hans: 请设置图表高度，默认值为 400。
-          label:
-            en_US: height
-            zh_Hans: 高
-          llm_description: Set the height of chart, default is 400.
-          max: null
-          min: null
-          name: height
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the title of chart.
-            zh_Hans: 请设置图表名称。
-          label:
-            en_US: title
-            zh_Hans: 图表名称
-          llm_description: Set the title of chart.
-          max: null
-          min: null
-          name: title
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisXTitle of chart.
-            zh_Hans: 请填写图表 X 轴名称。
-          label:
-            en_US: axisXTitle
-            zh_Hans: 图表 X 轴名称
-          llm_description: Set the axisXTitle of chart.
-          max: null
-          min: null
-          name: axisXTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisYTitle of chart.
-            zh_Hans: 请填写图表 Y 轴名称。
-          label:
-            en_US: axisYTitle
-            zh_Hans: 图表 Y 轴名称
-          llm_description: Set the axisYTitle of chart.
-          max: null
-          min: null
-          name: axisYTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        params:
-          axisXTitle: ''
-          axisYTitle: ''
-          data: ''
-          height: ''
-          style: ''
-          theme: ''
-          title: ''
-          width: ''
-        plugin_id: antv/visualization
-        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
-        provider_id: antv/visualization/visualization
-        provider_name: antv/visualization/visualization
-        provider_type: builtin
-        selected: false
-        title: 生成面积图
-        tool_configurations:
-          height:
-            type: constant
-            value: 400
-          style:
-            type: mixed
-            value: null
-          theme:
-            type: constant
-            value: default
-          width:
-            type: constant
-            value: 600
-        tool_description: 根据最终查询结果自动生成 生成面积图。
-        tool_label: 生成面积图
-        tool_name: generate_area_chart
-        tool_node_version: '2'
-        tool_parameters:
-          axisXTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_x_title#}}'
-          axisYTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_y_title#}}'
-          data:
-            type: mixed
-            value: '{{#1775000000007.chart_data#}}'
-          title:
-            type: mixed
-            value: '{{#1775000000007.chart_title#}}'
-        type: tool
-      height: 166
-      id: '1779000000013'
-      position:
-        x: 4700
-        y: 620
-      positionAbsolute:
-        x: 4700
-        y: 620
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        is_team_authorization: true
-        paramSchemas:
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Chart data, JSON string generated from final query rows.
-            zh_Hans: 根据最终查询结果生成的图表数据 JSON 字符串。
-          label:
-            en_US: data
-            zh_Hans: 图表数据
-          llm_description: Chart data JSON string.
-          max: null
-          min: null
-          name: data
-          options: []
-          placeholder: null
-          precision: null
-          required: true
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: 600
-          form: form
-          human_description:
-            en_US: Set the width of chart, default is 600.
-            zh_Hans: 请设置图表宽度，默认值为 600。
-          label:
-            en_US: width
-            zh_Hans: 宽
-          llm_description: Set the width of chart, default is 600.
-          max: null
-          min: null
-          name: width
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: 400
-          form: form
-          human_description:
-            en_US: Set the height of chart, default is 400.
-            zh_Hans: 请设置图表高度，默认值为 400。
-          label:
-            en_US: height
-            zh_Hans: 高
-          llm_description: Set the height of chart, default is 400.
-          max: null
-          min: null
-          name: height
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: number
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the title of chart.
-            zh_Hans: 请设置图表名称。
-          label:
-            en_US: title
-            zh_Hans: 图表名称
-          llm_description: Set the title of chart.
-          max: null
-          min: null
-          name: title
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisXTitle of chart.
-            zh_Hans: 请填写图表 X 轴名称。
-          label:
-            en_US: axisXTitle
-            zh_Hans: 图表 X 轴名称
-          llm_description: Set the axisXTitle of chart.
-          max: null
-          min: null
-          name: axisXTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        - auto_generate: null
-          default: null
-          form: llm
-          human_description:
-            en_US: Set the axisYTitle of chart.
-            zh_Hans: 请填写图表 Y 轴名称。
-          label:
-            en_US: axisYTitle
-            zh_Hans: 图表 Y 轴名称
-          llm_description: Set the axisYTitle of chart.
-          max: null
-          min: null
-          name: axisYTitle
-          options: []
-          placeholder: null
-          precision: null
-          required: false
-          scope: null
-          template: null
-          type: string
-        params:
-          axisXTitle: ''
-          axisYTitle: ''
-          data: ''
-          height: ''
-          style: ''
-          theme: ''
-          title: ''
-          width: ''
-        plugin_id: antv/visualization
-        plugin_unique_identifier: antv/visualization:0.2.0@798a255e7bf02e93b8a5717be235b833482be58daab1c64c79c954281da14b9c
-        provider_id: antv/visualization/visualization
-        provider_name: antv/visualization/visualization
-        provider_type: builtin
-        selected: false
-        title: 生成箱线图
-        tool_configurations:
-          height:
-            type: constant
-            value: 400
-          style:
-            type: mixed
-            value: null
-          theme:
-            type: constant
-            value: default
-          width:
-            type: constant
-            value: 600
-        tool_description: 根据最终查询结果自动生成 生成箱线图。
-        tool_label: 生成箱线图
-        tool_name: generate_boxplot_chart
-        tool_node_version: '2'
-        tool_parameters:
-          axisXTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_x_title#}}'
-          axisYTitle:
-            type: mixed
-            value: '{{#1775000000007.chart_axis_y_title#}}'
-          data:
-            type: mixed
-            value: '{{#1775000000007.chart_data#}}'
-          title:
-            type: mixed
-            value: '{{#1775000000007.chart_title#}}'
-        type: tool
-      height: 166
-      id: '1779000000014'
-      position:
-        x: 4700
-        y: 800
-      positionAbsolute:
-        x: 4700
-        y: 800
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        outputs:
-        - value_selector:
-          - '1773975766025'
-          - structured_output
-          value_type: object
-          variable: planner
-        - value_selector:
-          - '1775000000005'
-          - schema_context
-          value_type: string
-          variable: schema_context
-        - value_selector:
-          - '1775000000013'
-          - semantic_plan
-          value_type: object
-          variable: execution_plan
-        - value_selector:
-          - '1775000000013'
-          - semantic_plan_raw_text
-          value_type: string
-          variable: execution_plan_raw_text
-        - value_selector:
-          - '1775000000007'
-          - normalized_execution_plan_json
-          value_type: string
-          variable: normalized_execution_plan_json
-        - value_selector:
-          - '1775000000007'
-          - stage_execution_trace_json
-          value_type: string
-          variable: stage_execution_trace_json
-        - value_selector:
-          - '1775000000007'
-          - final_response_body
-          value_type: string
-          variable: final_response_body
-        - value_selector:
-          - '1775000000007'
-          - final_response_summary
-          value_type: object
-          variable: final_response_summary
-        selected: false
-        title: 输出
-        type: end
-      height: 270
-      id: '1773910028939'
-      position:
-        x: 4720
-        y: 280
-      positionAbsolute:
-        x: 4720
-        y: 280
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    viewport:
-      x: -2324.12557357958
-      y: 236.22663551024982
-      zoom: 0.7578582832551997
-  rag_pipeline_variables: []
