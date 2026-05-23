@@ -20,14 +20,14 @@
                       'series': [{'type': series_type, 'data': series_values}],
                   }
           
+              nl = chr(10)
               fence = chr(96) * 3
               echarts_markdown = (
                   fence
-                  + "echarts
-          "
+                  + "echarts"
+                  + nl
                   + json.dumps(option, ensure_ascii=False, indent=2)
-                  + "
-          "
+                  + nl
                   + fence
               )
               return True, option, echarts_markdown, x_field, y_field, chart_type, ''
