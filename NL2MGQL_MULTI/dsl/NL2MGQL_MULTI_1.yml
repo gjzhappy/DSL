@@ -1,16 +1,73 @@
-            children: null
+                  "model": str(llm_model or "").strip(),
+                  "user": str(llm_user or "").strip(),
+                  "authorization-prefix": str(llm_auth_prefix or ""),
+                  "timeout-millis": _to_int(llm_timeout_ms, 600000),
+                  "temperature": llm_temperature if llm_temperature is not None else 0,
+                  "top_p": llm_top_p if llm_top_p is not None else 1,
+                  "max_completion_tokens": _to_int(llm_max_completion_tokens, 12288),
+                  "stream": _to_bool(llm_stream),
+              }
+
+              if not llm_config["tokenUrl"]:
+                  raise ValueError("LLM_TOKEN_URL is required")
+              if not llm_config["chatUrl"]:
+                  raise ValueError("LLM_CHAT_URL is required")
+              if not llm_config["appId"]:
+                  raise ValueError("LLM_APP_ID is required")
+              if not llm_config["staticToken"]:
+                  raise ValueError("LLM_STATIC_TOKEN is required")
+              if not llm_config["model"]:
+                  raise ValueError("LLM_MODEL is required")
+
+              token_request_body = {
+                  "appId": llm_config["appId"],
+                  "credential": base64.b64encode(str(llm_config.get("staticToken") or "").encode("utf-8")).decode("utf-8"),
+              }
+
+              return {
+                  "schema_context": schema_context,
+                  "planner_json": planner_json,
+                  "semantic_plan_system_prompt": SEMANTIC_PLAN_SYSTEM_PROMPT,
+                  "semantic_plan_user_prompt": semantic_plan_user_prompt,
+                  "semantic_plan_json_schema": SEMANTIC_PLAN_JSON_SCHEMA_JSON,
+                  "token_url": llm_config["tokenUrl"],
+                  "chat_url": llm_config["chatUrl"],
+                  "llm_config_json": json.dumps(llm_config, ensure_ascii=False),
+                  "token_request_body_json": json.dumps(token_request_body, ensure_ascii=False),
+                  "request_id": f"llm_{uuid.uuid4().hex}",
+              }
+        code_language: python3
+        desc: 汇总Schema上下文，准备语义计划提示词与内部LLM调用请求
+        outputs:
+          chat_url:
+            children:
+            type: string
+          llm_config_json:
+            children:
+            type: string
+          planner_json:
+            children:
+            type: string
+          request_id:
+            children:
+            type: string
+          schema_context:
+            children:
+            type: string
+          semantic_plan_json_schema:
+            children:
             type: string
           semantic_plan_system_prompt:
-            children: null
+            children:
             type: string
           semantic_plan_user_prompt:
-            children: null
+            children:
             type: string
           token_request_body_json:
-            children: null
+            children:
             type: string
           token_url:
-            children: null
+            children:
             type: string
         selected: false
         title: 代码执行_合并Schema上下文并准备语义计划提示词
@@ -95,18 +152,18 @@
       id: '1775000000005'
       position:
         x: 1911.0104777110073
-        y: 320
+        "y": 320
       positionAbsolute:
         x: 1911.0104777110073
-        y: 320
+        "y": 320
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
     - data:
-        code: |
-          
+        code: |2
+
           import json
           import random
           import re
@@ -115,11 +172,11 @@
           import urllib.request
           import uuid
           from datetime import datetime, timedelta, timezone
-          
+
           SGT = timezone(timedelta(hours=8))
           DEFAULT_TIMEOUT_SECONDS = 600
-          
-          
+
+
           def _read_json_text(value):
               if value is None:
                   return None
@@ -129,8 +186,8 @@
               if not raw:
                   return None
               return json.loads(raw)
-          
-          
+
+
           def _ensure_obj(value, name):
               obj = _read_json_text(value)
               if obj is None:
@@ -138,15 +195,15 @@
               if not isinstance(obj, dict):
                   raise ValueError(f'{name} must be a JSON object')
               return obj
-          
-          
+
+
           def _ensure_non_empty_string(value, name):
               text = str(value or '').strip()
               if not text:
                   raise ValueError(f'{name} is required')
               return text
-          
-          
+
+
           def _ensure_string_list(value, name):
               if value is None:
                   return []
@@ -159,8 +216,8 @@
                       raise ValueError(f'{name}[{idx}] must be a non-empty string')
                   result.append(text)
               return result
-          
-          
+
+
           def _parse_scalar(value):
               if value is None:
                   return None
@@ -176,8 +233,8 @@
               if re.fullmatch(r'-?\d+\.\d+', text):
                   return float(text)
               return text
-          
-          
+
+
           def _parse_query_urls(raw_value):
               text = str(raw_value or '').strip()
               if not text:
@@ -189,8 +246,8 @@
                       if url:
                           parts.append(url)
               return parts
-          
-          
+
+
           def _build_match_expr(path, operator, value):
               parsed = _parse_scalar(value)
               if operator == 'eq':
@@ -202,8 +259,8 @@
               if not mongo_op:
                   raise ValueError(f'unsupported operator: {operator}')
               return {path: {mongo_op: parsed}}
-          
-          
+
+
           def _merge_match(parts):
               parts = [p for p in parts if p]
               if not parts:
@@ -211,8 +268,8 @@
               if len(parts) == 1:
                   return parts[0]
               return {'$and': parts}
-          
-          
+
+
           def _extract_returnable_fields(schema_context, collection_name):
               text = str(schema_context or '')
               pattern = rf'## collection={re.escape(collection_name)}\n.*?(?=(\n## collection=|\Z))'
@@ -247,8 +304,8 @@
                       continue
                   i += 1
               return fields
-          
-          
+
+
           def _normalize_time_range(value, collection_name, default_field='created_at'):
               if not isinstance(value, dict):
                   return {
@@ -279,8 +336,8 @@
                   'start': start,
                   'end': end,
               }
-          
-          
+
+
           def _sanitize_stage_filters(filters, time_range):
               if not isinstance(filters, list):
                   return []
@@ -304,8 +361,8 @@
                   dedup.add(key)
                   normalized.append({'field': field, 'operator': operator, 'value': value})
               return normalized
-          
-          
+
+
           def _normalize_stage_field_ref(text):
               raw = str(text or '').strip()
               if not raw:
@@ -314,8 +371,8 @@
               if '.' in raw:
                   return raw.split('.')[-1].strip()
               return raw
-          
-          
+
+
           def _sanitize_stage_for_compile(stage):
               if not isinstance(stage, dict):
                   return {}
@@ -342,8 +399,8 @@
                   'dropped_stage_ref_filters': dropped_stage_ref_filters,
               }
               return cleaned
-          
-          
+
+
           def _apply_time_range(time_range):
               mode = str((time_range or {}).get('mode') or 'none').strip()
               if mode == 'none':
@@ -363,8 +420,8 @@
                       cond['$lte'] = end
                   return {field: cond} if cond else None
               raise ValueError(f'unsupported time_range.mode: {mode}')
-          
-          
+
+
           def _find_best_rows(obj):
               best = []
               best_score = -1
@@ -397,8 +454,8 @@
                           visit(value)
               visit(obj)
               return best
-          
-          
+
+
           def _unique_values(rows, field):
               values = []
               seen = set()
@@ -418,8 +475,8 @@
                           seen.add(text)
                           values.append(text)
               return values
-          
-          
+
+
           def _detect_visualization_intent(query_text):
               text = str(query_text or '').strip()
               if not text:
@@ -439,8 +496,8 @@
               elif has_generic:
                   chart_type = 'bar'
               return {'enabled': enabled, 'chart_type': chart_type}
-          
-          
+
+
           def _normalize_plan(plan, planner, question=''):
               planner_primary = _ensure_non_empty_string(planner.get('primary_collection'), 'planner.primary_collection')
               planner_related = set(_ensure_string_list(planner.get('related_collections') or [], 'planner.related_collections'))
@@ -454,7 +511,7 @@
               for c in collections:
                   if c != primary_collection:
                       planner_related.add(c)
-          
+
               raw_stages = plan.get('stages') or []
               if not isinstance(raw_stages, list) or not raw_stages:
                   raise ValueError('execution_plan.stages must be a non-empty array')
@@ -464,7 +521,7 @@
                   stage_collection = str(raw.get('collection') or '').strip()
                   if stage_collection and stage_collection not in collections:
                       collections.append(stage_collection)
-          
+
               normalized_stages = []
               seen_stage_names = set()
               allowed_intents = {'detail_query', 'aggregate_summary', 'group_top_entity', 'group_top_record', 'enrich_related'}
@@ -516,7 +573,7 @@
                       stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
                       stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
                   normalized_stages.append(stage)
-          
+
               final_merge = plan.get('final_merge') or {}
               if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
                   raise ValueError('multi_stage execution requires at least 2 stages')
@@ -531,7 +588,7 @@
                       print('VISUALIZATION_FALLBACK_ENABLED')
                   if not str(visualization.get('chart_type') or '').strip() and intent.get('chart_type'):
                       visualization['chart_type'] = intent['chart_type']
-          
+
               return {
                   'execution_mode': execution_mode,
                   'primary_collection': primary_collection,
@@ -548,8 +605,8 @@
                       'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
                   },
               }
-          
-          
+
+
           def _build_stage_match(stage):
               parts = []
               time_expr = _apply_time_range(stage.get('time_range'))
@@ -563,8 +620,8 @@
                   value = f.get('value')
                   parts.append(_build_match_expr(field, operator, value))
               return _merge_match(parts)
-          
-          
+
+
           def _append_projection(pipeline, fields):
               unique_fields = []
               seen = set()
@@ -579,8 +636,8 @@
               for field in unique_fields:
                   proj[field] = f'${field}'
               pipeline.append({'$project': proj})
-          
-          
+
+
           def _compile_detail_query(stage, schema_context, stage_outputs):
               pipeline = []
               match_expr = _build_stage_match(stage)
@@ -610,8 +667,8 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-          
-          
+
+
           def _compile_aggregate_summary(stage, schema_context, stage_outputs):
               pipeline = []
               match_expr = _build_stage_match(stage)
@@ -662,8 +719,8 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-          
-          
+
+
           def _compile_group_top_entity(stage, schema_context, stage_outputs):
               pipeline = []
               match_expr = _build_stage_match(stage)
@@ -729,8 +786,8 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-          
-          
+
+
           def _compile_group_top_record(stage, schema_context, stage_outputs):
               pipeline = []
               match_expr = _build_stage_match(stage)
@@ -784,8 +841,8 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-          
-          
+
+
           def _compile_enrich_related(stage, schema_context, stage_outputs):
               depends_on = _ensure_non_empty_string(stage.get('depends_on'), f"{stage['stage_name']}.depends_on")
               prev = stage_outputs.get(depends_on) or {}
@@ -835,8 +892,8 @@
               if int(stage.get('limit') or 0) > 0:
                   pipeline.append({'$limit': int(stage['limit'])})
               return validated_ast, pipeline, False
-          
-          
+
+
           def _compile_stage(stage, schema_context, stage_outputs):
               stage = _sanitize_stage_for_compile(stage)
               intent = stage.get('intent_type')
@@ -855,8 +912,8 @@
               if intent == 'enrich_related':
                   return _compile_enrich_related(stage, schema_context, stage_outputs)
               raise ValueError(f'unsupported intent_type: {intent}')
-          
-          
+
+
           def _post_json(url, payload_obj, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
               body = json.dumps(payload_obj, ensure_ascii=False).encode('utf-8')
               req = urllib.request.Request(url=url, data=body, headers={'Content-Type': 'application/json'}, method='POST')
@@ -873,8 +930,8 @@
                   body_text = e.read().decode('utf-8', errors='replace') if hasattr(e, 'read') else str(e)
                   headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
                   return int(getattr(e, 'code', 0) or 0), body_text, headers
-          
-          
+
+
           def _merge_rows(left_rows, right_rows, left_field, right_field, attach_as):
               right_index = {}
               for row in right_rows or []:
@@ -906,8 +963,8 @@
                       item[attach_as] = matches
                   merged.append(item)
               return merged
-          
-          
+
+
           def _normalize_visualization(value):
               if not isinstance(value, dict):
                   return {'enabled': False}
@@ -929,8 +986,8 @@
                   'series_name': series_name,
                   'title': title,
               }
-          
-          
+
+
           def _to_float(value):
               if isinstance(value, bool):
                   return 1.0 if value else 0.0
@@ -941,60 +998,3 @@
                   return None
               text = text.replace(',', '')
               try:
-                  return float(text)
-              except Exception:
-                  return None
-          
-          
-          def _pick_chart_fields(visualization, normalized_execution_plan, rows):
-              first_row = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], dict) else {}
-              stages = (normalized_execution_plan or {}).get('stages') or []
-              stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}
-              group_fields = stage0.get('group_fields') or []
-              metric_alias = str(stage0.get('metric_alias') or '').strip()
-          
-              x_field = str((visualization or {}).get('x_field') or '').strip()
-              y_field = str((visualization or {}).get('y_field') or '').strip()
-          
-              if not x_field and group_fields:
-                  x_field = str(group_fields[0] or '').strip()
-              if not y_field and metric_alias:
-                  y_field = metric_alias
-          
-              if not y_field and isinstance(first_row, dict):
-                  for k, v in first_row.items():
-                      if _to_float(v) is not None:
-                          y_field = str(k)
-                          break
-          
-              if not x_field and isinstance(first_row, dict):
-                  for k, v in first_row.items():
-                      if _to_float(v) is None:
-                          x_field = str(k)
-                          break
-          
-              return x_field, y_field
-          
-          
-          def _build_local_chart(visualization, normalized_execution_plan, rows, chart_decision, question=''):
-              chart_type = str((visualization or {}).get('chart_type') or '').strip().lower() or str((chart_decision or {}).get('chart_type') or '').strip().lower() or 'bar'
-              if chart_type == 'column':
-                  chart_type = 'bar'
-              x_field, y_field = _pick_chart_fields(visualization, normalized_execution_plan, rows)
-              if not x_field or not y_field:
-                  return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½æ æ³ç¡®å®å¾è¡¨æ¨ªè½´æçºµè½´å­æ®µã'
-          
-              title = str((visualization or {}).get('title') or '').strip() or str(question or '').strip()
-              series_values = []
-              categories = []
-              pie_data = []
-              for row in rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  x_raw = row.get(x_field)
-                  x_val = str(x_raw).strip() if x_raw is not None else ''
-                  if not x_val:
-                      x_val = 'æªåç±»'
-                  y_num = _to_float(row.get(y_field))
-                  y_num = y_num if y_num is not None else 0
-                  categories.append(x_val)
