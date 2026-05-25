@@ -1,3 +1,254 @@
+        "y": 190
+      positionAbsolute:
+        x: 3465
+        "y": 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 满血LLM关闭或失败时，使用本地模型生成AST
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 2048
+            temperature: 0
+          mode: chat
+          name: qwen3:32b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: local-plan-system
+          role: system
+          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
+        - id: local-plan-user
+          role: user
+          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              collections:
+                items:
+                  minLength: 1
+                  type: string
+                type: array
+                uniqueItems: true
+              execution_mode:
+                enum:
+                - single_stage
+                - multi_stage
+                type: string
+              final_merge:
+                additionalProperties: false
+                properties:
+                  attach_as:
+                    type: string
+                  left_field:
+                    type: string
+                  left_stage:
+                    type: string
+                  merge_mode:
+                    enum:
+                    - none
+                    - left_join
+                    type: string
+                  right_field:
+                    type: string
+                  right_stage:
+                    type: string
+                required:
+                - merge_mode
+                - left_stage
+                - right_stage
+                - left_field
+                - right_field
+                - attach_as
+                type: object
+              primary_collection:
+                minLength: 1
+                type: string
+              reasoning:
+                minLength: 1
+                type: string
+              visualization:
+                additionalProperties: false
+                properties:
+                  chart_type:
+                    enum:
+                    - bar
+                    - line
+                    - pie
+                    type: string
+                  enabled:
+                    type: boolean
+                  series_name:
+                    type: string
+                  title:
+                    type: string
+                  x_field:
+                    type: string
+                  y_field:
+                    type: string
+                type: object
+              stages:
+                items:
+                  additionalProperties: false
+                  properties:
+                    attach_as:
+                      type: string
+                    collection:
+                      minLength: 1
+                      type: string
+                    depends_on:
+                      type: string
+                    entity_field:
+                      type: string
+                    filters:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          field:
+                            minLength: 1
+                            type: string
+                          operator:
+                            enum:
+                            - eq
+                            - in
+                            - gt
+                            - gte
+                            - lt
+                            - lte
+                            - regex
+                            type: string
+                          value:
+                            oneOf:
+                            - type: string
+                            - type: number
+                            - type: integer
+                            - type: boolean
+                            - items:
+                                oneOf:
+                                - type: string
+                                - type: number
+                                - type: integer
+                                - type: boolean
+                              type: array
+                        required:
+                        - field
+                        - operator
+                        - value
+                        type: object
+                      type: array
+                    group_fields:
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                    intent_type:
+                      enum:
+                      - detail_query
+                      - aggregate_summary
+                      - group_top_entity
+                      - group_top_record
+                      - enrich_related
+                      type: string
+                    join_source_field:
+                      type: string
+                    join_target_field:
+                      type: string
+                    limit:
+                      maximum: 200
+                      minimum: 0
+                      type: integer
+                    metric_alias:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_function:
+                      enum:
+                      - ''
+                      - count
+                      - sum
+                      - avg
+                      - max
+                      - min
+                      type: string
+                    projection_fields:
+                      items:
+                        minLength: 1
+                        type: string
+                      type: array
+                    projection_mode:
+                      enum:
+                      - none
+                      - explicit
+                      - all_returnable
+                      type: string
+                    rank_direction:
+                      enum:
+                      - ''
+                      - asc
+                      - desc
+                      type: string
+                    rank_n:
+                      maximum: 200
+                      minimum: 0
+                      type: integer
+                    rank_order_field:
+                      type: string
+                    sort:
+                      items:
+                        additionalProperties: false
+                        properties:
+                          direction:
+                            enum:
+                            - asc
+                            - desc
+                            type: string
+                          field:
+                            minLength: 1
+                            type: string
+                        required:
+                        - field
+                        - direction
+                        type: object
+                      type: array
+                    stage_name:
+                      minLength: 1
+                      type: string
+                    time_range:
+                      additionalProperties: false
+                      properties:
+                        end:
+                          type: string
+                        field:
+                          type: string
+                        mode:
+                          enum:
+                          - none
+                          - relative_days
+                          - absolute
+                          type: string
+                        relative_days:
+                          minimum: 0
+                          type: integer
+                        start:
+                          type: string
+                      required:
+                      - field
+                      - mode
+                      - relative_days
+                      type: object
+                  required:
+                  - stage_name
+                  - collection
+                  - depends_on
+                  - intent_type
                   - filters
                   - time_range
                   - group_fields
@@ -36,30 +287,45 @@
       id: '1775000000018'
       position:
         x: 3114.1045592009455
-        y: 470
+        "y": 470
       positionAbsolute:
         x: 3114.1045592009455
-        y: 470
+        "y": 470
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
     - data:
-        code: "import json\n\n\ndef main(text: str):\n    raw = str(text or '').strip()\n\
-          \    if not raw:\n        raise ValueError('本地LLM返�为空')\n    body = {\n\
-          \        'choices': [\n            {\n                'message': {\n   \
-          \                 'content': raw,\n                }\n            }\n  \
-          \      ]\n    }\n    return {\n        'status_code': 200,\n        'body':\
-          \ json.dumps(body, ensure_ascii=False),\n    }\n"
+        code: |
+          import json
+
+
+          def main(text: str):
+              raw = str(text or '').strip()
+              if not raw:
+                  raise ValueError('本地LLM返�为空')
+              body = {
+                  'choices': [
+                      {
+                          'message': {
+                              'content': raw,
+                          }
+                      }
+                  ]
+              }
+              return {
+                  'status_code': 200,
+                  'body': json.dumps(body, ensure_ascii=False),
+              }
         code_language: python3
         desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
         outputs:
           body:
-            children: null
+            children:
             type: string
           status_code:
-            children: null
+            children:
             type: number
         selected: false
         title: 代码执行_包装本地LLM响应
@@ -74,10 +340,10 @@
       id: '1775000000019'
       position:
         x: 3634.2013852363016
-        y: 470
+        "y": 470
       positionAbsolute:
         x: 3634.2013852363016
-        y: 470
+        "y": 470
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -132,10 +398,10 @@
       id: '1773910028939'
       position:
         x: 4720
-        y: 280
+        "y": 280
       positionAbsolute:
         x: 4720
-        y: 280
+        "y": 280
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -143,6 +409,6 @@
       width: 242
     viewport:
       x: -2324.12557357958
-      y: 236.22663551024982
+      "y": 236.22663551024982
       zoom: 0.7578582832551997
   rag_pipeline_variables: []
