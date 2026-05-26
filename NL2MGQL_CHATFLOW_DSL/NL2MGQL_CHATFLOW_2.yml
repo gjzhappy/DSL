@@ -519,7 +519,58 @@
                   'chart_type': str(chart_decision.get('chart_type') or ''),
                   'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
               }
+
+              nl = chr(10)
+              message_text = str(no_data_message or '').strip()
+              error_text = ''
+              if isinstance(stage_execution_trace, list):
+                  for trace_item in reversed(stage_execution_trace):
+                      if isinstance(trace_item, dict):
+                          stage_error = str(trace_item.get('error') or '').strip()
+                          if stage_error:
+                              error_text = stage_error
+                              break
+              summary_text = str(final_response_summary.get('summary') or '').strip()
+              if not summary_text and (merged_rows or []):
+                  summary_text = '查询完成，共返回 ' + str(len(merged_rows or [])) + ' 条结果。'
+              chart_markdown = ''
+              if isinstance(chart_payload, dict):
+                  chart_markdown = str(chart_payload.get('echarts_markdown') or '').strip()
+              chart_enabled = isinstance(chart_payload, dict) and bool(chart_payload.get('enabled'))
+
+              if error_text or message_text:
+                  answer_text = '执行失败：' + (error_text or message_text)
+              elif chart_enabled and chart_markdown:
+                  answer_text = (
+                      '查询结果如下：'
+                      + nl
+                      + nl
+                      + chart_markdown
+                      + nl
+                      + nl
+                      + '结果摘要：'
+                      + nl
+                      + (summary_text or '已生成图表。')
+                  )
+              elif summary_text:
+                  answer_text = summary_text
+              elif merged_rows:
+                  answer_text = '查询完成，共返回 ' + str(len(merged_rows)) + ' 条结果。'
+              else:
+                  answer_text = '查询成功，但结果为空。'
+
               return {
+                  'answer_text': answer_text,
+                  'question': str(question or '').strip(),
+                  'normalized_execution_plan': normalized_execution_plan,
+                  'last_validated_ast': ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {},
+                  'last_pipeline_json': str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or ''),
+                  'merged_rows': merged_rows,
+                  'chart': chart_payload,
+                  'chart_echarts_markdown': chart_markdown,
+                  'result_summary': summary_text,
+                  'last_error': error_text,
+                  'final_response_summary': final_response_summary,
                   'normalized_execution_plan_json': json.dumps(normalized_execution_plan, ensure_ascii=False),
                   'stage_execution_trace_json': json.dumps(stage_execution_trace, ensure_ascii=False),
                   'final_response_body': json.dumps(final_payload, ensure_ascii=False),
@@ -534,6 +585,26 @@
         code_language: python3
         desc: 校验语义计划并编译第一阶段 Pipeline
         outputs:
+          answer_text:
+            type: string
+          question:
+            type: string
+          normalized_execution_plan:
+            type: object
+          last_validated_ast:
+            type: object
+          last_pipeline_json:
+            type: string
+          merged_rows:
+            type: array[object]
+          chart:
+            type: object
+          chart_echarts_markdown:
+            type: string
+          result_summary:
+            type: string
+          last_error:
+            type: string
           final_response_body:
             children:
             type: string
@@ -927,74 +998,3 @@
                   return ''
               choices = resp_json.get('choices')
               if isinstance(choices, list) and choices:
-                  first = choices[0] or {}
-                  if isinstance(first, dict):
-                      msg = first.get('message') or {}
-                      if isinstance(msg, dict):
-                          text = _content_to_text(msg.get('content'))
-                          if text:
-                              return text
-                      text = _content_to_text(first.get('text'))
-                      if text:
-                          return text
-              output = resp_json.get('output')
-              text = _content_to_text(output)
-              if text:
-                  return text
-              if isinstance(output, list):
-                  for item in output:
-                      if isinstance(item, dict):
-                          text = _content_to_text(item.get('content'))
-                          if text:
-                              return text
-              for key in ('result', 'text', 'content', 'answer'):
-                  text = _content_to_text(resp_json.get(key))
-                  if text:
-                      return text
-              data = resp_json.get('data')
-              if isinstance(data, dict):
-                  for key in ('result', 'text', 'content', 'answer'):
-                      text = _content_to_text(data.get(key))
-                      if text:
-                          return text
-              return ''
-
-
-          def _strip_code_fence(text):
-              raw = str(text or '').strip()
-              full_match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)
-              if full_match:
-                  return full_match.group(1).strip()
-              return raw
-
-
-          def _remove_think_blocks(text):
-              raw = str(text or '')
-              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
-              return raw.strip()
-
-
-          def _ast_candidate_score(obj):
-              if not isinstance(obj, dict):
-                  return -1
-              score = 0
-              keys = set(obj.keys())
-              for key in ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate', 'expands', 'time_range', 'limit'):
-                  if key in keys:
-                      score += 2
-              if keys:
-                  score += 1
-              return score
-
-
-          def _try_decode_object(raw):
-              try:
-                  decoder = json.JSONDecoder()
-                  obj, end = decoder.raw_decode(raw)
-                  if isinstance(obj, dict):
-                      return obj, raw[:end], raw[end:].strip()
-              except Exception:
-                  return None
-              return None
-
-
