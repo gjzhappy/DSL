@@ -498,10 +498,10 @@
               text = str(query_text or '').strip()
               if not text:
                   return {'enabled': False, 'chart_type': ''}
-              has_generic = any(k in text for k in ['å¾è¡¨', 'å¯è§å'])
-              has_bar = any(k in text for k in ['æ±ç¶å¾', 'æ¡å½¢å¾', 'å¯¹æ¯å¾'])
-              has_line = any(k in text for k in ['æçº¿å¾', 'è¶å¿å¾'])
-              has_pie = 'é¥¼å¾' in text
+              has_generic = any(k in text for k in ['图表', '可视化'])
+              has_bar = any(k in text for k in ['柱状图', '条形图', '对比图'])
+              has_line = any(k in text for k in ['折线图', '趋势图'])
+              has_pie = '饼图' in text
               enabled = has_generic or has_bar or has_line or has_pie
               chart_type = ''
               if has_bar:

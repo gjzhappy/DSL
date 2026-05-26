@@ -244,14 +244,14 @@
               raw_type = str(visualization.get('chart_type') or '').strip().lower()
               aliases = {
                   'column': 'bar',
-                  '柱状�': 'bar',
-                  '条形�': 'bar',
-                  '对比�': 'bar',
+                  '柱状图': 'bar',
+                  '条形图': 'bar',
+                  '对比图': 'bar',
                   'line': 'line',
-                  '折线�': 'line',
-                  '趋势�': 'line',
+                  '折线图': 'line',
+                  '趋势图': 'line',
                   'pie': 'pie',
-                  '饼�': 'pie',
+                  '饼图': 'pie',
               }
               normalized_type = aliases.get(raw_type, raw_type if raw_type in {'bar', 'line', 'pie'} else 'bar')
               if normalized_type not in allowed:
@@ -408,6 +408,24 @@
               chart_x_field = str(chart_decision.get('x_field') or '')
               chart_y_field = str(chart_decision.get('y_field') or '')
               chart_enabled, chart_option, chart_markdown, _, _, _, _ = _build_chart_payload(visualization, merged_rows, {'bar', 'line', 'pie'}, normalized_execution_plan, question)
+              if chart_enabled and chart_option:
+                  if not bool((normalized_execution_plan.get('visualization') or {}).get('enabled')):
+                      normalized_execution_plan.setdefault('visualization', {})['enabled'] = True
+                  if not str((normalized_execution_plan.get('visualization') or {}).get('chart_type') or '').strip():
+                      normalized_execution_plan.setdefault('visualization', {})['chart_type'] = str(chart_decision.get('chart_type') or 'bar')
+              option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip() or str(question or '').strip()
+              option_series_name = ''
+              if isinstance((chart_option or {}).get('series'), list) and (chart_option or {}).get('series'):
+                  option_series_name = str((((chart_option or {}).get('series') or [{}])[0].get('name')) or '').strip()
+              chart_decision = {
+                  'enabled': bool(chart_enabled and chart_option),
+                  'chart_type': str(chart_decision.get('chart_type') or 'bar'),
+                  'x_field': str(chart_decision.get('x_field') or ''),
+                  'y_field': str(chart_decision.get('y_field') or ''),
+                  'title': option_title,
+                  'series_name': option_series_name or str(chart_decision.get('y_field') or '') or 'value',
+                  'reason': 'local echarts option generated' if bool(chart_enabled and chart_option) else '',
+              }
               chart_payload = {
                   'enabled': bool(chart_enabled and chart_option),
                   'renderer': 'echarts',
@@ -980,21 +998,3 @@
             type: string
         selected: true
         title: 代码执行_提取语义计划结果
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000012'
-          - status_code
-          value_type: number
-          variable: full_status_code
-        - value_selector:
-          - '1775000000012'
-          - body
-          value_type: string
-          variable: full_body
-        - value_selector:
-          - '1775000000019'
-          - status_code
-          value_type: number
-          variable: local_status_code
-        - value_selector:
