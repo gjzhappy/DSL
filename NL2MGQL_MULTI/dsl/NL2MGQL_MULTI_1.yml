@@ -338,6 +338,23 @@
               }
 
 
+          def _force_relative_month_time_range(question_text, time_range, collection_name, default_field='created_at'):
+              text = str(question_text or '').strip()
+              if not text:
+                  return time_range
+              month_tokens = ['过去一个月', '近一个月', '最近一个月', '近30天', '最近30天']
+              if not any(token in text for token in month_tokens):
+                  return time_range
+              fixed = dict(time_range or {})
+              fixed['collection'] = collection_name
+              fixed['field'] = str(fixed.get('field') or default_field).strip() or default_field
+              fixed['mode'] = 'relative_days'
+              fixed['relative_days'] = 30
+              fixed['start'] = ''
+              fixed['end'] = ''
+              return fixed
+
+
           def _sanitize_stage_filters(filters, time_range):
               if not isinstance(filters, list):
                   return []
@@ -481,10 +498,10 @@
               text = str(query_text or '').strip()
               if not text:
                   return {'enabled': False, 'chart_type': ''}
-              has_generic = any(k in text for k in ['å¾è¡¨', 'å¯è§å'])
-              has_bar = any(k in text for k in ['æ±ç¶å¾', 'æ¡å½¢å¾', 'å¯¹æ¯å¾'])
-              has_line = any(k in text for k in ['æçº¿å¾', 'è¶å¿å¾'])
-              has_pie = 'é¥¼å¾' in text
+              has_generic = any(k in text for k in ['图表', '可视化'])
+              has_bar = any(k in text for k in ['柱状图', '条形图', '对比图'])
+              has_line = any(k in text for k in ['折线图', '趋势图'])
+              has_pie = '饼图' in text
               enabled = has_generic or has_bar or has_line or has_pie
               chart_type = ''
               if has_bar:
@@ -496,6 +513,31 @@
               elif has_generic:
                   chart_type = 'bar'
               return {'enabled': enabled, 'chart_type': chart_type}
+
+
+          def _is_effectively_empty_stage(stage):
+              if not isinstance(stage, dict):
+                  return True
+              intent = str(stage.get('intent_type') or '').strip()
+              filters = stage.get('filters') or []
+              group_fields = stage.get('group_fields') or []
+              projection_fields = stage.get('projection_fields') or []
+              metric_function = str(stage.get('metric_function') or '').strip()
+              join_source_field = str(stage.get('join_source_field') or '').strip()
+              join_target_field = str(stage.get('join_target_field') or '').strip()
+              limit = int(stage.get('limit') or 0)
+              tr_mode = str(((stage.get('time_range') or {}).get('mode')) or 'none').strip() or 'none'
+              return (
+                  intent in {'', 'detail_query'}
+                  and not filters
+                  and not group_fields
+                  and not projection_fields
+                  and not metric_function
+                  and not join_source_field
+                  and not join_target_field
+                  and tr_mode == 'none'
+                  and limit == 0
+              )
 
 
           def _normalize_plan(plan, planner, question=''):
@@ -547,12 +589,14 @@
                   rank_n = int(raw.get('rank_n') or 0)
                   if intent_type in {'group_top_entity', 'group_top_record'} and rank_n <= 0:
                       rank_n = 1
+                  stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
+                  stage_time_range = _force_relative_month_time_range(question, stage_time_range, collection)
                   stage = {
                       'stage_name': stage_name,
                       'collection': collection,
                       'depends_on': str(raw.get('depends_on') or '').strip(),
                       'intent_type': intent_type,
-                      'time_range': _normalize_time_range(raw.get('time_range'), collection),
+                      'time_range': stage_time_range,
                       'group_fields': _ensure_string_list(raw.get('group_fields') or [], f'stages[{idx}].group_fields'),
                       'entity_field': str(raw.get('entity_field') or '').strip(),
                       'metric_function': str(raw.get('metric_function') or '').strip(),
@@ -572,14 +616,17 @@
                   if intent_type == 'enrich_related':
                       stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
                       stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
+                  if _is_effectively_empty_stage(stage):
+                      continue
                   normalized_stages.append(stage)
 
               final_merge = plan.get('final_merge') or {}
+              if not normalized_stages:
+                  raise ValueError('execution_plan has no effective stages')
               if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
-                  raise ValueError('multi_stage execution requires at least 2 stages')
-              if execution_mode == 'single_stage' and len(normalized_stages) > 1:
-                  # allow but still run; keep mode aligned with actual stages count
-                  execution_mode = 'multi_stage'
+                  execution_mode = 'single_stage'
+              if execution_mode == 'single_stage':
+                  normalized_stages = normalized_stages[:1]
               visualization = _normalize_visualization(plan.get('visualization'))
               intent = _detect_visualization_intent(question)
               if intent.get('enabled'):
@@ -589,6 +636,10 @@
                   if not str(visualization.get('chart_type') or '').strip() and intent.get('chart_type'):
                       visualization['chart_type'] = intent['chart_type']
 
+              merge_mode = str(final_merge.get('merge_mode') or 'none').strip() or 'none'
+              if len(normalized_stages) <= 1 or merge_mode == 'none':
+                  execution_mode = 'single_stage'
+                  merge_mode = 'none'
               return {
                   'execution_mode': execution_mode,
                   'primary_collection': primary_collection,
@@ -597,7 +648,7 @@
                   'visualization': visualization,
                   'stages': normalized_stages,
                   'final_merge': {
-                      'merge_mode': str(final_merge.get('merge_mode') or 'left_join').strip() or 'left_join',
+                      'merge_mode': merge_mode,
                       'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
                       'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
                       'left_field': str(final_merge.get('left_field') or '').strip(),
@@ -947,54 +998,3 @@
               merged = []
               for row in left_rows or []:
                   if not isinstance(row, dict):
-                      merged.append(row)
-                      continue
-                  item = dict(row)
-                  key = item.get(left_field)
-                  matches = []
-                  if isinstance(key, list):
-                      for val in key:
-                          matches.extend(right_index.get(str(val), []))
-                  elif key is not None:
-                      matches = right_index.get(str(key), [])
-                  if len(matches) == 1:
-                      item[attach_as] = matches[0]
-                  elif matches:
-                      item[attach_as] = matches
-                  merged.append(item)
-              return merged
-
-
-          def _normalize_visualization(value):
-              if not isinstance(value, dict):
-                  return {'enabled': False}
-              chart_type = str(value.get('chart_type') or '').strip().lower()
-              if chart_type not in {'bar', 'line', 'pie', 'area', 'boxplot'}:
-                  chart_type = 'bar'
-              x_field = str(value.get('x_field') or '').strip()
-              y_field = str(value.get('y_field') or '').strip()
-              series_name = str(value.get('series_name') or '').strip() or 'value'
-              title = str(value.get('title') or '').strip()
-              enabled = bool(value.get('enabled', bool(x_field and y_field)))
-              if chart_type == 'pie':
-                  enabled = bool(value.get('enabled', bool(x_field and y_field)))
-              return {
-                  'enabled': enabled,
-                  'chart_type': chart_type,
-                  'x_field': x_field,
-                  'y_field': y_field,
-                  'series_name': series_name,
-                  'title': title,
-              }
-
-
-          def _to_float(value):
-              if isinstance(value, bool):
-                  return 1.0 if value else 0.0
-              if isinstance(value, (int, float)):
-                  return float(value)
-              text = str(value or '').strip()
-              if not text:
-                  return None
-              text = text.replace(',', '')
-              try:
