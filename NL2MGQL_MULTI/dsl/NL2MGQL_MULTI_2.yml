@@ -1,3 +1,54 @@
+                      merged.append(row)
+                      continue
+                  item = dict(row)
+                  key = item.get(left_field)
+                  matches = []
+                  if isinstance(key, list):
+                      for val in key:
+                          matches.extend(right_index.get(str(val), []))
+                  elif key is not None:
+                      matches = right_index.get(str(key), [])
+                  if len(matches) == 1:
+                      item[attach_as] = matches[0]
+                  elif matches:
+                      item[attach_as] = matches
+                  merged.append(item)
+              return merged
+
+
+          def _normalize_visualization(value):
+              if not isinstance(value, dict):
+                  return {'enabled': False}
+              chart_type = str(value.get('chart_type') or '').strip().lower()
+              if chart_type not in {'bar', 'line', 'pie', 'area', 'boxplot'}:
+                  chart_type = 'bar'
+              x_field = str(value.get('x_field') or '').strip()
+              y_field = str(value.get('y_field') or '').strip()
+              series_name = str(value.get('series_name') or '').strip() or 'value'
+              title = str(value.get('title') or '').strip()
+              enabled = bool(value.get('enabled', bool(x_field and y_field)))
+              if chart_type == 'pie':
+                  enabled = bool(value.get('enabled', bool(x_field and y_field)))
+              return {
+                  'enabled': enabled,
+                  'chart_type': chart_type,
+                  'x_field': x_field,
+                  'y_field': y_field,
+                  'series_name': series_name,
+                  'title': title,
+              }
+
+
+          def _to_float(value):
+              if isinstance(value, bool):
+                  return 1.0 if value else 0.0
+              if isinstance(value, (int, float)):
+                  return float(value)
+              text = str(value or '').strip()
+              if not text:
+                  return None
+              text = text.replace(',', '')
+              try:
                   return float(text)
               except Exception:
                   return None
@@ -42,6 +93,7 @@
                   return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½æ æ³ç¡®å®å¾è¡¨æ¨ªè½´æçºµè½´å­æ®µã'
 
               title = str((visualization or {}).get('title') or '').strip() or str(question or '').strip()
+              series_name = str((visualization or {}).get('series_name') or '').strip() or str(y_field or '').strip() or 'value'
               series_values = []
               categories = []
               pie_data = []
@@ -66,7 +118,7 @@
                   option = {
                       'title': {'text': title} if title else {},
                       'tooltip': {'trigger': 'item'},
-                      'series': [{'type': 'pie', 'data': pie_data}],
+                      'series': [{'name': series_name, 'type': 'pie', 'data': pie_data}],
                   }
               else:
                   series_type = 'line' if chart_type == 'line' else 'bar'
@@ -75,7 +127,7 @@
                       'tooltip': {'trigger': 'axis'},
                       'xAxis': {'type': 'category', 'data': categories},
                       'yAxis': {'type': 'value'},
-                      'series': [{'type': series_type, 'data': series_values}],
+                      'series': [{'name': series_name, 'type': series_type, 'data': series_values}],
                   }
 
               nl = chr(10)
@@ -225,7 +277,7 @@
                   'x_field': x_field,
                   'y_field': y_field,
                   'title': str(visualization.get('title') or '').strip(),
-                  'series_name': str(visualization.get('series_name') or 'value').strip() or 'value',
+                  'series_name': str(visualization.get('series_name') or visualization.get('y_field') or 'value').strip() or 'value',
               }
 
           def _build_echarts_option(visualization, rows):
@@ -237,7 +289,7 @@
               x_field = str(visualization.get('x_field') or '').strip()
               y_field = str(visualization.get('y_field') or '').strip()
               title = str(visualization.get('title') or '').strip()
-              series_name = str(visualization.get('series_name') or 'value').strip() or 'value'
+              series_name = str(visualization.get('series_name') or y_field or 'value').strip() or 'value'
               if not x_field or not y_field:
                   return {}
               points = []
@@ -253,7 +305,7 @@
                   return {}
               if chart_type == 'pie':
                   return {
-                      'title': {'text': title} if title else {},
+                      'title': {'text': title or y_field},
                       'tooltip': {'trigger': 'item'},
                       'series': [{
                           'name': series_name,
@@ -264,7 +316,7 @@
               x_axis = [str(x) for x, _ in points]
               y_axis = [y for _, y in points]
               return {
-                  'title': {'text': title} if title else {},
+                  'title': {'text': title or y_field},
                   'tooltip': {'trigger': 'axis'},
                   'xAxis': {'type': 'category', 'data': x_axis},
                   'yAxis': {'type': 'value'},
@@ -298,6 +350,9 @@
                   response_headers = {}
                   rows = []
                   reason = ''
+                  if (not skip_query) and (not pipeline):
+                      skip_query = True
+                      reason = 'empty pipeline'
                   if not skip_query:
                       selected_url = random.choice(urls)
                       request_body = {
@@ -314,7 +369,8 @@
                   else:
                       response_body = json.dumps({'msg': 'skip query', 'code': 200, 'data': {'rows': []}}, ensure_ascii=False)
                       rows = []
-                      reason = 'no join values from previous stage'
+                      if not reason:
+                          reason = 'no join values from previous stage'
 
                   trace_item = {
                       'stage_name': stage['stage_name'],
@@ -347,11 +403,11 @@
                   first_stage_name = normalized_execution_plan['stages'][0]['stage_name']
                   merged_rows = (stage_outputs.get(first_stage_name) or {}).get('rows') or []
               visualization = normalized_execution_plan.get('visualization') or {}
-              chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'column'})
+              chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'line', 'pie'})
               chart_option = _build_echarts_option(visualization, merged_rows)
               chart_x_field = str(chart_decision.get('x_field') or '')
               chart_y_field = str(chart_decision.get('y_field') or '')
-              chart_enabled, chart_option, chart_markdown, _, _, _, _ = _build_chart_payload(visualization, merged_rows, {'bar', 'column'})
+              chart_enabled, chart_option, chart_markdown, _, _, _, _ = _build_chart_payload(visualization, merged_rows, {'bar', 'line', 'pie'}, normalized_execution_plan, question)
               chart_payload = {
                   'enabled': bool(chart_enabled and chart_option),
                   'renderer': 'echarts',
@@ -942,59 +998,3 @@
           value_type: number
           variable: local_status_code
         - value_selector:
-          - '1775000000019'
-          - body
-          value_type: string
-          variable: local_body
-      height: 96
-      id: '1775000000013'
-      position:
-        x: 3776.6804920892264
-        "y": 280
-      positionAbsolute:
-        x: 3776.6804920892264
-        "y": 280
-      selected: true
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 19f817f4-cd31-49fb-a97e-9aebd2531262
-            value: 'true'
-            varType: string
-            variable_selector:
-            - env
-            - ENABLE_FULL_LLM
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_是否启用满血LLM
-        type: if-else
-      height: 124
-      id: '1775000000014'
-      position:
-        x: 2210
-        "y": 320
-      positionAbsolute:
-        x: 2210
-        "y": 320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: ad4255b8-c185-494f-a717-76ba66eb92c5
-            value: 'true'
-            varType: string
-            variable_selector:
