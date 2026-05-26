@@ -1,3 +1,74 @@
+                  first = choices[0] or {}
+                  if isinstance(first, dict):
+                      msg = first.get('message') or {}
+                      if isinstance(msg, dict):
+                          text = _content_to_text(msg.get('content'))
+                          if text:
+                              return text
+                      text = _content_to_text(first.get('text'))
+                      if text:
+                          return text
+              output = resp_json.get('output')
+              text = _content_to_text(output)
+              if text:
+                  return text
+              if isinstance(output, list):
+                  for item in output:
+                      if isinstance(item, dict):
+                          text = _content_to_text(item.get('content'))
+                          if text:
+                              return text
+              for key in ('result', 'text', 'content', 'answer'):
+                  text = _content_to_text(resp_json.get(key))
+                  if text:
+                      return text
+              data = resp_json.get('data')
+              if isinstance(data, dict):
+                  for key in ('result', 'text', 'content', 'answer'):
+                      text = _content_to_text(data.get(key))
+                      if text:
+                          return text
+              return ''
+
+
+          def _strip_code_fence(text):
+              raw = str(text or '').strip()
+              full_match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)
+              if full_match:
+                  return full_match.group(1).strip()
+              return raw
+
+
+          def _remove_think_blocks(text):
+              raw = str(text or '')
+              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
+              return raw.strip()
+
+
+          def _ast_candidate_score(obj):
+              if not isinstance(obj, dict):
+                  return -1
+              score = 0
+              keys = set(obj.keys())
+              for key in ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate', 'expands', 'time_range', 'limit'):
+                  if key in keys:
+                      score += 2
+              if keys:
+                  score += 1
+              return score
+
+
+          def _try_decode_object(raw):
+              try:
+                  decoder = json.JSONDecoder()
+                  obj, end = decoder.raw_decode(raw)
+                  if isinstance(obj, dict):
+                      return obj, raw[:end], raw[end:].strip()
+              except Exception:
+                  return None
+              return None
+
+
           def _extract_json_object_text(text):
               raw = _remove_think_blocks(_strip_code_fence(text))
               if not raw:
@@ -583,53 +654,48 @@
     - data:
         outputs:
         - value_selector:
-          - '1773975766025'
-          - structured_output
+          - '1775000000007'
+          - question
+          value_type: string
+          variable: last_question
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan
           value_type: object
-          variable: planner
+          variable: last_normalized_execution_plan
         - value_selector:
-          - '1775000000005'
-          - schema_context
-          value_type: string
-          variable: schema_context
-        - value_selector:
-          - '1775000000013'
-          - semantic_plan
+          - '1775000000007'
+          - last_validated_ast
           value_type: object
-          variable: execution_plan
-        - value_selector:
-          - '1775000000013'
-          - semantic_plan_raw_text
-          value_type: string
-          variable: execution_plan_raw_text
+          variable: last_validated_ast
         - value_selector:
           - '1775000000007'
-          - normalized_execution_plan_json
+          - last_pipeline_json
           value_type: string
-          variable: normalized_execution_plan_json
+          variable: last_pipeline_json
         - value_selector:
           - '1775000000007'
-          - stage_execution_trace_json
-          value_type: string
-          variable: stage_execution_trace_json
+          - merged_rows
+          value_type: array[object]
+          variable: last_merged_rows
         - value_selector:
           - '1775000000007'
-          - final_response_body
-          value_type: string
-          variable: final_response_body
-        - value_selector:
-          - '1775000000007'
-          - final_response_summary
+          - chart
           value_type: object
-          variable: final_response_summary
+          variable: last_chart
+        - value_selector:
+          - '1775000000007'
+          - result_summary
+          value_type: string
+          variable: last_result_summary
+        - value_selector:
+          - '1775000000007'
+          - last_error
+          value_type: string
+          variable: last_error
         selected: false
         answer: |
-          查询结果如下：
-
-          {{#1775000000007.chart_echarts_markdown#}}
-
-          结果摘要：
-          {{#1775000000007.final_response_summary.summary#}}
+          {{#1775000000007.answer_text#}}
         title: Answer
         type: answer
       height: 270
