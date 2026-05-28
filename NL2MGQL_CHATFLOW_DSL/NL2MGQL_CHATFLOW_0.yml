@@ -494,15 +494,7 @@ workflow:
         selected: false
         title: 用户输入
         type: start
-        variables:
-        - default: ''
-          hint: ''
-          label: question
-          options: []
-          placeholder: ''
-          required: true
-          type: text-input
-          variable: question
+        variables: []
       height: 109
       id: '1773909192919'
       position:
@@ -635,7 +627,7 @@ workflow:
             - related_collections = ["products"]
         - id: planner-user
           role: user
-          text: 用户问题:{{#1773909192919.question#}}
+          text: 用户问题:{{#sys.query#}}
         selected: false
         structured_output:
           schema:
@@ -747,8 +739,8 @@ workflow:
         type: code
         variables:
         - value_selector:
-          - '1773909192919'
-          - question
+          - sys
+          - query
           value_type: string
           variable: question
         - value_selector:
