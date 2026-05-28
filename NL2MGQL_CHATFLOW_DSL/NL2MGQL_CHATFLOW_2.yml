@@ -932,39 +932,158 @@
       type: custom
       width: 242
     - data:
-        authorization:
-          config:
-          type: no-auth
-        body:
-          data:
-          - id: llm-body-1
-            key: ''
-            type: text
-            value: "{{#1775000000011.llm_request_body_json#}}"
-          type: json
-        desc: 调用内部满血版LLM生成跨Collection AST
-        headers: |-
-          Content-Type:application/json
-          Authorization:{{#1775000000011.authorization_value#}}
-        method: post
-        params: ''
-        retry_config:
-          max_retries: 1
-          retry_enabled: false
-          retry_interval: 100
+        code: |
+          import json
+          import traceback
+          import urllib.error
+          import urllib.request
+
+
+          def _to_text(value):
+              return '' if value is None else str(value)
+
+
+          def _safe_json_loads(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str):
+                  return json.loads(value)
+              raise ValueError('llm_request_body_json must be object or JSON object string')
+
+
+          def _extract_prompt_length(messages):
+              if not isinstance(messages, list):
+                  return 0
+              text_parts = []
+              for item in messages:
+                  if not isinstance(item, dict):
+                      continue
+                  content = item.get('content')
+                  if isinstance(content, str):
+                      text_parts.append(content)
+                  elif isinstance(content, list):
+                      for part in content:
+                          if isinstance(part, dict):
+                              t = part.get('text')
+                              if isinstance(t, str):
+                                  text_parts.append(t)
+              return len(''.join(text_parts))
+
+
+          def main(chat_url: str, authorization_value: str, llm_request_body_json: str) -> dict:
+              timeout_sec = 70
+              result = {
+                  'status_code': 0,
+                  'ok': False,
+                  'body': '',
+                  'body_preview': '',
+                  'headers_json': '{}',
+                  'error_message': '',
+                  'request_debug': {},
+                  'files': []
+              }
+
+              try:
+                  body_obj = _safe_json_loads(llm_request_body_json)
+              except Exception as e:
+                  result['error_message'] = 'REQUEST_BUILD_FAILED: ' + str(e)
+                  result['body_preview'] = traceback.format_exc()[:4000]
+                  return result
+
+              messages = body_obj.get('messages') or []
+              response_format = body_obj.get('response_format') if isinstance(body_obj.get('response_format'), dict) else {}
+              json_schema = response_format.get('json_schema') if isinstance(response_format.get('json_schema'), dict) else {}
+              auth = _to_text(authorization_value)
+              auth_scheme = auth.split(' ', 1)[0] if ' ' in auth else ('unknown' if auth else '')
+
+              result['request_debug'] = {
+                  'url': _to_text(chat_url),
+                  'auth_present': bool(auth),
+                  'auth_scheme': auth_scheme,
+                  'auth_len': len(auth),
+                  'model': body_obj.get('model'),
+                  'body_keys': list(body_obj.keys()),
+                  'messages_count': len(messages) if isinstance(messages, list) else 0,
+                  'prompt_length': _extract_prompt_length(messages),
+                  'response_format_enabled': 'response_format' in body_obj,
+                  'response_format_type': response_format.get('type') if isinstance(response_format, dict) else None,
+                  'schema_name': _to_text(json_schema.get('name')) if isinstance(json_schema, dict) else '',
+                  'timeout_sec': timeout_sec
+              }
+
+              data = json.dumps(body_obj, ensure_ascii=False).encode('utf-8')
+              req = urllib.request.Request(
+                  _to_text(chat_url),
+                  data=data,
+                  headers={
+                      'Content-Type': 'application/json',
+                      'Authorization': auth
+                  },
+                  method='POST'
+              )
+
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
+                      text = resp.read().decode('utf-8', errors='replace')
+                      result['status_code'] = int(getattr(resp, 'status', 0) or 0)
+                      result['ok'] = 200 <= result['status_code'] < 300
+                      result['body'] = text
+                      result['body_preview'] = text[:4000]
+                      result['headers_json'] = json.dumps(dict(resp.headers.items()), ensure_ascii=False)
+                      return result
+              except urllib.error.HTTPError as e:
+                  text = e.read().decode('utf-8', errors='replace')
+                  result['status_code'] = int(getattr(e, 'code', 0) or 0)
+                  result['ok'] = False
+                  result['body'] = text
+                  result['body_preview'] = text[:4000]
+                  result['headers_json'] = json.dumps(dict(e.headers.items()), ensure_ascii=False) if getattr(e, 'headers', None) else '{}'
+                  result['error_message'] = 'HTTP_ERROR status=%s' % result['status_code']
+                  return result
+              except Exception as e:
+                  result['status_code'] = 0
+                  result['ok'] = False
+                  result['error_message'] = str(e)
+                  result['body_preview'] = traceback.format_exc()[:4000]
+                  return result
+        code_language: python3
+        desc: 调用内部满血版LLM并保留非2xx响应体用于诊断
+        outputs:
+          status_code:
+            type: number
+          ok:
+            type: boolean
+          body:
+            type: string
+          body_preview:
+            type: string
+          headers_json:
+            type: string
+          error_message:
+            type: string
+          request_debug:
+            type: object
+          files:
+            type: array[file]
         selected: false
-        ssl_verify: false
-        timeout:
-          connect: 6000
-          max_connect_timeout: 600000
-          max_read_timeout: 600000
-          max_write_timeout: 600000
-          read: 6000
-          write: 5998
-        title: HTTP请求_调用满血LLM
-        type: http-request
-        url: "{{#1775000000011.chat_url#}}"
-        variables: []
+        title: 代码执行_调用满血LLM并保留错误响应
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000011'
+          - chat_url
+          value_type: string
+          variable: chat_url
+        - value_selector:
+          - '1775000000011'
+          - authorization_value
+          value_type: string
+          variable: authorization_value
+        - value_selector:
+          - '1775000000011'
+          - llm_request_body_json
+          value_type: string
+          variable: llm_request_body_json
       height: 139
       id: '1775000000012'
       position:
