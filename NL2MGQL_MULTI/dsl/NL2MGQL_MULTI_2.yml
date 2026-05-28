@@ -656,31 +656,31 @@
                   sanitized_schema = _sanitize_json_schema(schema)
                   if not sanitized_schema or not isinstance(sanitized_schema, dict):
                       raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
-                  authorization_prefix = str(llm_config.get('authorization-prefix') or '')
-                  authorization_value = f"{authorization_prefix}{token}"
+                  authorization_value = _first_non_empty_string(
+                      str(llm_config.get('basic_auth') or '').strip(),
+                      str(token or '').strip(),
+                  )
+                  if not authorization_value.startswith('Basic '):
+                      raise ValueError('LLM basic auth is required and must start with Basic ')
+                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'Qwen-V3.6-35B-A3B')
+                  prompt = semantic_plan_user_prompt
                   request_body = {
-                      'model': llm_config.get('model'),
+                      'model': model,
                       'messages': [
-                          {'role': 'system', 'content': semantic_plan_system_prompt},
-                          {'role': 'user', 'content': semantic_plan_user_prompt},
+                          {'role': 'user', 'content': prompt},
                       ],
-                      'stream': bool(llm_config.get('stream', False)),
-                      'temperature': llm_config.get('temperature', 0),
-                      'top_p': llm_config.get('top_p', 1),
-                      'max_completion_tokens': llm_config.get('max_completion_tokens', 12288),
-                      'user': llm_config.get('user', ''),
-                      'response_format': {
-                          'type': 'json_schema',
-                          'json_schema': {
-                              'name': 'semantic_execution_plan',
-                              'strict': True,
-                              'schema': sanitized_schema,
-                          }
-                      }
+                      'stream': False,
                   }
                   return {
                       'request_enabled': 'true',
-                      'full_request_error': '',
+                      'full_request_error': json.dumps({
+                          'request_url': str(chat_url or '').strip(),
+                          'model': model,
+                          'prompt_length': len(prompt or ''),
+                          'auth_present': bool(authorization_value),
+                          'auth_scheme': 'Basic',
+                          'auth_len': len(authorization_value or ''),
+                      }, ensure_ascii=False),
                       'chat_url': chat_url,
                       'authorization_value': authorization_value,
                       'llm_request_body_json': json.dumps(request_body, ensure_ascii=False),

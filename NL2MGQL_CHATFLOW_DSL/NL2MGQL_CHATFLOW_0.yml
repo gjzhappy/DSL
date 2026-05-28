@@ -119,7 +119,7 @@ workflow:
     selector:
     - env
     - LLM_MODEL
-    value: Qwen-V3.5-397B-A17B
+    value: Qwen-V3.6-35B-A3B
     value_type: string
   - description: 用户标识
     id: f326eaab-9215-418d-ab63-28bcde87deee
@@ -129,14 +129,13 @@ workflow:
     - LLM_USER
     value: g30044897
     value_type: string
-  - description: Authorization 前缀, 如果接口要求�接传动态 token，就留空 '', 如果接口要求 'Bearer xxxxx'，就填
-      'Bearer '
+  - description: Basic Authorization 完整值，形如 Basic xxxxxx
     id: 542f3651-d41b-479a-974c-7044f390c8cf
-    name: LLM_AUTH_PREFIX
+    name: LLM_BASIC_AUTH
     selector:
     - env
-    - LLM_AUTH_PREFIX
-    value: " "
+    - LLM_BASIC_AUTH
+    value: ''
     value_type: string
   - description: 超时时间，单位毫秒
     id: df20a6d1-0f26-4192-9e2c-73a5fc1bdbb7
