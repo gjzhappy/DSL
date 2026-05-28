@@ -641,7 +641,7 @@
         variables:
         - value_selector:
           - '1775000000013'
-          - semantic_plan
+          - normalized_semantic_plan
           value_type: object
           variable: semantic_plan
         - value_selector:
@@ -798,11 +798,12 @@
                   sanitized_schema = _sanitize_json_schema(schema)
                   if not sanitized_schema or not isinstance(sanitized_schema, dict):
                       raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
-                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'Qwen-V3.6-35B-A3B')
+                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
                   prompt = semantic_plan_user_prompt
                   request_body = {
                       'model': model,
                       'messages': [
+                          {'role': 'system', 'content': semantic_plan_system_prompt},
                           {'role': 'user', 'content': prompt},
                       ],
                       'stream': False,

@@ -105,7 +105,12 @@
               return int(full_status_code or 0), full_body, 'full_llm'
 
 
-          def main(full_status_code, full_body, local_status_code, local_body):
+          def _contains_chart_intent(question: str):
+              q = str(question or '')
+              return any(k in q for k in ['柱状图', '折线图', '饼图', '图表', '可视化'])
+
+
+          def main(full_status_code, full_body, local_status_code, local_body, question=''):
               code, body, _source = _pick_response(full_status_code, full_body, local_status_code, local_body)
               source = 'full_llm_or_local'
               payload = None
@@ -151,13 +156,13 @@
               legacy_keys = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
               has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
               has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
-              legacy = all(k in semantic_plan for k in legacy_keys)
+              legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
               if isinstance(semantic_plan, dict):
                   parsed_type = type(semantic_plan).__name__
                   parsed_keys = list(semantic_plan.keys())
                   has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
                   has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
-                  legacy = all(k in semantic_plan for k in legacy_keys)
+                  legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
                   normalized = semantic_plan
               if has_stages:
                   pass
@@ -166,8 +171,32 @@
                   normalized = {'execution_plan': {'stages': semantic_plan.get('stages', [])}, **{k:v for k,v in semantic_plan.items() if k!='stages'}}
               elif legacy:
                   warning = 'FULL_LLM_LEGACY_AST_DETECTED'
-                  stage = {k: semantic_plan.get(k) for k in ['collection','filters','group_by','metrics','sort','limit'] if k in semantic_plan}
-                  normalized = {'execution_plan': {'stages': [stage]}}
+                  group_by = semantic_plan.get('group_by') if isinstance(semantic_plan.get('group_by'), list) else []
+                  metrics = semantic_plan.get('metrics') if isinstance(semantic_plan.get('metrics'), list) else []
+                  stage = {
+                      'stage_id': 'stage1',
+                      'primary_collection': semantic_plan.get('collection') or '',
+                      'intent': 'aggregate' if (group_by or metrics) else 'find',
+                      'filters': semantic_plan.get('filters') if isinstance(semantic_plan.get('filters'), list) else [],
+                      'group_by': group_by,
+                      'metrics': metrics,
+                      'sort': semantic_plan.get('sort') if isinstance(semantic_plan.get('sort'), list) else [],
+                      'limit': semantic_plan.get('limit') if isinstance(semantic_plan.get('limit'), int) else 100,
+                  }
+                  needs_chart = bool(semantic_plan.get('needs_chart')) or (_contains_chart_intent(question) and bool(group_by and metrics))
+                  chart_request = semantic_plan.get('chart_request') if isinstance(semantic_plan.get('chart_request'), dict) else {}
+                  if needs_chart and not chart_request and group_by and metrics:
+                      first_metric = metrics[0] if metrics else {}
+                      m_name = first_metric.get('alias') or first_metric.get('name') or 'value'
+                      q = str(question or '')
+                      chart_type = 'bar' if '柱状图' in q else ('line' if '折线图' in q else ('pie' if '饼图' in q else 'bar'))
+                      chart_request = {'chart_type': chart_type, 'x_field': group_by[0], 'y_field': m_name}
+                  normalized = {
+                      'execution_plan': {'stages': [stage]},
+                      'needs_chart': needs_chart,
+                      'chart_request': chart_request,
+                      'answer_mode': semantic_plan.get('answer_mode') or 'data',
+                  }
               else:
                   error = 'SEMANTIC_PLAN_INVALID'
               n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
@@ -199,16 +228,25 @@
                   'normalizer_error': normalizer_error,
                   'error': error,
               }
-              return {'semantic_plan': normalized, 'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000], 'plan_valid': plan_valid, 'normalizer_error': normalizer_error, 'debug_summary': debug_summary}
+              return {'semantic_plan': normalized, 'normalized_semantic_plan': normalized, 'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000], 'plan_valid': plan_valid, 'legacy_ast_detected': legacy, 'normalizer_warning': warning, 'normalizer_error': normalizer_error, 'debug_summary': debug_summary}
         code_language: python3
         desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
         outputs:
           semantic_plan:
             children:
             type: object
+          normalized_semantic_plan:
+            children:
+            type: object
           plan_valid:
             children:
             type: boolean
+          legacy_ast_detected:
+            children:
+            type: boolean
+          normalizer_warning:
+            children:
+            type: string
           normalizer_error:
             children:
             type: string
@@ -242,6 +280,11 @@
           - body
           value_type: string
           variable: local_body
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
       height: 96
       id: '1775000000013'
       position:
