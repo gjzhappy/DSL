@@ -107,27 +107,58 @@
 
           def main(full_status_code, full_body, local_status_code, local_body):
               code, body, _source = _pick_response(full_status_code, full_body, local_status_code, local_body)
-              if code < 200 or code >= 300:
-                  raise ValueError(f"LLM调用失败, status={code}, body={_truncate_text(body, 2000)}")
-              if not body:
-                  raise ValueError('LLM返�body为空')
-              resp_json = _read_json_text(body)
-              if not resp_json:
-                  raise ValueError(f"LLM响应不是合法JSON: {_truncate_text(body, 1200)}")
-              result = _extract_chat_text(resp_json)
-              if not result:
-                  raise ValueError(f"LLM返�内容为空, body={_truncate_text(body, 2000)}")
-              semantic_plan_text = _extract_json_object_text(result)
-              semantic_plan = json.loads(semantic_plan_text)
-              if not isinstance(semantic_plan, dict):
-                  raise ValueError('LLM返�语义计划不是JSON对象')
+              source = 'full_llm_or_local'
+              payload = None
+              result = ''
+              try:
+                  if code < 200 or code >= 300:
+                      result = _truncate_text(body, 4000)
+                  elif not body:
+                      result = ''
+                  else:
+                      resp_json = _read_json_text(body)
+                      payload = resp_json
+                      if not resp_json:
+                          result = _truncate_text(body, 4000)
+                      else:
+                          result = _extract_chat_text(resp_json) or _truncate_text(body, 4000)
+              except Exception as e:
+                  result = _truncate_text(f"{body}\n\nexception={e}", 4000)
+              semantic_plan = {}
+              normalizer_error = ''
+              parsed = None
+              json_parse_ok = False
+              parsed_type = ''
+              parsed_keys = []
+              has_exec = False
+              has_stages = False
+              stage_count = 0
+              legacy = False
+              warning = ''
+              error = ''
+              normalized = {}
+              semantic_plan_raw_text = result
+              try:
+                  semantic_plan_text = _extract_json_object_text(result)
+                  semantic_plan_raw_text = semantic_plan_text or result
+                  parsed = json.loads(semantic_plan_text)
+                  json_parse_ok = True
+              except Exception as e:
+                  error = str(e)
+                  parsed = None
+              if isinstance(parsed, dict):
+                  semantic_plan = parsed
               legacy_keys = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
               has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
               has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
               legacy = all(k in semantic_plan for k in legacy_keys)
-              warning = ''
-              error = ''
-              normalized = semantic_plan
+              if isinstance(semantic_plan, dict):
+                  parsed_type = type(semantic_plan).__name__
+                  parsed_keys = list(semantic_plan.keys())
+                  has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
+                  has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
+                  legacy = all(k in semantic_plan for k in legacy_keys)
+                  normalized = semantic_plan
               if has_stages:
                   pass
               elif isinstance(semantic_plan.get('stages'), list) and len(semantic_plan.get('stages') or []) > 0:
@@ -142,28 +173,48 @@
               n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
               n_stages = normalized.get('execution_plan', {}).get('stages') if n_has_exec else None
               n_has_stages = isinstance(n_stages, list) and len(n_stages)>0
-              if not n_has_stages:
-                  raise ValueError(error or 'SEMANTIC_PLAN_INVALID')
+              stage_count = len(n_stages or [])
+              plan_valid = bool(n_has_stages)
+              if not plan_valid:
+                  normalizer_error = f"SEMANTIC_PLAN_INVALID: {error or 'missing execution_plan.stages'}"
+                  normalized = {}
+              content_preview = str(semantic_plan_raw_text or '')[:1000]
               debug_summary = {
-                  'plan_valid': True,
+                  'source': source,
+                  'http_status_code': code,
+                  'body_type': type(payload).__name__ if payload is not None else 'none',
+                  'content_extracted': bool(result),
+                  'content_length': len(str(semantic_plan_raw_text or '')),
+                  'content_preview': content_preview,
+                  'json_parse_ok': json_parse_ok,
+                  'parsed_type': parsed_type or (type(parsed).__name__ if parsed is not None else 'none'),
+                  'parsed_keys': parsed_keys,
+                  'plan_valid': plan_valid,
                   'has_execution_plan': n_has_exec,
                   'has_stages': n_has_stages,
-                  'stages_count': len(n_stages or []),
+                  'stages_count': stage_count,
                   'legacy_ast_detected': legacy,
                   'normalized': True,
                   'normalizer_warning': warning,
-                  'normalizer_error': error,
+                  'normalizer_error': normalizer_error,
+                  'error': error,
               }
-              return {'normalized_semantic_plan': normalized, 'semantic_plan_raw_text': result, 'debug_summary': json.dumps(debug_summary, ensure_ascii=False)}
+              return {'semantic_plan': normalized, 'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000], 'plan_valid': plan_valid, 'normalizer_error': normalizer_error, 'debug_summary': debug_summary}
         code_language: python3
         desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
         outputs:
-          normalized_semantic_plan:
+          semantic_plan:
             children:
             type: object
-          debug_summary:
+          plan_valid:
+            children:
+            type: boolean
+          normalizer_error:
             children:
             type: string
+          debug_summary:
+            children:
+            type: object
           semantic_plan_raw_text:
             children:
             type: string
