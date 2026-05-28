@@ -110,6 +110,28 @@
               return any(k in q for k in ['柱状图', '折线图', '饼图', '图表', '可视化'])
 
 
+          def _detect_relative_days(question_text):
+              q = str(question_text or '')
+              if any(t in q for t in ['近7天', '最近7天']):
+                  return 7
+              if any(t in q for t in ['过去一个月', '近一个月', '最近一个月', '最近30天', '近30天']):
+                  return 30
+              return 0
+
+
+          def _is_abs_date_between_filter(item):
+              if not isinstance(item, dict):
+                  return False
+              if str(item.get('field') or '').strip() != 'created_at':
+                  return False
+              if str(item.get('op') or '').strip() != 'between':
+                  return False
+              value = item.get('value')
+              if not isinstance(value, list) or len(value) != 2:
+                  return False
+              return all(isinstance(v, dict) and '$date' in v for v in value)
+
+
           def main(full_status_code, full_body, local_status_code, local_body, question=''):
               code, body, _source = _pick_response(full_status_code, full_body, local_status_code, local_body)
               source = 'full_llm_or_local'
@@ -142,6 +164,8 @@
               warning = ''
               error = ''
               normalized = {}
+              absolute_date_filter_detected = False
+              time_range_normalized = False
               semantic_plan_raw_text = result
               try:
                   semantic_plan_text = _extract_json_object_text(result)
@@ -199,6 +223,36 @@
                   }
               else:
                   error = 'SEMANTIC_PLAN_INVALID'
+              if isinstance(normalized, dict):
+                  rel_days = _detect_relative_days(question)
+                  stages = ((normalized.get('execution_plan') or {}).get('stages') or []) if isinstance(normalized.get('execution_plan'), dict) else []
+                  if rel_days > 0 and isinstance(stages, list):
+                      for stage in stages:
+                          if not isinstance(stage, dict):
+                              continue
+                          raw_filters = stage.get('filters') if isinstance(stage.get('filters'), list) else []
+                          kept = []
+                          converted = False
+                          for f in raw_filters:
+                              if _is_abs_date_between_filter(f):
+                                  absolute_date_filter_detected = True
+                                  converted = True
+                                  continue
+                              kept.append(f)
+                          if converted:
+                              stage['filters'] = kept
+                              tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
+                              tr.update({'field': str(tr.get('field') or 'created_at'), 'mode': 'relative_days', 'relative_days': rel_days})
+                              stage['time_range'] = tr
+                              warning = 'absolute_date_filter_converted_to_relative_time'
+                              time_range_normalized = True
+                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
+                  if chart_request:
+                      if chart_request.get('x_axis') and not chart_request.get('x_field'):
+                          chart_request['x_field'] = chart_request.get('x_axis')
+                      if chart_request.get('y_axis') and not chart_request.get('y_field'):
+                          chart_request['y_field'] = chart_request.get('y_axis')
+                      normalized['chart_request'] = chart_request
               n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
               n_stages = normalized.get('execution_plan', {}).get('stages') if n_has_exec else None
               n_has_stages = isinstance(n_stages, list) and len(n_stages)>0
@@ -226,18 +280,30 @@
                   'normalized': True,
                   'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
+                  'absolute_date_filter_detected': absolute_date_filter_detected,
+                  'time_range_normalized': time_range_normalized,
                   'error': error,
               }
-              return {'semantic_plan': normalized, 'normalized_semantic_plan': normalized, 'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000], 'plan_valid': plan_valid, 'legacy_ast_detected': legacy, 'normalizer_warning': warning, 'normalizer_error': normalizer_error, 'debug_summary': debug_summary}
+              return {
+                  'semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
+                  'normalized_semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
+                  'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
+                  'plan_valid': plan_valid,
+                  'legacy_ast_detected': legacy,
+                  'normalizer_warning': warning,
+                  'normalizer_error': normalizer_error,
+                  'parse_error': str(error or ''),
+                  'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
+              }
         code_language: python3
         desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
         outputs:
-          semantic_plan:
+          semantic_plan_json:
             children:
-            type: object
-          normalized_semantic_plan:
+            type: string
+          normalized_semantic_plan_json:
             children:
-            type: object
+            type: string
           plan_valid:
             children:
             type: boolean
@@ -250,10 +316,13 @@
           normalizer_error:
             children:
             type: string
-          debug_summary:
+          debug_summary_json:
             children:
-            type: object
+            type: string
           semantic_plan_raw_text:
+            children:
+            type: string
+          parse_error:
             children:
             type: string
         selected: true
