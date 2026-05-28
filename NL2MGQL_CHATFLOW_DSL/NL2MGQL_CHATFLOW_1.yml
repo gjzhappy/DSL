@@ -30,7 +30,7 @@
               llm_static_token: str,
               llm_model: str,
               llm_user: str,
-              llm_auth_prefix: str,
+              llm_basic_auth: str,
               llm_timeout_ms,
               llm_temperature,
               llm_top_p,
@@ -64,7 +64,7 @@
                   "staticToken": str(llm_static_token or ""),
                   "model": str(llm_model or "").strip(),
                   "user": str(llm_user or "").strip(),
-                  "authorization-prefix": str(llm_auth_prefix or ""),
+                  "basic_auth": str(llm_basic_auth or "").strip(),
                   "timeout-millis": _to_int(llm_timeout_ms, 600000),
                   "temperature": llm_temperature if llm_temperature is not None else 0,
                   "top_p": llm_top_p if llm_top_p is not None else 1,
@@ -184,9 +184,9 @@
           variable: llm_user
         - value_selector:
           - env
-          - LLM_AUTH_PREFIX
+          - LLM_BASIC_AUTH
           value_type: string
-          variable: llm_auth_prefix
+          variable: llm_basic_auth
         - value_selector:
           - env
           - LLM_TIMEOUT_MS
