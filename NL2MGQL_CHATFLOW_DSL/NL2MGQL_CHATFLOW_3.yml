@@ -121,13 +121,49 @@
               semantic_plan = json.loads(semantic_plan_text)
               if not isinstance(semantic_plan, dict):
                   raise ValueError('LLM返�语义计划不是JSON对象')
-              return {'semantic_plan': semantic_plan, 'semantic_plan_raw_text': result}
+              legacy_keys = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
+              has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
+              has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
+              legacy = all(k in semantic_plan for k in legacy_keys)
+              warning = ''
+              error = ''
+              normalized = semantic_plan
+              if has_stages:
+                  pass
+              elif isinstance(semantic_plan.get('stages'), list) and len(semantic_plan.get('stages') or []) > 0:
+                  normalized = dict(semantic_plan)
+                  normalized = {'execution_plan': {'stages': semantic_plan.get('stages', [])}, **{k:v for k,v in semantic_plan.items() if k!='stages'}}
+              elif legacy:
+                  warning = 'FULL_LLM_LEGACY_AST_DETECTED'
+                  stage = {k: semantic_plan.get(k) for k in ['collection','filters','group_by','metrics','sort','limit'] if k in semantic_plan}
+                  normalized = {'execution_plan': {'stages': [stage]}}
+              else:
+                  error = 'SEMANTIC_PLAN_INVALID'
+              n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
+              n_stages = normalized.get('execution_plan', {}).get('stages') if n_has_exec else None
+              n_has_stages = isinstance(n_stages, list) and len(n_stages)>0
+              if not n_has_stages:
+                  raise ValueError(error or 'SEMANTIC_PLAN_INVALID')
+              debug_summary = {
+                  'plan_valid': True,
+                  'has_execution_plan': n_has_exec,
+                  'has_stages': n_has_stages,
+                  'stages_count': len(n_stages or []),
+                  'legacy_ast_detected': legacy,
+                  'normalized': True,
+                  'normalizer_warning': warning,
+                  'normalizer_error': error,
+              }
+              return {'normalized_semantic_plan': normalized, 'semantic_plan_raw_text': result, 'debug_summary': json.dumps(debug_summary, ensure_ascii=False)}
         code_language: python3
-        desc: 统一解析满血/本地LLM响应并提取AST JSON
+        desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
         outputs:
-          semantic_plan:
+          normalized_semantic_plan:
             children:
             type: object
+          debug_summary:
+            children:
+            type: string
           semantic_plan_raw_text:
             children:
             type: string
@@ -332,254 +368,28 @@
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
-            properties:
-              collections:
-                items:
-                  minLength: 1
-                  type: string
-                type: array
-                uniqueItems: true
-              execution_mode:
-                enum:
-                - single_stage
-                - multi_stage
-                type: string
-              final_merge:
-                additionalProperties: false
-                properties:
-                  attach_as:
-                    type: string
-                  left_field:
-                    type: string
-                  left_stage:
-                    type: string
-                  merge_mode:
-                    enum:
-                    - none
-                    - left_join
-                    type: string
-                  right_field:
-                    type: string
-                  right_stage:
-                    type: string
-                required:
-                - merge_mode
-                - left_stage
-                - right_stage
-                - left_field
-                - right_field
-                - attach_as
-                type: object
-              primary_collection:
-                minLength: 1
-                type: string
-              reasoning:
-                minLength: 1
-                type: string
-              visualization:
-                additionalProperties: false
-                properties:
-                  chart_type:
-                    enum:
-                    - bar
-                    - line
-                    - pie
-                    type: string
-                  enabled:
-                    type: boolean
-                  series_name:
-                    type: string
-                  title:
-                    type: string
-                  x_field:
-                    type: string
-                  y_field:
-                    type: string
-                type: object
-              stages:
-                items:
-                  additionalProperties: false
-                  properties:
-                    attach_as:
-                      type: string
-                    collection:
-                      minLength: 1
-                      type: string
-                    depends_on:
-                      type: string
-                    entity_field:
-                      type: string
-                    filters:
-                      items:
-                        additionalProperties: false
-                        properties:
-                          field:
-                            minLength: 1
-                            type: string
-                          operator:
-                            enum:
-                            - eq
-                            - in
-                            - gt
-                            - gte
-                            - lt
-                            - lte
-                            - regex
-                            type: string
-                          value:
-                            oneOf:
-                            - type: string
-                            - type: number
-                            - type: integer
-                            - type: boolean
-                            - items:
-                                oneOf:
-                                - type: string
-                                - type: number
-                                - type: integer
-                                - type: boolean
-                              type: array
-                        required:
-                        - field
-                        - operator
-                        - value
-                        type: object
-                      type: array
-                    group_fields:
-                      items:
-                        minLength: 1
-                        type: string
-                      type: array
-                    intent_type:
-                      enum:
-                      - detail_query
-                      - aggregate_summary
-                      - group_top_entity
-                      - group_top_record
-                      - enrich_related
-                      type: string
-                    join_source_field:
-                      type: string
-                    join_target_field:
-                      type: string
-                    limit:
-                      maximum: 200
-                      minimum: 0
-                      type: integer
-                    metric_alias:
-                      type: string
-                    metric_field:
-                      type: string
-                    metric_function:
-                      enum:
-                      - ''
-                      - count
-                      - sum
-                      - avg
-                      - max
-                      - min
-                      type: string
-                    projection_fields:
-                      items:
-                        minLength: 1
-                        type: string
-                      type: array
-                    projection_mode:
-                      enum:
-                      - none
-                      - explicit
-                      - all_returnable
-                      type: string
-                    rank_direction:
-                      enum:
-                      - ''
-                      - asc
-                      - desc
-                      type: string
-                    rank_n:
-                      maximum: 200
-                      minimum: 0
-                      type: integer
-                    rank_order_field:
-                      type: string
-                    sort:
-                      items:
-                        additionalProperties: false
-                        properties:
-                          direction:
-                            enum:
-                            - asc
-                            - desc
-                            type: string
-                          field:
-                            minLength: 1
-                            type: string
-                        required:
-                        - field
-                        - direction
-                        type: object
-                      type: array
-                    stage_name:
-                      minLength: 1
-                      type: string
-                    time_range:
-                      additionalProperties: false
-                      properties:
-                        end:
-                          type: string
-                        field:
-                          type: string
-                        mode:
-                          enum:
-                          - none
-                          - relative_days
-                          - absolute
-                          type: string
-                        relative_days:
-                          minimum: 0
-                          type: integer
-                        start:
-                          type: string
-                      required:
-                      - field
-                      - mode
-                      - relative_days
-                      type: object
-                  required:
-                  - stage_name
-                  - collection
-                  - depends_on
-                  - intent_type
-                  - filters
-                  - time_range
-                  - group_fields
-                  - entity_field
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - rank_n
-                  - rank_order_field
-                  - rank_direction
-                  - sort
-                  - limit
-                  - projection_mode
-                  - projection_fields
-                  - join_source_field
-                  - join_target_field
-                  - attach_as
-                  type: object
-                maxItems: 2
-                minItems: 1
-                type: array
-            required:
-            - execution_mode
-            - primary_collection
-            - collections
-            - stages
-            - final_merge
-            - reasoning
             type: object
+            required:
+            - execution_plan
+            properties:
+              execution_plan:
+                type: object
+                required:
+                - stages
+                properties:
+                  stages:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: object
+                additionalProperties: true
+              needs_chart:
+                type: boolean
+              chart_request:
+                type: object
+              answer_mode:
+                type: string
+            additionalProperties: true
         structured_output_enabled: true
         title: LLM_本地兜底生成语义计划
         type: llm

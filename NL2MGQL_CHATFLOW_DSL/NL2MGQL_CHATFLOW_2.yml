@@ -641,7 +641,7 @@
         variables:
         - value_selector:
           - '1775000000013'
-          - semantic_plan
+          - normalized_semantic_plan
           value_type: object
           variable: semantic_plan
         - value_selector:
@@ -764,8 +764,14 @@
               return value
 
 
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              return str(value or '').strip().lower() in {'1','true','yes','y','on'}
+
+
           def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt: str, semantic_plan_json_schema: str,
-                   chat_url: str, llm_config_json: str, request_id: str):
+                   chat_url: str, llm_config_json: str, request_id: str, full_llm_response_format_enabled: str):
               try:
                   code = int(status_code or 0)
                   if code < 200 or code >= 300:
@@ -801,9 +807,19 @@
                       ],
                       'stream': False,
                   }
+                  rf_enabled = _to_bool(full_llm_response_format_enabled)
+                  if rf_enabled:
+                      request_body['response_format'] = {
+                          'type': 'json_schema',
+                          'json_schema': {
+                              'name': 'semantic_execution_plan',
+                              'strict': False,
+                              'schema': sanitized_schema,
+                          }
+                      }
                   return {
                       'request_enabled': 'true',
-                      'full_request_error': json.dumps({
+                      'debug_summary': json.dumps({
                           'request_url': str(chat_url or '').strip(),
                           'model': model,
                           'prompt_length': len(prompt or ''),
@@ -811,7 +827,12 @@
                           'auth_from': 'token_response.result',
                           'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
                           'auth_len': len(authorization_value or ''),
-                          'auth_preview': 'Basic ***' if authorization_value.startswith('Basic ') else '***',
+                          'body_keys': list(request_body.keys()),
+                          'response_format_enabled': rf_enabled,
+                          'response_format_type': 'json_schema' if rf_enabled else '',
+                          'schema_name': 'semantic_execution_plan' if rf_enabled else '',
+                          'schema_required': ['execution_plan'],
+                          'prompt_preview': _truncate_text(prompt, 1000),
                       }, ensure_ascii=False),
                       'chat_url': chat_url,
                       'authorization_value': authorization_value,
@@ -821,7 +842,7 @@
               except Exception as e:
                   return {
                       'request_enabled': 'false',
-                      'full_request_error': _truncate_text(str(e), 2000),
+                      'debug_summary': _truncate_text(str(e), 2000),
                       'chat_url': str(chat_url or '').strip(),
                       'authorization_value': '',
                       'llm_request_body_json': '',
@@ -836,7 +857,7 @@
           chat_url:
             children:
             type: string
-          full_request_error:
+          debug_summary:
             children:
             type: string
           llm_request_body_json:
@@ -892,6 +913,11 @@
           - request_id
           value_type: string
           variable: request_id
+        - value_selector:
+          - env
+          - FULL_LLM_RESPONSE_FORMAT_ENABLED
+          value_type: string
+          variable: full_llm_response_format_enabled
       height: 96
       id: '1775000000011'
       position:
