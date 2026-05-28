@@ -638,15 +638,16 @@
                   resp_json = _read_json_text(body)
                   if not resp_json or not isinstance(resp_json, dict):
                       raise ValueError(f"动态token响应不是合法JSON: {_truncate_text(body, 1200)}")
-                  token = _first_non_empty_string(
-                      resp_json.get('result'),
-                      resp_json.get('token'),
-                      resp_json.get('dynamicToken'),
-                      (resp_json.get('data') or {}).get('result') if isinstance(resp_json.get('data'), dict) else '',
-                      (resp_json.get('data') or {}).get('token') if isinstance(resp_json.get('data'), dict) else ''
-                  )
-                  if not token:
-                      raise ValueError(f"动态token为空, body={_truncate_text(body, 2000)}")
+                  token_result = resp_json.get('result')
+                  if token_result is None:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not isinstance(token_result, str):
+                      raise ValueError('TOKEN_RESULT_INVALID_TYPE')
+                  authorization_value = token_result.strip()
+                  if not authorization_value:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not authorization_value.startswith('Basic '):
+                      print('WARN:TOKEN_RESULT_UNEXPECTED_PREFIX')
                   llm_config = _read_json_text(llm_config_json)
                   if not llm_config or not isinstance(llm_config, dict):
                       raise ValueError('llm_config_json 不是合法JSON对象')
@@ -656,12 +657,6 @@
                   sanitized_schema = _sanitize_json_schema(schema)
                   if not sanitized_schema or not isinstance(sanitized_schema, dict):
                       raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
-                  authorization_value = _first_non_empty_string(
-                      str(llm_config.get('basic_auth') or '').strip(),
-                      str(token or '').strip(),
-                  )
-                  if not authorization_value.startswith('Basic '):
-                      raise ValueError('LLM basic auth is required and must start with Basic ')
                   model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'Qwen-V3.6-35B-A3B')
                   prompt = semantic_plan_user_prompt
                   request_body = {
@@ -678,8 +673,10 @@
                           'model': model,
                           'prompt_length': len(prompt or ''),
                           'auth_present': bool(authorization_value),
-                          'auth_scheme': 'Basic',
+                          'auth_from': 'token_response.result',
+                          'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
                           'auth_len': len(authorization_value or ''),
+                          'auth_preview': 'Basic ***' if authorization_value.startswith('Basic ') else '***',
                       }, ensure_ascii=False),
                       'chat_url': chat_url,
                       'authorization_value': authorization_value,
