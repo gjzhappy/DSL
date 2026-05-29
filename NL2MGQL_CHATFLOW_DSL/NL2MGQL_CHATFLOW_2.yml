@@ -1,3 +1,105 @@
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_group_top_record(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              rank_order_field = _ensure_non_empty_string(stage.get('rank_order_field'), f"{stage['stage_name']}.rank_order_field")
+              rank_n = int(stage.get('rank_n') or 0)
+              if rank_n <= 0:
+                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_record")
+              projection_fields = stage.get('projection_fields') or list(dict.fromkeys(list(group_fields) + [rank_order_field]))
+              sort_before_rank = {field: 1 for field in group_fields}
+              sort_before_rank[rank_order_field] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
+              pipeline.append({'$sort': sort_before_rank})
+              item_payload = {field: f'${field}' for field in projection_fields}
+              pipeline.append({'$group': {'_id': {field: f'${field}' for field in group_fields}, 'items': {'$push': item_payload}}})
+              project_group = {'_id': 0, 'items': '$items'}
+              for field in group_fields:
+                  project_group[field] = f'$_id.{field}'
+              pipeline.append({'$project': project_group})
+              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
+              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
+              project_after_rank = {'_id': 0}
+              for field in projection_fields:
+                  project_after_rank[field] = f'$items.{field}'
+              for field in group_fields:
+                  project_after_rank[field] = f'${field}' if field not in projection_fields else project_after_rank[field]
+              pipeline.append({'$project': project_after_rank})
+              final_sort = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  final_sort[field] = direction
+              if final_sort and stage.get('apply_global_limit'):
+                  pipeline.append({'$sort': final_sort})
+              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_enrich_related(stage, schema_context, stage_outputs):
+              depends_on = _ensure_non_empty_string(stage.get('depends_on'), f"{stage['stage_name']}.depends_on")
+              prev = stage_outputs.get(depends_on) or {}
+              prev_rows = prev.get('rows') or []
+              join_source_field = _ensure_non_empty_string(stage.get('join_source_field'), f"{stage['stage_name']}.join_source_field")
+              join_target_field = _ensure_non_empty_string(stage.get('join_target_field'), f"{stage['stage_name']}.join_target_field")
+              join_values = _unique_values(prev_rows, join_source_field)
+              projection_mode = str(stage.get('projection_mode') or 'none').strip() or 'none'
+              if projection_mode == 'all_returnable':
+                  projection_fields = _extract_returnable_fields(schema_context, stage['collection'])
+              else:
+                  projection_fields = list(stage.get('projection_fields') or [])
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': f"enrich {stage['collection']} by {join_target_field}",
+              }
+              if not join_values:
+                  return validated_ast, [], True
+              pipeline = []
+              parts = [{join_target_field: {'$in': join_values}}]
+              time_expr = _apply_time_range(stage.get('time_range'))
+              if time_expr:
+                  parts.append(time_expr)
+              for f in stage.get('filters') or []:
+                  parts.append(_build_match_expr(_ensure_non_empty_string(f.get('field'), 'field'), _ensure_non_empty_string(f.get('operator'), 'operator'), f.get('value')))
+              match_expr = _merge_match(parts)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              sort_stage = {}
               for s in stage.get('sort') or []:
                   field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
                   direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
@@ -890,251 +992,3 @@
           value_type: string
           variable: semantic_plan_system_prompt
         - value_selector:
-          - '1775000000005'
-          - semantic_plan_user_prompt
-          value_type: string
-          variable: semantic_plan_user_prompt
-        - value_selector:
-          - '1775000000005'
-          - semantic_plan_json_schema
-          value_type: string
-          variable: semantic_plan_json_schema
-        - value_selector:
-          - '1775000000005'
-          - chat_url
-          value_type: string
-          variable: chat_url
-        - value_selector:
-          - '1775000000005'
-          - llm_config_json
-          value_type: string
-          variable: llm_config_json
-        - value_selector:
-          - '1775000000005'
-          - request_id
-          value_type: string
-          variable: request_id
-        - value_selector:
-          - env
-          - FULL_LLM_RESPONSE_FORMAT_ENABLED
-          value_type: string
-          variable: full_llm_response_format_enabled
-      height: 96
-      id: '1775000000011'
-      position:
-        x: 2524
-        "y": 120
-      positionAbsolute:
-        x: 2524
-        "y": 120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import traceback
-          import urllib.error
-          import urllib.request
-
-
-          def _to_text(value):
-              return '' if value is None else str(value)
-
-
-          def _safe_json_loads(value):
-              if isinstance(value, dict):
-                  return value
-              if isinstance(value, str):
-                  return json.loads(value)
-              raise ValueError('llm_request_body_json must be object or JSON object string')
-
-
-          def _extract_prompt_length(messages):
-              if not isinstance(messages, list):
-                  return 0
-              text_parts = []
-              for item in messages:
-                  if not isinstance(item, dict):
-                      continue
-                  content = item.get('content')
-                  if isinstance(content, str):
-                      text_parts.append(content)
-                  elif isinstance(content, list):
-                      for part in content:
-                          if isinstance(part, dict):
-                              t = part.get('text')
-                              if isinstance(t, str):
-                                  text_parts.append(t)
-              return len(''.join(text_parts))
-
-
-          def main(chat_url: str, authorization_value: str, llm_request_body_json: str) -> dict:
-              timeout_sec = 70
-              result = {
-                  'status_code': 0,
-                  'ok': False,
-                  'body': '',
-                  'body_preview': '',
-                  'headers_json': '{}',
-                  'error_message': '',
-                  'request_debug': {}
-              }
-
-              try:
-                  body_obj = _safe_json_loads(llm_request_body_json)
-              except Exception as e:
-                  result['error_message'] = 'REQUEST_BUILD_FAILED: ' + str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-
-              messages = body_obj.get('messages') or []
-              response_format = body_obj.get('response_format') if isinstance(body_obj.get('response_format'), dict) else {}
-              json_schema = response_format.get('json_schema') if isinstance(response_format.get('json_schema'), dict) else {}
-              auth = _to_text(authorization_value)
-              auth_scheme = auth.split(' ', 1)[0] if ' ' in auth else ('unknown' if auth else '')
-
-              result['request_debug'] = {
-                  'url': _to_text(chat_url),
-                  'auth_present': bool(auth),
-                  'auth_scheme': auth_scheme,
-                  'auth_len': len(auth),
-                  'model': body_obj.get('model'),
-                  'body_keys': list(body_obj.keys()),
-                  'messages_count': len(messages) if isinstance(messages, list) else 0,
-                  'prompt_length': _extract_prompt_length(messages),
-                  'response_format_enabled': 'response_format' in body_obj,
-                  'response_format_type': response_format.get('type') if isinstance(response_format, dict) else None,
-                  'schema_name': _to_text(json_schema.get('name')) if isinstance(json_schema, dict) else '',
-                  'timeout_sec': timeout_sec
-              }
-
-              data = json.dumps(body_obj, ensure_ascii=False).encode('utf-8')
-              req = urllib.request.Request(
-                  _to_text(chat_url),
-                  data=data,
-                  headers={
-                      'Content-Type': 'application/json',
-                      'Authorization': auth
-                  },
-                  method='POST'
-              )
-
-              try:
-                  with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                      text = resp.read().decode('utf-8', errors='replace')
-                      result['status_code'] = int(getattr(resp, 'status', 0) or 0)
-                      result['ok'] = 200 <= result['status_code'] < 300
-                      result['body'] = text
-                      result['body_preview'] = text[:4000]
-                      result['headers_json'] = json.dumps(dict(resp.headers.items()), ensure_ascii=False)
-                      return result
-              except urllib.error.HTTPError as e:
-                  text = e.read().decode('utf-8', errors='replace')
-                  result['status_code'] = int(getattr(e, 'code', 0) or 0)
-                  result['ok'] = False
-                  result['body'] = text
-                  result['body_preview'] = text[:4000]
-                  result['headers_json'] = json.dumps(dict(e.headers.items()), ensure_ascii=False) if getattr(e, 'headers', None) else '{}'
-                  result['error_message'] = 'HTTP_ERROR status=%s' % result['status_code']
-                  return result
-              except Exception as e:
-                  result['status_code'] = 0
-                  result['ok'] = False
-                  result['error_message'] = str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-        code_language: python3
-        desc: 调用内部满血版LLM并保留非2xx响应体用于诊断
-        outputs:
-          status_code:
-            type: number
-          ok:
-            type: boolean
-          body:
-            type: string
-          body_preview:
-            type: string
-          headers_json:
-            type: string
-          error_message:
-            type: string
-          request_debug:
-            type: object
-        selected: false
-        title: 代码执行_调用满血LLM并保留错误响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000011'
-          - chat_url
-          value_type: string
-          variable: chat_url
-        - value_selector:
-          - '1775000000011'
-          - authorization_value
-          value_type: string
-          variable: authorization_value
-        - value_selector:
-          - '1775000000011'
-          - llm_request_body_json
-          value_type: string
-          variable: llm_request_body_json
-      height: 139
-      id: '1775000000012'
-      position:
-        x: 2838
-        "y": 120
-      positionAbsolute:
-        x: 2838
-        "y": 120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import re
-
-
-          def _truncate_text(text, limit=2000):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def _read_json_text(text):
-              if text is None:
-                  return None
-              if isinstance(text, (dict, list)):
-                  return text
-              raw = str(text).strip()
-              if not raw:
-                  return None
-              return json.loads(raw)
-
-
-          def _content_to_text(content):
-              if isinstance(content, str):
-                  return content.strip()
-              if isinstance(content, list):
-                  parts = []
-                  for item in content:
-                      if isinstance(item, str) and item.strip():
-                          parts.append(item.strip())
-                      elif isinstance(item, dict):
-                          text = str(item.get('text') or item.get('content') or '').strip()
-                          if text:
-                              parts.append(text)
-                  return '\n'.join(parts).strip()
-              return ''
-
-
-          def _extract_chat_text(resp_json):
-              if not isinstance(resp_json, dict):
-                  return ''
-              choices = resp_json.get('choices')
-              if isinstance(choices, list) and choices:
