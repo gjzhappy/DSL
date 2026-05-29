@@ -1,3 +1,282 @@
+            type: string
+          stage_execution_trace_json:
+            children:
+            type: string
+          chart_enabled:
+            children:
+            type: string
+          chart_type:
+            children:
+            type: string
+          chart_data:
+            children:
+            type: string
+          chart_title:
+            children:
+            type: string
+          chart_axis_x_title:
+            children:
+            type: string
+          chart_axis_y_title:
+            children:
+            type: string
+          last_validated_ast:
+            type: object
+        selected: false
+        title: 代码执行_遍历语义计划并统一编译执行
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000013'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: semantic_plan
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - env
+          - SN_MONGODB_QUERY_URLS
+          value_type: string
+          variable: query_urls
+      height: 80
+      id: '1775000000007'
+      position:
+        x: 4090
+        "y": 280
+      positionAbsolute:
+        x: 4090
+        "y": 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: token-body-1
+            key: ''
+            type: text
+            value: "{{#1775000000005.token_request_body_json#}}"
+          type: json
+        desc: 使用静态token换取动态token
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_获取动态Token
+        type: http-request
+        url: "{{#1775000000005.token_url#}}"
+        variables: []
+      height: 123
+      id: '1775000000010'
+      position:
+        x: 2210
+        "y": 120
+      positionAbsolute:
+        x: 2210
+        "y": 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          UNSUPPORTED_JSON_SCHEMA_KEYS = {
+              'uniqueItems',
+          }
+
+
+          def _truncate_text(text, limit=2000):
+              text = '' if text is None else str(text)
+              return text if len(text) <= limit else text[:limit] + '...'
+
+
+          def _read_json_text(text):
+              if text is None:
+                  return None
+              if isinstance(text, (dict, list)):
+                  return text
+              raw = str(text).strip()
+              if not raw:
+                  return None
+              return json.loads(raw)
+
+
+          def _first_non_empty_string(*values):
+              for value in values:
+                  if isinstance(value, str) and value.strip():
+                      return value.strip()
+              return ''
+
+
+          def _sanitize_json_schema(value):
+              if isinstance(value, dict):
+                  cleaned = {}
+                  for key, item in value.items():
+                      if key in UNSUPPORTED_JSON_SCHEMA_KEYS:
+                          continue
+                      cleaned[key] = _sanitize_json_schema(item)
+                  return cleaned
+              if isinstance(value, list):
+                  return [_sanitize_json_schema(item) for item in value]
+              return value
+
+
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              return str(value or '').strip().lower() in {'1','true','yes','y','on'}
+
+
+          def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt: str, semantic_plan_json_schema: str,
+                   chat_url: str, llm_config_json: str, request_id: str, full_llm_response_format_enabled: str):
+              try:
+                  code = int(status_code or 0)
+                  if code < 200 or code >= 300:
+                      raise ValueError(f"动态token获取失败, status={code}, body={_truncate_text(body, 2000)}")
+                  resp_json = _read_json_text(body)
+                  if not resp_json or not isinstance(resp_json, dict):
+                      raise ValueError(f"动态token响应不是合法JSON: {_truncate_text(body, 1200)}")
+                  token_result = resp_json.get('result')
+                  if token_result is None:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not isinstance(token_result, str):
+                      raise ValueError('TOKEN_RESULT_INVALID_TYPE')
+                  authorization_value = token_result.strip()
+                  if not authorization_value:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not authorization_value.startswith('Basic '):
+                      print('WARN:TOKEN_RESULT_UNEXPECTED_PREFIX')
+                  llm_config = _read_json_text(llm_config_json)
+                  if not llm_config or not isinstance(llm_config, dict):
+                      raise ValueError('llm_config_json 不是合法JSON对象')
+                  schema = _read_json_text(semantic_plan_json_schema)
+                  if not schema or not isinstance(schema, dict):
+                      raise ValueError('semantic_plan_json_schema 不是合法JSON对象')
+                  sanitized_schema = _sanitize_json_schema(schema)
+                  if not sanitized_schema or not isinstance(sanitized_schema, dict):
+                      raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
+                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
+                  prompt = semantic_plan_user_prompt
+                  request_body = {
+                      'model': model,
+                      'messages': [
+                          {'role': 'system', 'content': semantic_plan_system_prompt},
+                          {'role': 'user', 'content': prompt},
+                      ],
+                      'stream': False,
+                  }
+                  rf_enabled = _to_bool(full_llm_response_format_enabled)
+                  if rf_enabled:
+                      request_body['response_format'] = {
+                          'type': 'json_schema',
+                          'json_schema': {
+                              'name': 'semantic_execution_plan',
+                              'strict': False,
+                              'schema': sanitized_schema,
+                          }
+                      }
+                  return {
+                      'request_enabled': 'true',
+                      'debug_summary': json.dumps({
+                          'request_url': str(chat_url or '').strip(),
+                          'model': model,
+                          'prompt_length': len(prompt or ''),
+                          'auth_present': bool(authorization_value),
+                          'auth_from': 'token_response.result',
+                          'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
+                          'auth_len': len(authorization_value or ''),
+                          'body_keys': list(request_body.keys()),
+                          'response_format_enabled': rf_enabled,
+                          'response_format_type': 'json_schema' if rf_enabled else '',
+                          'schema_name': 'semantic_execution_plan' if rf_enabled else '',
+                          'schema_required': ['execution_plan'],
+                          'prompt_preview': _truncate_text(prompt, 1000),
+                      }, ensure_ascii=False),
+                      'chat_url': chat_url,
+                      'authorization_value': authorization_value,
+                      'llm_request_body_json': json.dumps(request_body, ensure_ascii=False),
+                      'request_id': request_id,
+                  }
+              except Exception as e:
+                  return {
+                      'request_enabled': 'false',
+                      'debug_summary': _truncate_text(str(e), 2000),
+                      'chat_url': str(chat_url or '').strip(),
+                      'authorization_value': '',
+                      'llm_request_body_json': '',
+                      'request_id': str(request_id or '').strip(),
+                  }
+        code_language: python3
+        desc: 解析动态token并构造满血版LLM请求体�失败时转本地LLM
+        outputs:
+          authorization_value:
+            children:
+            type: string
+          chat_url:
+            children:
+            type: string
+          debug_summary:
+            children:
+            type: string
+          llm_request_body_json:
+            children:
+            type: string
+          request_enabled:
+            children:
+            type: string
+          request_id:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_构造满血LLM语义计划请求
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000010'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000010'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_system_prompt
+          value_type: string
+          variable: semantic_plan_system_prompt
+        - value_selector:
           - '1775000000005'
           - semantic_plan_user_prompt
           value_type: string
@@ -204,9 +483,13 @@
       type: custom
       width: 242
     - data:
-        code: |
+        code: |-
           import json
           import re
+
+
+          SEMANTIC_PLAN_SCHEMA_INVALID = 'SEMANTIC_PLAN_SCHEMA_INVALID'
+          FORBIDDEN_TOP_LEVEL_PLAN_KEYS = {'collection', 'group_by', 'metrics'}
 
 
           def _truncate_text(text, limit=2000):
@@ -293,14 +576,16 @@
               return raw.strip()
 
 
-          def _ast_candidate_score(obj):
+          def _plan_candidate_score(obj):
               if not isinstance(obj, dict):
                   return -1
-              score = 0
               keys = set(obj.keys())
-              for key in ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate', 'expands', 'time_range', 'limit'):
-                  if key in keys:
-                      score += 2
+              score = 0
+              if isinstance(obj.get('execution_plan'), dict):
+                  score += 10
+                  stages = obj['execution_plan'].get('stages')
+                  if isinstance(stages, list) and stages:
+                      score += 10
               if keys:
                   score += 1
               return score
@@ -320,7 +605,7 @@
           def _extract_json_object_text(text):
               raw = _remove_think_blocks(_strip_code_fence(text))
               if not raw:
-                  raise ValueError('LLM返�内容为空')
+                  raise ValueError('LLM返回内容为空')
               direct = _try_decode_object(raw)
               if direct and not direct[2]:
                   return direct[1]
@@ -329,7 +614,7 @@
                   parsed = _try_decode_object(block.strip())
                   if parsed:
                       obj, obj_text, tail = parsed
-                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
+                      candidates.append((_plan_candidate_score(obj), 1 if tail else 0, obj_text))
               seen_positions = set()
               for match in re.finditer(r'\{', raw):
                   pos = match.start()
@@ -339,11 +624,11 @@
                   parsed = _try_decode_object(raw[pos:])
                   if parsed:
                       obj, obj_text, tail = parsed
-                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
+                      candidates.append((_plan_candidate_score(obj), 1 if tail else 0, obj_text))
               if candidates:
                   candidates.sort(key=lambda item: (-item[0], item[1], -len(item[2])))
                   return candidates[0][2]
-              raise ValueError(f'LLM返�内容不是合法JSON对象: {_truncate_text(raw, 1200)}')
+              raise ValueError(f'LLM返回内容不是合法JSON对象: {_truncate_text(raw, 1200)}')
 
 
           def _pick_response(full_status_code, full_body, local_status_code, local_body):
@@ -353,36 +638,86 @@
               return int(full_status_code or 0), full_body, 'full_llm'
 
 
-          def _contains_chart_intent(question: str):
-              q = str(question or '')
-              return any(k in q for k in ['柱状图', '折线图', '饼图', '图表', '可视化'])
+          def _contains_forbidden_top_level_shape(plan):
+              return isinstance(plan, dict) and bool(set(plan.keys()) & FORBIDDEN_TOP_LEVEL_PLAN_KEYS)
 
 
-          def _detect_relative_days(question_text):
-              q = str(question_text or '')
-              if any(t in q for t in ['近7天', '最近7天']):
-                  return 7
-              if any(t in q for t in ['过去一个月', '近一个月', '最近一个月', '最近30天', '近30天']):
-                  return 30
-              return 0
+          def _default_count_field(stage):
+              collection = str(stage.get('primary_collection') or '').strip()
+              if collection == 'orders':
+                  return 'order_id'
+              return '_id'
 
 
-          def _is_abs_date_between_filter(item):
-              if not isinstance(item, dict):
-                  return False
-              if str(item.get('field') or '').strip() != 'created_at':
-                  return False
-              if str(item.get('op') or '').strip() != 'between':
-                  return False
-              value = item.get('value')
-              if not isinstance(value, list) or len(value) != 2:
-                  return False
-              return all(isinstance(v, dict) and '$date' in v for v in value)
+          def _normalize_chart_request(plan):
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              if chart_request:
+                  if chart_request.get('x_axis') and not chart_request.get('x_field'):
+                      chart_request['x_field'] = chart_request.get('x_axis')
+                  if chart_request.get('y_axis') and not chart_request.get('y_field'):
+                      chart_request['y_field'] = chart_request.get('y_axis')
+                  plan['chart_request'] = chart_request
+
+
+          def _normalize_stage(stage, index):
+              if not isinstance(stage, dict):
+                  return None, f'execution_plan.stages[{index}] must be an object'
+              if 'group_by' in stage:
+                  return None, 'INVALID_SEMANTIC_PLAN_SCHEMA: stage.group_by is not allowed; use stage.group_fields'
+              if 'metrics' in stage:
+                  return None, 'INVALID_SEMANTIC_PLAN_SCHEMA: stage.metrics is not allowed; use metric_function/metric_field/metric_alias'
+              normalized = dict(stage)
+              for field in ('stage_id', 'stage_type', 'primary_collection', 'intent_type'):
+                  if not str(normalized.get(field) or '').strip():
+                      return None, f'INVALID_SEMANTIC_PLAN_SCHEMA: execution_plan.stages[{index}].{field} is required'
+              if 'filters' in normalized and not isinstance(normalized.get('filters'), list):
+                  return None, f'INVALID_SEMANTIC_PLAN_SCHEMA: execution_plan.stages[{index}].filters must be an array'
+              if 'group_fields' in normalized and not isinstance(normalized.get('group_fields'), list):
+                  return None, f'INVALID_SEMANTIC_PLAN_SCHEMA: execution_plan.stages[{index}].group_fields must be an array'
+              if 'sort' in normalized and not isinstance(normalized.get('sort'), list):
+                  return None, f'INVALID_SEMANTIC_PLAN_SCHEMA: execution_plan.stages[{index}].sort must be an array'
+              metric_function = str(normalized.get('metric_function') or '').strip()
+              metric_field = str(normalized.get('metric_field') or '').strip()
+              metric_alias = str(normalized.get('metric_alias') or '').strip()
+              if metric_function.lower() == 'count' and not metric_field:
+                  normalized['metric_field'] = _default_count_field(normalized)
+              if metric_function and not metric_alias:
+                  normalized['metric_alias'] = f"{metric_function}_{normalized.get('metric_field') or 'value'}"
+              return normalized, ''
+
+
+          def _validate_and_normalize(plan):
+              if not isinstance(plan, dict):
+                  return {}, False, '', f'{SEMANTIC_PLAN_SCHEMA_INVALID}: plan must be a JSON object', 'not_object'
+              if _contains_forbidden_top_level_shape(plan) and not isinstance(plan.get('execution_plan'), dict):
+                  return {}, False, '', 'INVALID_SEMANTIC_PLAN_SCHEMA: top-level collection/group_by/metrics is not allowed', 'forbidden_top_level_shape'
+              execution_plan = plan.get('execution_plan')
+              if not isinstance(execution_plan, dict):
+                  return {}, False, '', f'{SEMANTIC_PLAN_SCHEMA_INVALID}: missing execution_plan', 'missing_execution_plan'
+              stages = execution_plan.get('stages')
+              if not isinstance(stages, list) or not stages:
+                  return {}, False, '', f'{SEMANTIC_PLAN_SCHEMA_INVALID}: execution_plan.stages must be a non-empty array', 'missing_stages'
+              normalized = dict(plan)
+              normalized_execution_plan = dict(execution_plan)
+              normalized_stages = []
+              warnings = []
+              for idx, stage in enumerate(stages):
+                  normalized_stage, stage_error = _normalize_stage(stage, idx)
+                  if stage_error:
+                      return {}, False, '', stage_error, 'invalid_stage'
+                  before_field = str((stage or {}).get('metric_field') or '').strip()
+                  after_field = str((normalized_stage or {}).get('metric_field') or '').strip()
+                  if not before_field and after_field:
+                      warnings.append(f'execution_plan.stages[{idx}].metric_field filled with {after_field}')
+                  normalized_stages.append(normalized_stage)
+              normalized_execution_plan['stages'] = normalized_stages
+              normalized['execution_plan'] = normalized_execution_plan
+              _normalize_chart_request(normalized)
+              return normalized, True, '; '.join(warnings), '', ''
 
 
           def main(full_status_code, full_body, local_status_code, local_body, question=''):
-              code, body, _source = _pick_response(full_status_code, full_body, local_status_code, local_body)
-              source = 'full_llm_or_local'
+              code, body, source = _pick_response(full_status_code, full_body, local_status_code, local_body)
               payload = None
               result = ''
               try:
@@ -399,21 +734,9 @@
                           result = _extract_chat_text(resp_json) or _truncate_text(body, 4000)
               except Exception as e:
                   result = _truncate_text(f"{body}\n\nexception={e}", 4000)
-              semantic_plan = {}
-              normalizer_error = ''
               parsed = None
               json_parse_ok = False
-              parsed_type = ''
-              parsed_keys = []
-              has_exec = False
-              has_stages = False
-              stage_count = 0
-              legacy = False
-              warning = ''
-              error = ''
-              normalized = {}
-              absolute_date_filter_detected = False
-              time_range_normalized = False
+              parse_error = ''
               semantic_plan_raw_text = result
               try:
                   semantic_plan_text = _extract_json_object_text(result)
@@ -421,94 +744,16 @@
                   parsed = json.loads(semantic_plan_text)
                   json_parse_ok = True
               except Exception as e:
-                  error = str(e)
-                  parsed = None
-              if isinstance(parsed, dict):
-                  semantic_plan = parsed
-              legacy_keys = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
-              has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
-              has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
-              legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
-              if isinstance(semantic_plan, dict):
-                  parsed_type = type(semantic_plan).__name__
-                  parsed_keys = list(semantic_plan.keys())
-                  has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
-                  has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
-                  legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
-                  normalized = semantic_plan
-              if has_stages:
-                  pass
-              elif isinstance(semantic_plan.get('stages'), list) and len(semantic_plan.get('stages') or []) > 0:
-                  normalized = dict(semantic_plan)
-                  normalized = {'execution_plan': {'stages': semantic_plan.get('stages', [])}, **{k:v for k,v in semantic_plan.items() if k!='stages'}}
-              elif legacy:
-                  warning = 'FULL_LLM_LEGACY_AST_DETECTED'
-                  group_by = semantic_plan.get('group_by') if isinstance(semantic_plan.get('group_by'), list) else []
-                  metrics = semantic_plan.get('metrics') if isinstance(semantic_plan.get('metrics'), list) else []
-                  stage = {
-                      'stage_id': 'stage1',
-                      'primary_collection': semantic_plan.get('collection') or '',
-                      'intent': 'aggregate' if (group_by or metrics) else 'find',
-                      'filters': semantic_plan.get('filters') if isinstance(semantic_plan.get('filters'), list) else [],
-                      'group_by': group_by,
-                      'metrics': metrics,
-                      'sort': semantic_plan.get('sort') if isinstance(semantic_plan.get('sort'), list) else [],
-                      'limit': semantic_plan.get('limit') if isinstance(semantic_plan.get('limit'), int) else 100,
-                  }
-                  needs_chart = bool(semantic_plan.get('needs_chart')) or (_contains_chart_intent(question) and bool(group_by and metrics))
-                  chart_request = semantic_plan.get('chart_request') if isinstance(semantic_plan.get('chart_request'), dict) else {}
-                  if needs_chart and not chart_request and group_by and metrics:
-                      first_metric = metrics[0] if metrics else {}
-                      m_name = first_metric.get('alias') or first_metric.get('name') or 'value'
-                      q = str(question or '')
-                      chart_type = 'bar' if '柱状图' in q else ('line' if '折线图' in q else ('pie' if '饼图' in q else 'bar'))
-                      chart_request = {'chart_type': chart_type, 'x_field': group_by[0], 'y_field': m_name}
-                  normalized = {
-                      'execution_plan': {'stages': [stage]},
-                      'needs_chart': needs_chart,
-                      'chart_request': chart_request,
-                      'answer_mode': semantic_plan.get('answer_mode') or 'data',
-                  }
-              else:
-                  error = 'SEMANTIC_PLAN_INVALID'
-              if isinstance(normalized, dict):
-                  rel_days = _detect_relative_days(question)
-                  stages = ((normalized.get('execution_plan') or {}).get('stages') or []) if isinstance(normalized.get('execution_plan'), dict) else []
-                  if rel_days > 0 and isinstance(stages, list):
-                      for stage in stages:
-                          if not isinstance(stage, dict):
-                              continue
-                          raw_filters = stage.get('filters') if isinstance(stage.get('filters'), list) else []
-                          kept = []
-                          converted = False
-                          for f in raw_filters:
-                              if _is_abs_date_between_filter(f):
-                                  absolute_date_filter_detected = True
-                                  converted = True
-                                  continue
-                              kept.append(f)
-                          if converted:
-                              stage['filters'] = kept
-                              tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
-                              tr.update({'field': str(tr.get('field') or 'created_at'), 'mode': 'relative_days', 'relative_days': rel_days})
-                              stage['time_range'] = tr
-                              warning = 'absolute_date_filter_converted_to_relative_time'
-                              time_range_normalized = True
-                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
-                  if chart_request:
-                      if chart_request.get('x_axis') and not chart_request.get('x_field'):
-                          chart_request['x_field'] = chart_request.get('x_axis')
-                      if chart_request.get('y_axis') and not chart_request.get('y_field'):
-                          chart_request['y_field'] = chart_request.get('y_axis')
-                      normalized['chart_request'] = chart_request
-              n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
-              n_stages = normalized.get('execution_plan', {}).get('stages') if n_has_exec else None
-              n_has_stages = isinstance(n_stages, list) and len(n_stages)>0
-              stage_count = len(n_stages or [])
-              plan_valid = bool(n_has_stages)
-              if not plan_valid:
-                  normalizer_error = f"SEMANTIC_PLAN_INVALID: {error or 'missing execution_plan.stages'}"
-                  normalized = {}
+                  parse_error = str(e)
+              parsed_keys = list(parsed.keys()) if isinstance(parsed, dict) else []
+              normalized, plan_valid, warning, normalizer_error, invalid_reason = _validate_and_normalize(parsed)
+              if parse_error and not plan_valid and not normalizer_error:
+                  normalizer_error = f'{SEMANTIC_PLAN_SCHEMA_INVALID}: {parse_error}'
+                  invalid_reason = 'parse_error'
+              execution_plan = normalized.get('execution_plan') if isinstance(normalized, dict) else None
+              stages = execution_plan.get('stages') if isinstance(execution_plan, dict) else None
+              has_execution_plan = isinstance(execution_plan, dict)
+              has_stages = isinstance(stages, list) and len(stages) > 0
               content_preview = str(semantic_plan_raw_text or '')[:1000]
               debug_summary = {
                   'source': source,
@@ -518,30 +763,31 @@
                   'content_length': len(str(semantic_plan_raw_text or '')),
                   'content_preview': content_preview,
                   'json_parse_ok': json_parse_ok,
-                  'parsed_type': parsed_type or (type(parsed).__name__ if parsed is not None else 'none'),
+                  'parsed_type': type(parsed).__name__ if parsed is not None else 'none',
                   'parsed_keys': parsed_keys,
+                  'input_keys': parsed_keys,
                   'plan_valid': plan_valid,
-                  'has_execution_plan': n_has_exec,
-                  'has_stages': n_has_stages,
-                  'stages_count': stage_count,
-                  'legacy_ast_detected': legacy,
-                  'normalized': True,
+                  'has_execution_plan': has_execution_plan,
+                  'has_stages': has_stages,
+                  'stages_count': len(stages or []),
+                  'invalid_reason': invalid_reason,
                   'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
-                  'absolute_date_filter_detected': absolute_date_filter_detected,
-                  'time_range_normalized': time_range_normalized,
-                  'error': error,
+                  'request_debug': {
+                      'content_preview': content_preview,
+                      'parsed_keys': parsed_keys,
+                  },
               }
               return {
-                  'semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
+                  'semantic_plan_json': json.dumps(parsed or {}, ensure_ascii=False),
                   'normalized_semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
                   'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
                   'plan_valid': plan_valid,
-                  'legacy_ast_detected': legacy,
                   'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
-                  'parse_error': str(error or ''),
+                  'parse_error': str(parse_error or ''),
                   'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
+                  'selected_source': source,
               }
         code_language: python3
         desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
@@ -553,9 +799,6 @@
             children:
             type: string
           plan_valid:
-            children:
-            type: boolean
-          legacy_ast_detected:
             children:
             type: boolean
           normalizer_warning:
@@ -572,6 +815,8 @@
             type: string
           parse_error:
             children:
+            type: string
+          selected_source:
             type: string
         selected: true
         title: 代码执行_提取语义计划结果
@@ -628,7 +873,18 @@
             - plan_valid
           id: 'true'
           logical_operator: and
-        desc: 仅当语义计划规范化成功且 execution_plan.stages 非空时进入编译执行
+        - case_id: fallback_local
+          conditions:
+          - comparison_operator: is
+            id: fallback-local-source
+            value: full_llm
+            varType: string
+            variable_selector:
+            - '1775000000013'
+            - selected_source
+          id: fallback_local
+          logical_operator: and
+        desc: 有效计划进入编译；满血计划无效时转本地模型；本地仍无效时返回 schema 错误
         selected: false
         title: 条件分支_语义计划是否有效
         type: if-else
@@ -642,353 +898,3 @@
         "y": 280
       selected: false
       sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        answer: |-
-          语义计划解析失败，未进入 Mongo 编译执行。
-
-          错误信息：{{#1775000000013.normalizer_error#}}
-
-          调试摘要：{{#1775000000013.debug_summary_json#}}
-        desc: 语义计划无效时直接返回错误，避免空计划进入编译节点
-        selected: false
-        title: Answer_语义计划无效
-        type: answer
-        variables: []
-      height: 140
-      id: '1775000000021'
-      position:
-        x: 4398
-        "y": 500
-      positionAbsolute:
-        x: 4398
-        "y": 500
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 19f817f4-cd31-49fb-a97e-9aebd2531262
-            value: 'true'
-            varType: string
-            variable_selector:
-            - env
-            - ENABLE_FULL_LLM
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_是否启用满血LLM
-        type: if-else
-      height: 124
-      id: '1775000000014'
-      position:
-        x: 2210
-        "y": 320
-      positionAbsolute:
-        x: 2210
-        "y": 320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: ad4255b8-c185-494f-a717-76ba66eb92c5
-            value: 'true'
-            varType: string
-            variable_selector:
-            - '1775000000011'
-            - request_enabled
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_满血请求是否可用
-        type: if-else
-      height: 148
-      id: '1775000000015'
-      position:
-        x: 2524
-        "y": 258.2072454929678
-      positionAbsolute:
-        x: 2524
-        "y": 258.2072454929678
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          def _truncate_text(text, limit=1200):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def main(status_code, body):
-              code = int(status_code or 0)
-              body_text = '' if body is None else str(body).strip()
-              ok = 200 <= code < 300 and bool(body_text)
-              return {
-                  'full_http_ok': 'true' if ok else 'false',
-                  'full_http_error': '' if ok else f"status={code}, body={_truncate_text(body, 1200)}",
-              }
-        code_language: python3
-        desc: 根据满血LLM HTTP状态决定是否�退本地LLM
-        outputs:
-          full_http_error:
-            children:
-            type: string
-          full_http_ok:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_判断满血LLM状态
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000012'
-          - status_code
-          value_type: number
-          variable: status_code
-        - value_selector:
-          - '1775000000012'
-          - body
-          value_type: string
-          variable: body
-      height: 96
-      id: '1775000000016'
-      position:
-        x: 3150
-        "y": 190
-      positionAbsolute:
-        x: 3150
-        "y": 190
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 8a92198b-df4d-4bcf-8338-fa4f5b701933
-            value: 'true'
-            varType: string
-            variable_selector:
-            - '1775000000016'
-            - full_http_ok
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_满血LLM是否成功
-        type: if-else
-      height: 148
-      id: '1775000000017'
-      position:
-        x: 3465
-        "y": 190
-      positionAbsolute:
-        x: 3465
-        "y": 190
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        desc: 满血LLM关闭或失败时，使用本地模型生成AST
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 2048
-            temperature: 0
-          mode: chat
-          name: qwen3:32b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: local-plan-system
-          role: system
-          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
-        - id: local-plan-user
-          role: user
-          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            required:
-            - execution_plan
-            properties:
-              execution_plan:
-                type: object
-                required:
-                - stages
-                properties:
-                  stages:
-                    type: array
-                    minItems: 1
-                    items:
-                      type: object
-                additionalProperties: true
-              needs_chart:
-                type: boolean
-              chart_request:
-                type: object
-              answer_mode:
-                type: string
-            additionalProperties: true
-        structured_output_enabled: true
-        title: LLM_本地兜底生成语义计划
-        type: llm
-        vision:
-          enabled: false
-      height: 132
-      id: '1775000000018'
-      position:
-        x: 3114.1045592009455
-        "y": 470
-      positionAbsolute:
-        x: 3114.1045592009455
-        "y": 470
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-
-
-          def main(text: str):
-              raw = str(text or '').strip()
-              if not raw:
-                  raise ValueError('本地LLM返�为空')
-              body = {
-                  'choices': [
-                      {
-                          'message': {
-                              'content': raw,
-                          }
-                      }
-                  ]
-              }
-              return {
-                  'status_code': 200,
-                  'body': json.dumps(body, ensure_ascii=False),
-              }
-        code_language: python3
-        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
-        outputs:
-          body:
-            children:
-            type: string
-          status_code:
-            children:
-            type: number
-        selected: false
-        title: 代码执行_包装本地LLM响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000018'
-          - text
-          value_type: string
-          variable: text
-      height: 96
-      id: '1775000000019'
-      position:
-        x: 3634.2013852363016
-        "y": 470
-      positionAbsolute:
-        x: 3634.2013852363016
-        "y": 470
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        outputs:
-        - value_selector:
-          - '1775000000007'
-          - question
-          value_type: string
-          variable: last_question
-        - value_selector:
-          - '1775000000007'
-          - normalized_execution_plan
-          value_type: object
-          variable: last_normalized_execution_plan
-        - value_selector:
-          - '1775000000007'
-          - last_validated_ast
-          value_type: object
-          variable: last_validated_ast
-        - value_selector:
-          - '1775000000007'
-          - last_pipeline_json
-          value_type: string
-          variable: last_pipeline_json
-        - value_selector:
-          - '1775000000007'
-          - merged_rows
-          value_type: array[object]
-          variable: last_merged_rows
-        - value_selector:
-          - '1775000000007'
-          - chart
-          value_type: object
-          variable: last_chart
-        - value_selector:
-          - '1775000000007'
-          - result_summary
-          value_type: string
-          variable: last_result_summary
-        - value_selector:
-          - '1775000000007'
-          - last_error
-          value_type: string
-          variable: last_error
-        selected: false
-        answer: |
-          {{#1775000000007.answer_text#}}
-        title: Answer
-        type: answer
-      height: 270
-      id: '1773910028939'
-      position:
-        x: 4720
-        "y": 280
-      positionAbsolute:
-        x: 4720
-        "y": 280
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    viewport:
-      x: -2324.12557357958
-      "y": 236.22663551024982
-      zoom: 0.7578582832551997
-  rag_pipeline_variables: []

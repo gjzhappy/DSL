@@ -1,3 +1,109 @@
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1001
+    - data:
+        dataset_ids:
+        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
+        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        isInIteration: true
+        iteration_id: '1775000000001'
+        metadata_filtering_conditions:
+          conditions:
+          - comparison_operator: is
+            id: ca7255e8-5829-4063-9def-1e9ec392f49b
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1775000000002.collection_name#}}"
+          logical_operator: and
+        metadata_filtering_mode: manual
+        multiple_retrieval_config:
+          reranking_enable: false
+          reranking_mode: weighted_score
+          top_k: 4
+          weights:
+            keyword_setting:
+              keyword_weight: 0.3
+            vector_setting:
+              embedding_model_name: nomic-embed-text:v1.5
+              embedding_provider_name: langgenius/ollama/ollama
+              vector_weight: 0.7
+            weight_type: customized
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1775000000002'
+        - query_text
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索_当前CollectionSchema
+        type: knowledge-retrieval
+      height: 90
+      id: '1775000000003'
+      parentId: '1775000000001'
+      position:
+        x: 365.9999999999998
+        "y": 65
+      positionAbsolute:
+        x: 1258.8392659156045
+        "y": 385
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+
+          def main(collection_name: str, role: str, docs):
+              docs = docs or []
+              parts = []
+              for idx, item in enumerate(docs):
+                  title = str((item or {}).get("title") or "").strip()
+                  content = str((item or {}).get("content") or "").strip()
+                  metadata = (item or {}).get("metadata") or {}
+                  score = metadata.get("score", "")
+                  chunk = f"[{idx+1}] title={title} score={score}\n{content}".strip()
+                  if chunk:
+                      parts.append(chunk)
+
+              payload = {
+                  "collection_name": collection_name,
+                  "role": role,
+                  "context_text": "\n\n".join(parts)
+              }
+
+              return {
+                  "output": json.dumps(payload, ensure_ascii=False)
+              }
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        iteration_id: '1775000000001'
+        outputs:
+          output:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_打包Schema结果
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000002'
+          - collection_name
+          value_type: string
+          variable: collection_name
+        - value_selector:
+          - '1775000000002'
+          - role
+          value_type: string
+          variable: role
+        - value_selector:
+          - '1775000000003'
+          - result
+          value_type: array[object]
           variable: docs
       height: 52
       id: '1775000000004'
@@ -20,8 +126,8 @@
           import json
           import uuid
 
-          SEMANTIC_PLAN_SYSTEM_PROMPT = '【角色约束】\n你不是聊天助手。\n你是“语义执行计划 JSON 生成器”。\n你的输出会被程序直接 JSON.parse，并传给 Mongo 编译器执行。\n因此你只能输出一个 JSON 对象。\n\n【输出格式强约束】\n1. 只能输出 JSON 对象。\n2. 禁止输出自然语言说明。\n3. 禁止输出 markdown。\n4. 禁止输出 ```json 代码块。\n5. 禁止输出“查询说明”“以下是查询”“可以直接执行的MQL”等面向用户的话。\n6. 禁止输出旧 AST 顶层格式：collection / filters / group_by / metrics / sort / limit。\n7. 顶层必须包含 execution_plan。\n8. execution_plan 必须包含 stages，且 execution_plan.stages 必须是非空数组。\n9. 如果需要表达 collection，请写入 execution_plan.stages[0].primary_collection。\n10. 如果需要表达 filters / group_by / metrics / sort / limit，请写入对应 stage 内。\n11. 如果用户要求图表，可以输出 needs_chart=true 与 chart_request={...}，但 chart_request 不能替代 execution_plan。\n12. 如果 schema_context 中包含 Example AST，它只是字段含义参考，不是最终输出格式。\n13. 最终输出必须符合 semantic_execution_plan_schema。\n\n【时间处理强约束】\n1. 对“过去一个月/近一个月/最近30天/近30天/近7天/本月/上月/今年/过去半年”等相对时间，不要自行换算绝对日期。\n2. 禁止输出任何绝对日期字符串（例如 2026-xx-xx）。\n3. 禁止输出 {"$date":"..."} 或任何 Mongo Extended JSON 日期对象。\n4. 相对时间必须保留为结构化 time_range，由运行时处理。\n5. 对“过去一个月/近一个月/最近30天/近30天”优先输出 {"mode":"relative_days","relative_days":30}。\n6. 对“近7天/最近7天”输出 {"mode":"relative_days","relative_days":7}。\n7. 对“本月/上月/今年”等自然周期输出 {"mode":"relative_period","period":"this_month|last_month|this_year"}。\n8. 推荐把时间表达写在 stage.time_range，不要放在 filters.value 的绝对日期数组。\n\n【错误示例，禁止输出】\n{"collection":"orders","filters":[],"group_by":[],"metrics":[]}\n\n【正确示例】\n{"execution_plan":{"stages":[{"stage_id":"stage1","primary_collection":"orders","intent":"aggregate","time_range":{"field":"created_at","mode":"relative_days","relative_days":30},"filters":[],"group_by":[],"metrics":[],"sort":[],"limit":100}]},"needs_chart":false,"chart_request":{},"answer_mode":"data"}\n\n你是一个 MongoDB 查询执行计划生成器。\n\n你的任务是：\n- 基于用户问题、查询规划 JSON、schema 检索结果，生成一个“可执行的语义计划（semantic execution plan）”\n- 不要直接生成 MongoDB pipeline\n- 不要直接生成旧版单 AST\n- 只输出结构化 JSON\n- 不要输出解释性文字\n- 不要输出 markdown\n- 不要输出 schema 摘要\n\n【最终输出再强调】\n只能输出一个 JSON 对象；禁止解释文字、禁止 markdown、禁止旧 AST 顶层；顶层必须是 execution_plan.stages 非空数组。'
-          SEMANTIC_EXECUTION_PLAN_SCHEMA_JSON = '{"type":"object","required":["execution_plan"],"properties":{"execution_plan":{"type":"object","required":["stages"],"properties":{"stages":{"type":"array","minItems":1,"items":{"type":"object","properties":{"time_range":{"type":"object"},"filters":{"type":"array"},"group_by":{"type":"array"},"metrics":{"type":"array"},"sort":{"type":"array"},"limit":{"type":["integer","number"]}},"additionalProperties":true}}},"additionalProperties":true},"needs_chart":{"type":"boolean"},"chart_request":{"type":"object"},"answer_mode":{"type":"string"}},"additionalProperties":true}'
+          SEMANTIC_PLAN_SYSTEM_PROMPT = "【角色约束】\n你不是聊天助手。\n你是 semantic_execution_plan JSON 生成器。\n你的输出会被程序直接 JSON.parse，并传给 Mongo 编译器执行。\n因此你只能输出一个 JSON 对象。\n\n【唯一输出协议】\n1. 你必须输出 semantic_execution_plan JSON。\n2. 顶层必须包含 execution_plan。\n3. execution_plan.stages 必须是非空数组。\n4. stage 必须包含 stage_id、stage_type、primary_collection、intent_type。\n\n【禁止输出】\n1. 禁止输出自然语言说明。\n2. 禁止输出 markdown。\n3. 禁止输出 ```json 代码块。\n4. 禁止输出 MQL。\n5. 禁止输出 Mongo pipeline。\n6. 禁止输出顶层 collection / filters / group_by / metrics / sort / limit。\n7. 禁止输出任何历史计划格式或兼容格式。\n8. 禁止输出 schema 摘要。\n\n【字段要求】\n1. 如果需要表达查询集合，写入 execution_plan.stages[0].primary_collection。\n2. 如果需要表达分组字段，写入 execution_plan.stages[0].group_fields。\n3. 如果需要表达聚合指标，写入 execution_plan.stages[0].metric_function、execution_plan.stages[0].metric_field、execution_plan.stages[0].metric_alias。\n4. count 聚合的 metric_field 必须非空；优先使用 schema 中稳定 ID 字段，例如 order_id；如果 schema 没有明确 ID 字段，再使用 _id。\n5. 如果需要表达排序和限制，写入 stage.sort 和 stage.limit。\n6. 如果用户要求图表，输出 needs_chart=true 且 chart_request={...}。\n7. chart_request 不能替代 execution_plan。\n8. 最终输出必须符合 semantic_execution_plan schema。\n\n【时间处理】\n1. 对“过去一个月 / 近30天 / 最近7天”等相对时间，禁止生成绝对日期。\n2. 禁止生成 {\"$date\":\"...\"}。\n3. 必须输出 stage.time_range。\n4. 对“过去一个月 / 近一个月 / 最近30天 / 近30天”输出 {\"field\":\"created_at\",\"mode\":\"relative_days\",\"relative_days\":30}。\n5. 对“最近7天 / 近7天”输出 {\"field\":\"created_at\",\"mode\":\"relative_days\",\"relative_days\":7}。\n6. 对“本月 / 上月 / 今年”等自然周期输出 {\"field\":\"created_at\",\"mode\":\"relative_period\",\"period\":\"this_month|last_month|this_year\"}。\n\n【semantic_execution_plan 示例】\n{\"execution_plan\":{\"stages\":[{\"stage_id\":\"stage1\",\"stage_type\":\"primary_query\",\"primary_collection\":\"orders\",\"intent_type\":\"aggregate_summary\",\"time_range\":{\"field\":\"created_at\",\"mode\":\"relative_days\",\"relative_days\":30},\"filters\":[],\"group_fields\":[\"brand\"],\"metric_function\":\"count\",\"metric_field\":\"order_id\",\"metric_alias\":\"order_count\",\"sort\":[{\"field\":\"order_count\",\"direction\":\"desc\"}],\"limit\":100}]},\"needs_chart\":true,\"chart_request\":{\"chart_type\":\"bar\",\"x_field\":\"brand\",\"y_field\":\"order_count\",\"title\":\"过去一个月各品牌订单数对比\"},\"answer_mode\":\"data\"}\n\n【最终输出再强调】\n只能输出一个 JSON 对象；顶层必须是 execution_plan.stages 非空数组；不要输出解释文字、markdown、MQL、Mongo pipeline 或禁止的顶层计划字段。"
+          SEMANTIC_EXECUTION_PLAN_SCHEMA_JSON = "{\"type\":\"object\",\"required\":[\"execution_plan\"],\"properties\":{\"execution_plan\":{\"type\":\"object\",\"required\":[\"stages\"],\"properties\":{\"stages\":{\"type\":\"array\",\"minItems\":1,\"items\":{\"type\":\"object\",\"required\":[\"stage_id\",\"stage_type\",\"primary_collection\",\"intent_type\"],\"properties\":{\"stage_id\":{\"type\":\"string\"},\"stage_type\":{\"type\":\"string\"},\"primary_collection\":{\"type\":\"string\"},\"intent_type\":{\"type\":\"string\"},\"time_range\":{\"type\":\"object\"},\"filters\":{\"type\":\"array\",\"items\":{\"type\":\"object\"}},\"group_fields\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"metric_function\":{\"type\":\"string\"},\"metric_field\":{\"type\":\"string\"},\"metric_alias\":{\"type\":\"string\"},\"sort\":{\"type\":\"array\",\"items\":{\"type\":\"object\"}},\"limit\":{\"type\":\"integer\"}},\"additionalProperties\":true}}},\"additionalProperties\":true},\"needs_chart\":{\"type\":\"boolean\"},\"chart_request\":{\"type\":\"object\"},\"answer_mode\":{\"type\":\"string\"}},\"additionalProperties\":true}"
 
 
           def _to_bool(value):
@@ -37,6 +143,19 @@
               except Exception:
                   return int(default)
 
+
+
+
+          def _sanitize_schema_context_text(text):
+              raw = str(text or '')
+              if not raw:
+                  return ''
+              # Remove output-format examples that use forbidden top-level plan fields from retrieved knowledge.
+              raw = re.sub(r'(?is)example\s*' + 'a' + r'st\s*[:：]?.*?(?=\n\s*#{1,6}\s|\n\s*collection\s*=|\Z)', '', raw)
+              raw = re.sub(r'(?is)' + 'a' + r'st\s*fragment\s*[:：]?.*?(?=\n\s*#{1,6}\s|\n\s*collection\s*=|\Z)', '', raw)
+              forbidden_shape = re.compile(r'\{\s*"collection"\s*:\s*"[^"]*"\s*,\s*"filters"\s*:\s*\[[\s\S]*?\]\s*,\s*"group_by"\s*:\s*\[[\s\S]*?\]\s*,\s*"metrics"\s*:\s*\[[\s\S]*?\]\s*\}', re.IGNORECASE)
+              replacement = '{"execution_plan":{"stages":[{"stage_id":"stage1","stage_type":"primary_query","primary_collection":"orders","intent_type":"aggregate_summary","filters":[],"group_fields":[],"metric_function":"count","metric_field":"order_id","metric_alias":"order_count","sort":[],"limit":100}]},"needs_chart":false,"chart_request":{},"answer_mode":"data"}'
+              return forbidden_shape.sub(replacement, raw)
 
           def main(
               arg1: list,
@@ -62,7 +181,7 @@
                   item = json.loads(raw) if isinstance(raw, str) else (raw or {})
                   collection_name = str(item.get("collection_name") or "").strip()
                   role = str(item.get("role") or "").strip()
-                  context_text = str(item.get("context_text") or "").strip()
+                  context_text = _sanitize_schema_context_text(item.get("context_text"))
                   sections.append(
                       f"## collection={collection_name}\n"
                       f"role={role}\n"
@@ -625,67 +744,38 @@
           def _coerce_semantic_execution_plan(plan):
               if not isinstance(plan, dict):
                   return {}
-              root = plan
-              execution_plan = root.get('execution_plan')
-              if isinstance(execution_plan, dict):
-                  coerced = dict(execution_plan)
-                  for key in ('needs_chart', 'chart_request', 'answer_mode', 'visualization'):
-                      if key in root and key not in coerced:
-                          coerced[key] = root.get(key)
-              else:
-                  coerced = dict(root)
-              stages = coerced.get('stages') if isinstance(coerced.get('stages'), list) else []
+              execution_plan = plan.get('execution_plan')
+              if not isinstance(execution_plan, dict) or not isinstance(execution_plan.get('stages'), list) or not execution_plan.get('stages'):
+                  raise ValueError('SEMANTIC_PLAN_SCHEMA_INVALID: execution_plan.stages must be a non-empty array')
+              coerced = dict(execution_plan)
+              for key in ('needs_chart', 'chart_request', 'answer_mode', 'visualization'):
+                  if key in plan and key not in coerced:
+                      coerced[key] = plan.get(key)
               normalized_stages = []
-              for idx, raw in enumerate(stages):
+              for idx, raw in enumerate(coerced.get('stages') or []):
                   if not isinstance(raw, dict):
-                      normalized_stages.append(raw)
-                      continue
+                      raise ValueError(f'execution_plan.stages[{idx}] must be an object')
+                  if 'group_by' in raw or 'metrics' in raw:
+                      raise ValueError('INVALID_SEMANTIC_PLAN_SCHEMA: stage group_by/metrics is not allowed')
                   stage = dict(raw)
                   stage['stage_name'] = str(stage.get('stage_name') or stage.get('stage_id') or f'stage{idx + 1}').strip()
-                  stage['collection'] = str(stage.get('collection') or stage.get('primary_collection') or coerced.get('primary_collection') or '').strip()
-                  intent_type = str(stage.get('intent_type') or '').strip()
-                  intent = str(stage.get('intent') or '').strip().lower()
-                  if not intent_type:
-                      if intent in {'find', 'detail', 'detail_query'}:
-                          intent_type = 'detail_query'
-                      elif intent in {'aggregate', 'aggregation', 'summary', 'aggregate_summary'}:
-                          intent_type = 'aggregate_summary'
-                      elif intent in {'group_top_entity', 'top_entity'}:
-                          intent_type = 'group_top_entity'
-                      elif intent in {'group_top_record', 'top_record'}:
-                          intent_type = 'group_top_record'
-                      elif intent in {'enrich_related', 'join'}:
-                          intent_type = 'enrich_related'
-                      else:
-                          has_group = bool(stage.get('group_by') or stage.get('group_fields'))
-                          has_metric = bool(stage.get('metrics') or stage.get('metric_function'))
-                          intent_type = 'aggregate_summary' if (has_group or has_metric) else 'detail_query'
-                      stage['intent_type'] = intent_type
-                  if not stage.get('group_fields') and isinstance(stage.get('group_by'), list):
-                      group_fields = []
-                      for item in stage.get('group_by') or []:
-                          if isinstance(item, str):
-                              group_fields.append(item)
-                          elif isinstance(item, dict):
-                              group_fields.append(str(item.get('field') or item.get('name') or item.get('alias') or '').strip())
-                      stage['group_fields'] = [field for field in group_fields if field]
-                  metrics = stage.get('metrics') if isinstance(stage.get('metrics'), list) else []
-                  if metrics and not stage.get('metric_function'):
-                      metric = metrics[0] if isinstance(metrics[0], dict) else {'function': str(metrics[0])}
-                      stage['metric_function'] = str(metric.get('function') or metric.get('op') or metric.get('name') or 'count').strip()
-                      stage['metric_field'] = str(metric.get('field') or '').strip()
-                      stage['metric_alias'] = str(metric.get('alias') or metric.get('name') or stage['metric_function']).strip()
+                  stage['collection'] = str(stage.get('primary_collection') or '').strip()
+                  if not stage['collection']:
+                      raise ValueError(f'execution_plan.stages[{idx}].primary_collection is required')
+                  if not str(stage.get('stage_type') or '').strip():
+                      raise ValueError(f'execution_plan.stages[{idx}].stage_type is required')
+                  if not str(stage.get('intent_type') or '').strip():
+                      raise ValueError(f'execution_plan.stages[{idx}].intent_type is required')
                   if not stage.get('projection_fields') and isinstance(stage.get('projection'), list):
                       stage['projection_fields'] = [str(item.get('field') if isinstance(item, dict) else item).strip() for item in stage.get('projection') or [] if str(item.get('field') if isinstance(item, dict) else item).strip()]
                   normalized_stages.append(stage)
               coerced['stages'] = normalized_stages
               if not str(coerced.get('primary_collection') or '').strip() and normalized_stages:
-                  first = normalized_stages[0] if isinstance(normalized_stages[0], dict) else {}
-                  coerced['primary_collection'] = str(first.get('collection') or first.get('primary_collection') or '').strip()
+                  coerced['primary_collection'] = str(normalized_stages[0].get('collection') or '').strip()
               if 'collections' not in coerced:
                   collections = []
                   for stage in normalized_stages:
-                      if isinstance(stage, dict) and str(stage.get('collection') or '').strip():
+                      if str(stage.get('collection') or '').strip():
                           collections.append(str(stage.get('collection')).strip())
                   coerced['collections'] = list(dict.fromkeys(collections))
               chart_request = coerced.get('chart_request') if isinstance(coerced.get('chart_request'), dict) else {}
@@ -808,187 +898,3 @@
                   'visualization': visualization,
                   'stages': normalized_stages,
                   'final_merge': {
-                      'merge_mode': merge_mode,
-                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
-                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
-                      'left_field': str(final_merge.get('left_field') or '').strip(),
-                      'right_field': str(final_merge.get('right_field') or '').strip(),
-                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
-                  },
-              }
-
-
-          def _build_stage_match(stage):
-              parts = []
-              time_expr = _apply_time_range(stage.get('time_range'))
-              if time_expr:
-                  parts.append(time_expr)
-              for idx, f in enumerate(stage.get('filters') or []):
-                  if not isinstance(f, dict):
-                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
-                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
-                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
-                  value = f.get('value')
-                  parts.append(_build_match_expr(field, operator, value))
-              return _merge_match(parts)
-
-
-          def _append_projection(pipeline, fields):
-              unique_fields = []
-              seen = set()
-              for field in fields or []:
-                  text = str(field or '').strip()
-                  if text and text not in seen:
-                      seen.add(text)
-                      unique_fields.append(text)
-              if not unique_fields:
-                  return
-              proj = {'_id': 0}
-              for field in unique_fields:
-                  proj[field] = f'${field}'
-              pipeline.append({'$project': proj})
-
-
-          def _compile_detail_query(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              _append_projection(pipeline, stage.get('projection_fields'))
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              validated_ast = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [],
-                  'group_by': [],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_ast, pipeline
-
-
-          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
-                      raise ValueError(f'unsupported metric_function: {metric_function}')
-                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
-              group_id = {field: f'${field}' for field in group_fields} if group_fields else None
-              group_stage = {'_id': group_id, metric_alias: agg_expr}
-              pipeline.append({'$group': group_stage})
-              project_stage = {'_id': 0}
-              for field in group_fields:
-                  project_stage[field] = f'$_id.{field}'
-              project_stage[metric_alias] = f'${metric_alias}'
-              pipeline.append({'$project': project_stage})
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
-              if projection_fields:
-                  _append_projection(pipeline, projection_fields)
-              validated_ast = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
-                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_ast, pipeline
-
-
-          def _compile_group_top_entity(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              entity_field = _ensure_non_empty_string(stage.get('entity_field'), f"{stage['stage_name']}.entity_field")
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              rank_n = int(stage.get('rank_n') or 0)
-              if rank_n <= 0:
-                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_entity")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
-                      raise ValueError(f'unsupported metric_function: {metric_function}')
-                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
-              first_group_id = {field: f'${field}' for field in group_fields}
-              first_group_id['__entity'] = f'${entity_field}'
-              pipeline.append({'$group': {'_id': first_group_id, metric_alias: agg_expr}})
-              sort_before_rank = {f'_id.{field}': 1 for field in group_fields}
-              sort_before_rank[metric_alias] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
-              pipeline.append({'$sort': sort_before_rank})
-              push_payload = {'entity': '$_id.__entity', metric_alias: f'${metric_alias}'}
-              pipeline.append({'$group': {'_id': {field: f'$_id.{field}' for field in group_fields}, 'items': {'$push': push_payload}}})
-              project_group = {'_id': 0, 'items': '$items'}
-              for field in group_fields:
-                  project_group[field] = f'$_id.{field}'
-              pipeline.append({'$project': project_group})
-              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
-              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
-              project_after_rank = {'_id': 0, entity_field: '$items.entity', metric_alias: f'$items.{metric_alias}'}
-              for field in group_fields:
-                  project_after_rank[field] = f'${field}'
-              pipeline.append({'$project': project_after_rank})
-              final_sort = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  final_sort[field] = direction
-              if final_sort and stage.get('apply_global_limit'):
-                  pipeline.append({'$sort': final_sort})
-              # group_top_entity: rank_n controls per-group topN. Do not apply global sort/limit by default.
-              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              projection_fields = stage.get('projection_fields') or (list(group_fields) + [entity_field, metric_alias])
-              if projection_fields:
-                  _append_projection(pipeline, projection_fields)
-              validated_ast = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
-                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in list(group_fields) + [entity_field]],
-                  'sort': stage.get('sort') or [],

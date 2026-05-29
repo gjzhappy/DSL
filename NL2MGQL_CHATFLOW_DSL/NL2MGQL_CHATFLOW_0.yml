@@ -32,7 +32,7 @@ workflow:
     - last_normalized_execution_plan
     value: {}
     value_type: object
-  - description: 上一轮主stage validated_ast
+  - description: 上一轮主stage validated plan
     id: 4264ea89-7d37-4a32-87f8-e27a67ff8d98
     name: last_validated_ast
     selector:
@@ -510,6 +510,17 @@ workflow:
       targetHandle: target
       type: custom
       zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: llm
+      id: 1775000000020-fallback_local-1775000000018-target
+      source: '1775000000020'
+      sourceHandle: fallback_local
+      target: '1775000000018'
+      targetHandle: target
+      type: custom
+      zIndex: 0
     nodes:
     - data:
         selected: false
@@ -549,7 +560,7 @@ workflow:
             - 根据用户的自然语言问题，输出查询规划结果
             - 只输出结构化 JSON
             - 不要输出解释性自然语言
-            - 不要生成 AST
+            - 不要生成 Mongo pipeline
             - 不要生成 MongoDB 查询语句
             - 不要猜测不存在的 collection
             - 不要输出 markdown
@@ -730,7 +741,7 @@ workflow:
                       f"用户问题: {question}\n"
                       f"当前�标 collection: {name}\n"
                       "请检索该 collection 的 schema、字段含义、典型过滤字段、聚合指标、"
-                      "与其他 collection 的关联线索、以及任何能帮助生成 Mongo 聚合 AST 的信息。"
+                      "与其他 collection 的关联线索、以及任何能帮助生成 Mongo 聚合计划的信息。"
                   )
                   collection_tasks.append({
                       "collection_name": name,
@@ -887,109 +898,3 @@ workflow:
         x: 988.8392659156048
         "y": 384
       selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-      zIndex: 1001
-    - data:
-        dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
-        isInIteration: true
-        iteration_id: '1775000000001'
-        metadata_filtering_conditions:
-          conditions:
-          - comparison_operator: is
-            id: ca7255e8-5829-4063-9def-1e9ec392f49b
-            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
-            name: collection_name
-            value: "{{#1775000000002.collection_name#}}"
-          logical_operator: and
-        metadata_filtering_mode: manual
-        multiple_retrieval_config:
-          reranking_enable: false
-          reranking_mode: weighted_score
-          top_k: 4
-          weights:
-            keyword_setting:
-              keyword_weight: 0.3
-            vector_setting:
-              embedding_model_name: nomic-embed-text:v1.5
-              embedding_provider_name: langgenius/ollama/ollama
-              vector_weight: 0.7
-            weight_type: customized
-        query_attachment_selector: []
-        query_variable_selector:
-        - '1775000000002'
-        - query_text
-        retrieval_mode: multiple
-        selected: false
-        title: 知识检索_当前CollectionSchema
-        type: knowledge-retrieval
-      height: 90
-      id: '1775000000003'
-      parentId: '1775000000001'
-      position:
-        x: 365.9999999999998
-        "y": 65
-      positionAbsolute:
-        x: 1258.8392659156045
-        "y": 385
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-      zIndex: 1002
-    - data:
-        code: |
-          import json
-
-          def main(collection_name: str, role: str, docs):
-              docs = docs or []
-              parts = []
-              for idx, item in enumerate(docs):
-                  title = str((item or {}).get("title") or "").strip()
-                  content = str((item or {}).get("content") or "").strip()
-                  metadata = (item or {}).get("metadata") or {}
-                  score = metadata.get("score", "")
-                  chunk = f"[{idx+1}] title={title} score={score}\n{content}".strip()
-                  if chunk:
-                      parts.append(chunk)
-
-              payload = {
-                  "collection_name": collection_name,
-                  "role": role,
-                  "context_text": "\n\n".join(parts)
-              }
-
-              return {
-                  "output": json.dumps(payload, ensure_ascii=False)
-              }
-        code_language: python3
-        desc: ''
-        isInIteration: true
-        iteration_id: '1775000000001'
-        outputs:
-          output:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_打包Schema结果
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000002'
-          - collection_name
-          value_type: string
-          variable: collection_name
-        - value_selector:
-          - '1775000000002'
-          - role
-          value_type: string
-          variable: role
-        - value_selector:
-          - '1775000000003'
-          - result
-          value_type: array[object]
