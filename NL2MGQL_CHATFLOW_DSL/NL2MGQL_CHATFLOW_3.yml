@@ -475,6 +475,18 @@
                   'content_protocol': 'semantic_execution_plan',
                   'error': parse_error,
               }
+              answer_mode = ''
+              needs_chart = False
+              chart_request = {}
+              if isinstance(normalized, dict):
+                  answer_mode = str(normalized.get('answer_mode') or '').strip()
+                  needs_chart = bool(normalized.get('needs_chart'))
+                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
+              if isinstance(parsed, dict):
+                  answer_mode = answer_mode or str(parsed.get('answer_mode') or '').strip()
+                  needs_chart = needs_chart or bool(parsed.get('needs_chart'))
+                  if not chart_request and isinstance(parsed.get('chart_request'), dict):
+                      chart_request = parsed.get('chart_request')
               return {
                   'semantic_plan_json': json.dumps(parsed if isinstance(parsed, dict) else {}, ensure_ascii=False),
                   'normalized_semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
@@ -485,6 +497,9 @@
                   'normalizer_error': normalizer_error,
                   'parse_error': parse_error,
                   'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
+                  'answer_mode': answer_mode,
+                  'needs_chart': needs_chart,
+                  'chart_request_json': json.dumps(chart_request, ensure_ascii=False),
               }
         code_language: python3
         desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
@@ -514,6 +529,15 @@
             children:
             type: string
           parse_error:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+          needs_chart:
+            children:
+            type: boolean
+          chart_request_json:
             children:
             type: string
         selected: true
@@ -874,101 +898,3 @@
               }
               return {
                   'status_code': 200,
-                  'body': json.dumps(body, ensure_ascii=False),
-              }
-        code_language: python3
-        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
-        outputs:
-          body:
-            children:
-            type: string
-          status_code:
-            children:
-            type: number
-        selected: false
-        title: 代码执行_包装本地LLM响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000018'
-          - text
-          value_type: string
-          variable: text
-      height: 96
-      id: '1775000000019'
-      position:
-        x: 3634.2013852363016
-        "y": 470
-      positionAbsolute:
-        x: 3634.2013852363016
-        "y": 470
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        outputs:
-        - value_selector:
-          - '1775000000007'
-          - question
-          value_type: string
-          variable: last_question
-        - value_selector:
-          - '1775000000007'
-          - normalized_execution_plan
-          value_type: object
-          variable: last_normalized_execution_plan
-        - value_selector:
-          - '1775000000007'
-          - last_validated_ast
-          value_type: object
-          variable: last_validated_ast
-        - value_selector:
-          - '1775000000007'
-          - last_pipeline_json
-          value_type: string
-          variable: last_pipeline_json
-        - value_selector:
-          - '1775000000007'
-          - merged_rows
-          value_type: array[object]
-          variable: last_merged_rows
-        - value_selector:
-          - '1775000000007'
-          - chart
-          value_type: object
-          variable: last_chart
-        - value_selector:
-          - '1775000000007'
-          - result_summary
-          value_type: string
-          variable: last_result_summary
-        - value_selector:
-          - '1775000000007'
-          - last_error
-          value_type: string
-          variable: last_error
-        selected: false
-        answer: |
-          {{#1775000000007.answer_text#}}
-        title: Answer
-        type: answer
-      height: 270
-      id: '1773910028939'
-      position:
-        x: 4720
-        "y": 280
-      positionAbsolute:
-        x: 4720
-        "y": 280
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    viewport:
-      x: -2324.12557357958
-      "y": 236.22663551024982
-      zoom: 0.7578582832551997
-  rag_pipeline_variables: []

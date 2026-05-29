@@ -1,0 +1,306 @@
+                  'body': json.dumps(body, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
+        outputs:
+          body:
+            children:
+            type: string
+          status_code:
+            children:
+            type: number
+        selected: false
+        title: 代码执行_包装本地LLM响应
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000018'
+          - text
+          value_type: string
+          variable: text
+      height: 96
+      id: '1775000000019'
+      position:
+        x: 3634.2013852363016
+        "y": 470
+      positionAbsolute:
+        x: 3634.2013852363016
+        "y": 470
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+
+          INTENT_WORDS = ('描述', '分析', '总结', '说明', '对比')
+          GROUP_FIELD_CANDIDATES = (
+              'vendor', 'vendor_name', 'manufacturer', 'manufacturer_name',
+              'supplier', 'supplier_name', 'brand', 'brand_name', 'factory',
+              '厂商', '厂商名称', '供应商', '供应商名称', '品牌',
+              '_id', 'name', 'category'
+          )
+          METRIC_FIELD_HINTS = ('count', 'total', 'sum', 'amount', 'qty', 'quantity', 'orders', '订单数', '数量', '金额', '销售额', '合计')
+
+
+          def _loads_obj(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+
+          def _rows(value):
+              if isinstance(value, list):
+                  return [row for row in value if isinstance(row, dict)]
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      if isinstance(parsed, list):
+                          return [row for row in parsed if isinstance(row, dict)]
+                  except Exception:
+                      return []
+              return []
+
+
+          def _answer_mode(explicit_mode, normalized_plan, semantic_plan):
+              return (
+                  str(explicit_mode or '').strip()
+                  or str(normalized_plan.get('answer_mode') or '').strip()
+                  or str(semantic_plan.get('answer_mode') or '').strip()
+              )
+
+
+          def _needs_analysis(question, answer_mode):
+              q = str(question or '')
+              return answer_mode == 'data_with_analysis' or any(word in q for word in INTENT_WORDS)
+
+
+          def _pick_group_field(rows):
+              if not rows:
+                  return ''
+              keys = list(rows[0].keys())
+              for candidate in GROUP_FIELD_CANDIDATES:
+                  if candidate in keys:
+                      return candidate
+              for key in keys:
+                  if not isinstance(rows[0].get(key), (int, float)):
+                      return key
+              return keys[0] if keys else ''
+
+
+          def _pick_metric_field(rows, group_field):
+              if not rows:
+                  return ''
+              keys = [key for key in rows[0].keys() if key != group_field]
+              numeric_keys = [key for key in keys if isinstance(rows[0].get(key), (int, float))]
+              for key in numeric_keys:
+                  low = str(key).lower()
+                  if any(hint in low or hint in str(key) for hint in METRIC_FIELD_HINTS):
+                      return key
+              return numeric_keys[0] if numeric_keys else (keys[0] if keys else '')
+
+
+          def _fmt(value):
+              if isinstance(value, float):
+                  if value.is_integer():
+                      return str(int(value))
+                  return ('%.2f' % value).rstrip('0').rstrip('.')
+              return str(value)
+
+
+          def _summary(question, rows):
+              row_count = len(rows)
+              group_field = _pick_group_field(rows)
+              metric_field = _pick_metric_field(rows, group_field)
+              title = '结果摘要'
+              if not rows:
+                  return title + '：\n- 过去一个月未查询到符合条件的订单数据。'
+
+              bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
+              if group_field and metric_field:
+                  sorted_rows = sorted(rows, key=lambda row: row.get(metric_field) if isinstance(row.get(metric_field), (int, float)) else 0, reverse=True)
+                  top = sorted_rows[0]
+                  top_name = top.get(group_field, '未知')
+                  top_value = top.get(metric_field, '')
+                  bullets.append(f'- 按 {group_field} 分组后，{top_name} 的 {metric_field} 最高，为 {_fmt(top_value)}。')
+                  if row_count > 1:
+                      tail = sorted_rows[-1]
+                      bullets.append(f'- 最低的是 {tail.get(group_field, "未知")}，{metric_field} 为 {_fmt(tail.get(metric_field, ""))}。')
+                  preview = '、'.join([f'{row.get(group_field, "未知")}({_fmt(row.get(metric_field, ""))})' for row in sorted_rows[:5]])
+                  if preview:
+                      bullets.append(f'- 主要分组数据：{preview}。')
+              return title + '：\n' + '\n'.join(bullets)
+
+
+          def _analysis(rows):
+              if not rows:
+                  return '简单分析：\n- 当前筛选条件下没有可用于对比的订单数据，建议放宽时间范围或检查厂商字段与订单状态筛选条件。'
+              group_field = _pick_group_field(rows)
+              metric_field = _pick_metric_field(rows, group_field)
+              if not group_field or not metric_field:
+                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合图表查看整体分布。'
+              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float))]
+              if len(numeric) < 2:
+                  return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
+              sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
+              top, second = sorted_rows[0], sorted_rows[1]
+              gap = top.get(metric_field) - second.get(metric_field)
+              return (
+                  '简单分析：\n'
+                  f'- 从柱状图看，{top.get(group_field, "未知")} 领先，其 {metric_field} 比第二名 '
+                  f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
+                  '- 可优先关注排名靠前厂商的订单贡献，同时排查低值厂商是否存在订单不足或筛选条件影响。'
+              )
+
+
+          def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, answer_mode: str):
+              semantic_plan = _loads_obj(semantic_plan_json)
+              normalized_plan = _loads_obj(normalized_semantic_plan_json)
+              mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
+              result_rows = _rows(rows)
+              chart = str(chart_echarts_markdown or '').strip()
+              needs_text = _needs_analysis(question, mode)
+
+              parts = []
+              if chart:
+                  parts.append(chart)
+              if needs_text or not chart or not result_rows:
+                  parts.append(_summary(question, result_rows))
+                  parts.append(_analysis(result_rows))
+              if not parts:
+                  parts.append('过去一个月未查询到符合条件的订单数据。')
+
+              return {
+                  'final_answer_markdown': '\n\n'.join(part for part in parts if part),
+                  'answer_mode': mode,
+              }
+        code_language: python3
+        desc: 合并图表、查询结果和分析文本，输出最终 Markdown
+        outputs:
+          final_answer_markdown:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+        selected: false
+        title: 最终回答合并节点
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1775000000013'
+          - semantic_plan_json
+          value_type: string
+          variable: semantic_plan_json
+        - value_selector:
+          - '1775000000013'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: normalized_semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows
+          value_type: array[object]
+          variable: rows
+        - value_selector:
+          - '1775000000007'
+          - chart_echarts_markdown
+          value_type: string
+          variable: chart_echarts_markdown
+        - value_selector:
+          - '1775000000013'
+          - answer_mode
+          value_type: string
+          variable: answer_mode
+      height: 96
+      id: '1775000000022'
+      position:
+        x: 4400
+        "y": 280
+      positionAbsolute:
+        x: 4400
+        "y": 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1775000000007'
+          - question
+          value_type: string
+          variable: last_question
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan
+          value_type: object
+          variable: last_normalized_execution_plan
+        - value_selector:
+          - '1775000000007'
+          - last_validated_ast
+          value_type: object
+          variable: last_validated_ast
+        - value_selector:
+          - '1775000000007'
+          - last_pipeline_json
+          value_type: string
+          variable: last_pipeline_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows
+          value_type: array[object]
+          variable: last_merged_rows
+        - value_selector:
+          - '1775000000007'
+          - chart
+          value_type: object
+          variable: last_chart
+        - value_selector:
+          - '1775000000007'
+          - result_summary
+          value_type: string
+          variable: last_result_summary
+        - value_selector:
+          - '1775000000007'
+          - last_error
+          value_type: string
+          variable: last_error
+        selected: false
+        answer: |
+          {{#1775000000022.final_answer_markdown#}}
+        title: Answer
+        type: answer
+      height: 270
+      id: '1773910028939'
+      position:
+        x: 4720
+        "y": 280
+      positionAbsolute:
+        x: 4720
+        "y": 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: -2324.12557357958
+      "y": 236.22663551024982
+      zoom: 0.7578582832551997
+  rag_pipeline_variables: []
