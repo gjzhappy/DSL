@@ -336,11 +336,33 @@ workflow:
     - data:
         isInLoop: false
         sourceType: code
-        targetType: code
-      id: 1775000000013-source-1775000000007-target
+        targetType: if-else
+      id: 1775000000013-source-1775000000020-target
       source: '1775000000013'
       sourceHandle: source
+      target: '1775000000020'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1775000000020-true-1775000000007-target
+      source: '1775000000020'
+      sourceHandle: 'true'
       target: '1775000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: answer
+      id: 1775000000020-false-1775000000021-target
+      source: '1775000000020'
+      sourceHandle: 'false'
+      target: '1775000000021'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -971,21 +993,3 @@ workflow:
           - '1775000000003'
           - result
           value_type: array[object]
-          variable: docs
-      height: 52
-      id: '1775000000004'
-      parentId: '1775000000001'
-      position:
-        x: 690
-        "y": 64
-      positionAbsolute:
-        x: 1582.8392659156048
-        "y": 384
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-      zIndex: 1002
-    - data:
-        code: |-

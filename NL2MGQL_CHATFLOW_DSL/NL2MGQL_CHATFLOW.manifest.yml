@@ -1,0 +1,11 @@
+# NL2MGQL Chatflow DSL source partition manifest.
+# Load parts in the listed order and concatenate them in memory before importing/validating.
+# This file is intentionally a lightweight assembly list; it does not contain workflow DSL nodes.
+name: NL2MGQL_CHATFLOW
+entrypoint: NL2MGQL_CHATFLOW_0.yml
+assembly: ordered-concat
+parts:
+  - NL2MGQL_CHATFLOW_0.yml
+  - NL2MGQL_CHATFLOW_1.yml
+  - NL2MGQL_CHATFLOW_2.yml
+  - NL2MGQL_CHATFLOW_3.yml
