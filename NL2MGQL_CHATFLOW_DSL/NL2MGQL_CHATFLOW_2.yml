@@ -494,6 +494,8 @@
               }
 
           def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str):
+              if isinstance(semantic_plan, str):
+                  semantic_plan = json.loads(semantic_plan)
               plan = _ensure_obj(semantic_plan, 'semantic_plan')
               planner = _ensure_obj(planner, 'planner')
               urls = _parse_query_urls(query_urls)
