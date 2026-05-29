@@ -298,9 +298,11 @@
                   return -1
               score = 0
               keys = set(obj.keys())
-              for key in ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate', 'expands', 'time_range', 'limit'):
-                  if key in keys:
-                      score += 2
+              if 'execution_plan' in keys:
+                  score += 10
+              stages = (obj.get('execution_plan') or {}).get('stages') if isinstance(obj.get('execution_plan'), dict) else None
+              if isinstance(stages, list) and stages:
+                  score += 10
               if keys:
                   score += 1
               return score
@@ -380,9 +382,50 @@
               return all(isinstance(v, dict) and '$date' in v for v in value)
 
 
+          def _fill_count_metric_field(stage):
+              if not isinstance(stage, dict):
+                  return ''
+              metric_function = str(stage.get('metric_function') or '').strip().lower()
+              if metric_function != 'count':
+                  return ''
+              if str(stage.get('metric_field') or '').strip():
+                  return ''
+              primary_collection = str(stage.get('primary_collection') or '').strip().lower()
+              preferred = 'order_id' if primary_collection == 'orders' else '_id'
+              stage['metric_field'] = preferred
+              return f'count_metric_field_filled:{preferred}'
+
+
+          def _validate_and_normalize_semantic_execution_plan(plan):
+              if not isinstance(plan, dict):
+                  return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+              execution_plan = plan.get('execution_plan')
+              stages = execution_plan.get('stages') if isinstance(execution_plan, dict) else None
+              if not isinstance(stages, list) or not stages:
+                  return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+              normalized = dict(plan)
+              normalized_execution_plan = dict(execution_plan)
+              normalized_stages = []
+              warnings = []
+              for idx, raw_stage in enumerate(stages):
+                  if not isinstance(raw_stage, dict):
+                      return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+                  stage = dict(raw_stage)
+                  stage.setdefault('stage_id', f'stage{idx + 1}')
+                  stage.setdefault('stage_type', 'primary_query')
+                  if not str(stage.get('primary_collection') or '').strip() or not str(stage.get('intent_type') or '').strip():
+                      return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+                  warn = _fill_count_metric_field(stage)
+                  if warn:
+                      warnings.append(warn)
+                  normalized_stages.append(stage)
+              normalized_execution_plan['stages'] = normalized_stages
+              normalized['execution_plan'] = normalized_execution_plan
+              return normalized, True, '', ';'.join(warnings)
+
+
           def main(full_status_code, full_body, local_status_code, local_body, question=''):
-              code, body, _source = _pick_response(full_status_code, full_body, local_status_code, local_body)
-              source = 'full_llm_or_local'
+              code, body, source = _pick_response(full_status_code, full_body, local_status_code, local_body)
               payload = None
               result = ''
               try:
@@ -393,122 +436,24 @@
                   else:
                       resp_json = _read_json_text(body)
                       payload = resp_json
-                      if not resp_json:
-                          result = _truncate_text(body, 4000)
-                      else:
-                          result = _extract_chat_text(resp_json) or _truncate_text(body, 4000)
+                      result = (_extract_chat_text(resp_json) if resp_json else '') or _truncate_text(body, 4000)
               except Exception as e:
                   result = _truncate_text(f"{body}\n\nexception={e}", 4000)
-              semantic_plan = {}
-              normalizer_error = ''
+              semantic_plan_raw_text = result
               parsed = None
               json_parse_ok = False
-              parsed_type = ''
-              parsed_keys = []
-              has_exec = False
-              has_stages = False
-              stage_count = 0
-              legacy = False
-              warning = ''
-              error = ''
-              normalized = {}
-              absolute_date_filter_detected = False
-              time_range_normalized = False
-              semantic_plan_raw_text = result
+              parse_error = ''
               try:
                   semantic_plan_text = _extract_json_object_text(result)
                   semantic_plan_raw_text = semantic_plan_text or result
                   parsed = json.loads(semantic_plan_text)
                   json_parse_ok = True
               except Exception as e:
-                  error = str(e)
-                  parsed = None
-              if isinstance(parsed, dict):
-                  semantic_plan = parsed
-              legacy_keys = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
-              has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
-              has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
-              legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
-              if isinstance(semantic_plan, dict):
-                  parsed_type = type(semantic_plan).__name__
-                  parsed_keys = list(semantic_plan.keys())
-                  has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
-                  has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
-                  legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
-                  normalized = semantic_plan
-              if has_stages:
-                  pass
-              elif isinstance(semantic_plan.get('stages'), list) and len(semantic_plan.get('stages') or []) > 0:
-                  normalized = dict(semantic_plan)
-                  normalized = {'execution_plan': {'stages': semantic_plan.get('stages', [])}, **{k:v for k,v in semantic_plan.items() if k!='stages'}}
-              elif legacy:
-                  warning = 'FULL_LLM_LEGACY_AST_DETECTED'
-                  group_by = semantic_plan.get('group_by') if isinstance(semantic_plan.get('group_by'), list) else []
-                  metrics = semantic_plan.get('metrics') if isinstance(semantic_plan.get('metrics'), list) else []
-                  stage = {
-                      'stage_id': 'stage1',
-                      'primary_collection': semantic_plan.get('collection') or '',
-                      'intent': 'aggregate' if (group_by or metrics) else 'find',
-                      'filters': semantic_plan.get('filters') if isinstance(semantic_plan.get('filters'), list) else [],
-                      'group_by': group_by,
-                      'metrics': metrics,
-                      'sort': semantic_plan.get('sort') if isinstance(semantic_plan.get('sort'), list) else [],
-                      'limit': semantic_plan.get('limit') if isinstance(semantic_plan.get('limit'), int) else 100,
-                  }
-                  needs_chart = bool(semantic_plan.get('needs_chart')) or (_contains_chart_intent(question) and bool(group_by and metrics))
-                  chart_request = semantic_plan.get('chart_request') if isinstance(semantic_plan.get('chart_request'), dict) else {}
-                  if needs_chart and not chart_request and group_by and metrics:
-                      first_metric = metrics[0] if metrics else {}
-                      m_name = first_metric.get('alias') or first_metric.get('name') or 'value'
-                      q = str(question or '')
-                      chart_type = 'bar' if '柱状图' in q else ('line' if '折线图' in q else ('pie' if '饼图' in q else 'bar'))
-                      chart_request = {'chart_type': chart_type, 'x_field': group_by[0], 'y_field': m_name}
-                  normalized = {
-                      'execution_plan': {'stages': [stage]},
-                      'needs_chart': needs_chart,
-                      'chart_request': chart_request,
-                      'answer_mode': semantic_plan.get('answer_mode') or 'data',
-                  }
-              else:
-                  error = 'SEMANTIC_PLAN_INVALID'
-              if isinstance(normalized, dict):
-                  rel_days = _detect_relative_days(question)
-                  stages = ((normalized.get('execution_plan') or {}).get('stages') or []) if isinstance(normalized.get('execution_plan'), dict) else []
-                  if rel_days > 0 and isinstance(stages, list):
-                      for stage in stages:
-                          if not isinstance(stage, dict):
-                              continue
-                          raw_filters = stage.get('filters') if isinstance(stage.get('filters'), list) else []
-                          kept = []
-                          converted = False
-                          for f in raw_filters:
-                              if _is_abs_date_between_filter(f):
-                                  absolute_date_filter_detected = True
-                                  converted = True
-                                  continue
-                              kept.append(f)
-                          if converted:
-                              stage['filters'] = kept
-                              tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
-                              tr.update({'field': str(tr.get('field') or 'created_at'), 'mode': 'relative_days', 'relative_days': rel_days})
-                              stage['time_range'] = tr
-                              warning = 'absolute_date_filter_converted_to_relative_time'
-                              time_range_normalized = True
-                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
-                  if chart_request:
-                      if chart_request.get('x_axis') and not chart_request.get('x_field'):
-                          chart_request['x_field'] = chart_request.get('x_axis')
-                      if chart_request.get('y_axis') and not chart_request.get('y_field'):
-                          chart_request['y_field'] = chart_request.get('y_axis')
-                      normalized['chart_request'] = chart_request
-              n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
-              n_stages = normalized.get('execution_plan', {}).get('stages') if n_has_exec else None
-              n_has_stages = isinstance(n_stages, list) and len(n_stages)>0
-              stage_count = len(n_stages or [])
-              plan_valid = bool(n_has_stages)
-              if not plan_valid:
-                  normalizer_error = f"SEMANTIC_PLAN_INVALID: {error or 'missing execution_plan.stages'}"
-                  normalized = {}
+                  parse_error = str(e)
+              parsed_keys = list(parsed.keys()) if isinstance(parsed, dict) else []
+              normalized, plan_valid, schema_error, warning = _validate_and_normalize_semantic_execution_plan(parsed)
+              normalizer_error = '' if plan_valid else (schema_error or 'INVALID_SEMANTIC_PLAN_SCHEMA')
+              stages = ((normalized.get('execution_plan') or {}).get('stages') or []) if isinstance(normalized, dict) else []
               content_preview = str(semantic_plan_raw_text or '')[:1000]
               debug_summary = {
                   'source': source,
@@ -518,29 +463,27 @@
                   'content_length': len(str(semantic_plan_raw_text or '')),
                   'content_preview': content_preview,
                   'json_parse_ok': json_parse_ok,
-                  'parsed_type': parsed_type or (type(parsed).__name__ if parsed is not None else 'none'),
+                  'parsed_type': type(parsed).__name__ if parsed is not None else 'none',
                   'parsed_keys': parsed_keys,
                   'plan_valid': plan_valid,
-                  'has_execution_plan': n_has_exec,
-                  'has_stages': n_has_stages,
-                  'stages_count': stage_count,
-                  'legacy_ast_detected': legacy,
-                  'normalized': True,
+                  'has_execution_plan': isinstance(parsed, dict) and isinstance(parsed.get('execution_plan'), dict),
+                  'has_stages': bool(stages),
+                  'stages_count': len(stages),
+                  'normalized': plan_valid,
                   'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
-                  'absolute_date_filter_detected': absolute_date_filter_detected,
-                  'time_range_normalized': time_range_normalized,
-                  'error': error,
+                  'content_protocol': 'semantic_execution_plan',
+                  'error': parse_error,
               }
               return {
-                  'semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
-                  'normalized_semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
+                  'semantic_plan_json': json.dumps(parsed if isinstance(parsed, dict) else {}, ensure_ascii=False),
+                  'normalized_semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
                   'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
                   'plan_valid': plan_valid,
-                  'legacy_ast_detected': legacy,
+                  'legacy_ast_detected': False,
                   'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
-                  'parse_error': str(error or ''),
+                  'parse_error': parse_error,
                   'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
               }
         code_language: python3
@@ -848,6 +791,43 @@
                     minItems: 1
                     items:
                       type: object
+                      required:
+                      - stage_id
+                      - stage_type
+                      - primary_collection
+                      - intent_type
+                      properties:
+                        stage_id:
+                          type: string
+                        stage_type:
+                          type: string
+                        primary_collection:
+                          type: string
+                        intent_type:
+                          type: string
+                        time_range:
+                          type: object
+                        filters:
+                          type: array
+                          items:
+                            type: object
+                        group_fields:
+                          type: array
+                          items:
+                            type: string
+                        metric_function:
+                          type: string
+                        metric_field:
+                          type: string
+                        metric_alias:
+                          type: string
+                        sort:
+                          type: array
+                          items:
+                            type: object
+                        limit:
+                          type: integer
+                      additionalProperties: true
                 additionalProperties: true
               needs_chart:
                 type: boolean
