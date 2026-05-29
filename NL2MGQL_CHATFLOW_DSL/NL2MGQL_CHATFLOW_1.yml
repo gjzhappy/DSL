@@ -695,6 +695,7 @@
                       'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or '').strip(),
                       'x_field': str(chart_request.get('x_field') or chart_request.get('x_axis') or '').strip(),
                       'y_field': str(chart_request.get('y_field') or chart_request.get('y_axis') or '').strip(),
+                      'title': str(chart_request.get('title') or '').strip(),
                   }
               return coerced
 
@@ -788,6 +789,10 @@
               if execution_mode == 'single_stage':
                   normalized_stages = normalized_stages[:1]
               visualization = _normalize_visualization(plan.get('visualization'))
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              chart_request_title = str(chart_request.get('title') or '').strip()
+              if chart_request_title:
+                  visualization['title'] = chart_request_title
               intent = _detect_visualization_intent(question)
               if intent.get('enabled'):
                   if not visualization.get('enabled'):
