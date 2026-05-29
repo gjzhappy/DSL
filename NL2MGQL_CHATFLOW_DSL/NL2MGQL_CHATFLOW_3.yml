@@ -293,12 +293,12 @@
               return raw.strip()
 
 
-          def _plan_candidate_score(obj):
+          def _ast_candidate_score(obj):
               if not isinstance(obj, dict):
                   return -1
               score = 0
               keys = set(obj.keys())
-              for key in ('execution_plan', 'stages', 'primary_collection', 'group_fields', 'metric_function', 'time_range', 'limit'):
+              for key in ('primary_collection', 'projection', 'filters', 'sort', 'group_by', 'aggregate', 'expands', 'time_range', 'limit'):
                   if key in keys:
                       score += 2
               if keys:
@@ -329,7 +329,7 @@
                   parsed = _try_decode_object(block.strip())
                   if parsed:
                       obj, obj_text, tail = parsed
-                      candidates.append((_plan_candidate_score(obj), 1 if tail else 0, obj_text))
+                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
               seen_positions = set()
               for match in re.finditer(r'\{', raw):
                   pos = match.start()
@@ -339,7 +339,7 @@
                   parsed = _try_decode_object(raw[pos:])
                   if parsed:
                       obj, obj_text, tail = parsed
-                      candidates.append((_plan_candidate_score(obj), 1 if tail else 0, obj_text))
+                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
               if candidates:
                   candidates.sort(key=lambda item: (-item[0], item[1], -len(item[2])))
                   return candidates[0][2]
@@ -380,35 +380,9 @@
               return all(isinstance(v, dict) and '$date' in v for v in value)
 
 
-          def _has_stages(plan):
-              return isinstance(plan, dict) and isinstance(plan.get('execution_plan'), dict) and isinstance(plan['execution_plan'].get('stages'), list) and len(plan['execution_plan'].get('stages') or []) > 0
-
-
-          def _fill_count_metric_field(plan):
-              changed = False
-              stages = plan.get('execution_plan', {}).get('stages') if isinstance(plan.get('execution_plan'), dict) else []
-              for stage in stages or []:
-                  if not isinstance(stage, dict):
-                      continue
-                  if str(stage.get('metric_function') or '').strip().lower() == 'count' and not str(stage.get('metric_field') or '').strip():
-                      stage['metric_field'] = 'order_id' if str(stage.get('primary_collection') or '').strip() == 'orders' else '_id'
-                      changed = True
-              return changed
-
-
-          def _contains_forbidden_date(value):
-              if isinstance(value, dict):
-                  if '$date' in value:
-                      return True
-                  return any(_contains_forbidden_date(v) for v in value.values())
-              if isinstance(value, list):
-                  return any(_contains_forbidden_date(v) for v in value)
-              return False
-
-
-          def main(full_status_code, full_body, local_status_code, local_body, question='', full_request_debug=None):
-              code, body, picked_source = _pick_response(full_status_code, full_body, local_status_code, local_body)
-              used_local_llm = picked_source == 'local_llm'
+          def main(full_status_code, full_body, local_status_code, local_body, question=''):
+              code, body, _source = _pick_response(full_status_code, full_body, local_status_code, local_body)
+              source = 'full_llm_or_local'
               payload = None
               result = ''
               try:
@@ -419,87 +393,154 @@
                   else:
                       resp_json = _read_json_text(body)
                       payload = resp_json
-                      result = (_extract_chat_text(resp_json) if resp_json else '') or _truncate_text(body, 4000)
+                      if not resp_json:
+                          result = _truncate_text(body, 4000)
+                      else:
+                          result = _extract_chat_text(resp_json) or _truncate_text(body, 4000)
               except Exception as e:
                   result = _truncate_text(f"{body}\n\nexception={e}", 4000)
-
-              semantic_plan_raw_text = result
+              semantic_plan = {}
+              normalizer_error = ''
               parsed = None
               json_parse_ok = False
-              parse_error = ''
-              parsed_type = 'none'
+              parsed_type = ''
               parsed_keys = []
-              invalid_reason = ''
-              normalizer_warning = ''
-              normalizer_error = ''
+              has_exec = False
+              has_stages = False
+              stage_count = 0
+              legacy = False
+              warning = ''
+              error = ''
               normalized = {}
-
+              absolute_date_filter_detected = False
+              time_range_normalized = False
+              semantic_plan_raw_text = result
               try:
                   semantic_plan_text = _extract_json_object_text(result)
                   semantic_plan_raw_text = semantic_plan_text or result
                   parsed = json.loads(semantic_plan_text)
                   json_parse_ok = True
               except Exception as e:
-                  parse_error = str(e)
-
+                  error = str(e)
+                  parsed = None
               if isinstance(parsed, dict):
-                  parsed_type = 'dict'
-                  parsed_keys = list(parsed.keys())
-                  top_level_disallowed = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
-                  has_stages = _has_stages(parsed)
-                  if (set(parsed.keys()) & top_level_disallowed) and not has_stages:
-                      invalid_reason = 'top-level collection/group_by/metrics is not allowed'
-                      normalizer_error = 'INVALID_SEMANTIC_PLAN_SCHEMA: top-level collection/group_by/metrics is not allowed'
-                  elif not has_stages:
-                      invalid_reason = 'missing execution_plan.stages'
-                      normalizer_error = 'SEMANTIC_PLAN_SCHEMA_INVALID: missing execution_plan.stages'
-                  elif _contains_forbidden_date(parsed):
-                      invalid_reason = 'date object is not allowed'
-                      normalizer_error = 'SEMANTIC_PLAN_SCHEMA_INVALID: $date is not allowed; use time_range.relative_days'
-                  else:
-                      normalized = parsed
-                      if _fill_count_metric_field(normalized):
-                          normalizer_warning = 'count metric_field filled'
+                  semantic_plan = parsed
+              legacy_keys = {'collection', 'filters', 'group_by', 'metrics', 'sort', 'limit'}
+              has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
+              has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
+              legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
+              if isinstance(semantic_plan, dict):
+                  parsed_type = type(semantic_plan).__name__
+                  parsed_keys = list(semantic_plan.keys())
+                  has_exec = isinstance(semantic_plan.get('execution_plan'), dict)
+                  has_stages = has_exec and isinstance(semantic_plan['execution_plan'].get('stages'), list) and len(semantic_plan['execution_plan'].get('stages') or []) > 0
+                  legacy = bool(set(semantic_plan.keys()) & legacy_keys) and not has_stages
+                  normalized = semantic_plan
+              if has_stages:
+                  pass
+              elif isinstance(semantic_plan.get('stages'), list) and len(semantic_plan.get('stages') or []) > 0:
+                  normalized = dict(semantic_plan)
+                  normalized = {'execution_plan': {'stages': semantic_plan.get('stages', [])}, **{k:v for k,v in semantic_plan.items() if k!='stages'}}
+              elif legacy:
+                  warning = 'FULL_LLM_LEGACY_AST_DETECTED'
+                  group_by = semantic_plan.get('group_by') if isinstance(semantic_plan.get('group_by'), list) else []
+                  metrics = semantic_plan.get('metrics') if isinstance(semantic_plan.get('metrics'), list) else []
+                  stage = {
+                      'stage_id': 'stage1',
+                      'primary_collection': semantic_plan.get('collection') or '',
+                      'intent': 'aggregate' if (group_by or metrics) else 'find',
+                      'filters': semantic_plan.get('filters') if isinstance(semantic_plan.get('filters'), list) else [],
+                      'group_by': group_by,
+                      'metrics': metrics,
+                      'sort': semantic_plan.get('sort') if isinstance(semantic_plan.get('sort'), list) else [],
+                      'limit': semantic_plan.get('limit') if isinstance(semantic_plan.get('limit'), int) else 100,
+                  }
+                  needs_chart = bool(semantic_plan.get('needs_chart')) or (_contains_chart_intent(question) and bool(group_by and metrics))
+                  chart_request = semantic_plan.get('chart_request') if isinstance(semantic_plan.get('chart_request'), dict) else {}
+                  if needs_chart and not chart_request and group_by and metrics:
+                      first_metric = metrics[0] if metrics else {}
+                      m_name = first_metric.get('alias') or first_metric.get('name') or 'value'
+                      q = str(question or '')
+                      chart_type = 'bar' if '柱状图' in q else ('line' if '折线图' in q else ('pie' if '饼图' in q else 'bar'))
+                      chart_request = {'chart_type': chart_type, 'x_field': group_by[0], 'y_field': m_name}
+                  normalized = {
+                      'execution_plan': {'stages': [stage]},
+                      'needs_chart': needs_chart,
+                      'chart_request': chart_request,
+                      'answer_mode': semantic_plan.get('answer_mode') or 'data',
+                  }
               else:
-                  invalid_reason = parse_error or 'response is not a JSON object'
-                  normalizer_error = 'SEMANTIC_PLAN_SCHEMA_INVALID: ' + invalid_reason
-
+                  error = 'SEMANTIC_PLAN_INVALID'
+              if isinstance(normalized, dict):
+                  rel_days = _detect_relative_days(question)
+                  stages = ((normalized.get('execution_plan') or {}).get('stages') or []) if isinstance(normalized.get('execution_plan'), dict) else []
+                  if rel_days > 0 and isinstance(stages, list):
+                      for stage in stages:
+                          if not isinstance(stage, dict):
+                              continue
+                          raw_filters = stage.get('filters') if isinstance(stage.get('filters'), list) else []
+                          kept = []
+                          converted = False
+                          for f in raw_filters:
+                              if _is_abs_date_between_filter(f):
+                                  absolute_date_filter_detected = True
+                                  converted = True
+                                  continue
+                              kept.append(f)
+                          if converted:
+                              stage['filters'] = kept
+                              tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
+                              tr.update({'field': str(tr.get('field') or 'created_at'), 'mode': 'relative_days', 'relative_days': rel_days})
+                              stage['time_range'] = tr
+                              warning = 'absolute_date_filter_converted_to_relative_time'
+                              time_range_normalized = True
+                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
+                  if chart_request:
+                      if chart_request.get('x_axis') and not chart_request.get('x_field'):
+                          chart_request['x_field'] = chart_request.get('x_axis')
+                      if chart_request.get('y_axis') and not chart_request.get('y_field'):
+                          chart_request['y_field'] = chart_request.get('y_axis')
+                      normalized['chart_request'] = chart_request
               n_has_exec = isinstance(normalized, dict) and isinstance(normalized.get('execution_plan'), dict)
               n_stages = normalized.get('execution_plan', {}).get('stages') if n_has_exec else None
-              n_has_stages = isinstance(n_stages, list) and len(n_stages) > 0
+              n_has_stages = isinstance(n_stages, list) and len(n_stages)>0
               stage_count = len(n_stages or [])
               plan_valid = bool(n_has_stages)
+              if not plan_valid:
+                  normalizer_error = f"SEMANTIC_PLAN_INVALID: {error or 'missing execution_plan.stages'}"
+                  normalized = {}
               content_preview = str(semantic_plan_raw_text or '')[:1000]
               debug_summary = {
-                  'source': picked_source,
-                  'used_local_llm': used_local_llm,
+                  'source': source,
                   'http_status_code': code,
                   'body_type': type(payload).__name__ if payload is not None else 'none',
                   'content_extracted': bool(result),
                   'content_length': len(str(semantic_plan_raw_text or '')),
                   'content_preview': content_preview,
                   'json_parse_ok': json_parse_ok,
-                  'parsed_type': parsed_type,
+                  'parsed_type': parsed_type or (type(parsed).__name__ if parsed is not None else 'none'),
                   'parsed_keys': parsed_keys,
-                  'input_keys': parsed_keys,
                   'plan_valid': plan_valid,
                   'has_execution_plan': n_has_exec,
                   'has_stages': n_has_stages,
                   'stages_count': stage_count,
-                  'invalid_reason': invalid_reason,
-                  'normalizer_warning': normalizer_warning,
+                  'legacy_ast_detected': legacy,
+                  'normalized': True,
+                  'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
-                  'request_debug': full_request_debug or {},
+                  'absolute_date_filter_detected': absolute_date_filter_detected,
+                  'time_range_normalized': time_range_normalized,
+                  'error': error,
               }
               return {
                   'semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
                   'normalized_semantic_plan_json': json.dumps(normalized or {}, ensure_ascii=False),
                   'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
                   'plan_valid': plan_valid,
-                  'used_local_llm': used_local_llm,
-                  'normalizer_warning': normalizer_warning,
+                  'legacy_ast_detected': legacy,
+                  'normalizer_warning': warning,
                   'normalizer_error': normalizer_error,
-                  'parse_error': parse_error,
+                  'parse_error': str(error or ''),
                   'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
               }
         code_language: python3
@@ -514,7 +555,7 @@
           plan_valid:
             children:
             type: boolean
-          used_local_llm:
+          legacy_ast_detected:
             children:
             type: boolean
           normalizer_warning:
@@ -561,11 +602,6 @@
           - query
           value_type: string
           variable: question
-        - value_selector:
-          - '1775000000012'
-          - request_debug
-          value_type: object
-          variable: full_request_debug
       height: 96
       id: '1775000000013'
       position:
@@ -592,25 +628,7 @@
             - plan_valid
           id: 'true'
           logical_operator: and
-        - case_id: fallback
-          conditions:
-          - comparison_operator: is
-            id: 8d1f10b4-b22f-4f78-91f6-c972421ed3c8
-            value: 'false'
-            varType: boolean
-            variable_selector:
-            - '1775000000013'
-            - plan_valid
-          - comparison_operator: is
-            id: 80c4e5bc-044a-4f9f-9db7-e711c899c167
-            value: 'false'
-            varType: boolean
-            variable_selector:
-            - '1775000000013'
-            - used_local_llm
-          id: fallback
-          logical_operator: and
-        desc: 有效计划进入编译；满血计划无效且尚未本地兜底时转本地 LLM
+        desc: 仅当语义计划规范化成功且 execution_plan.stages 非空时进入编译执行
         selected: false
         title: 条件分支_语义计划是否有效
         type: if-else
@@ -629,7 +647,7 @@
       width: 242
     - data:
         answer: |-
-          SEMANTIC_PLAN_SCHEMA_INVALID，未进入 Mongo 编译执行。
+          语义计划解析失败，未进入 Mongo 编译执行。
 
           错误信息：{{#1775000000013.normalizer_error#}}
 
@@ -797,7 +815,7 @@
         context:
           enabled: false
           variable_selector: []
-        desc: 满血LLM关闭、失败或语义计划无效时，使用本地模型生成 semantic_execution_plan
+        desc: 满血LLM关闭或失败时，使用本地模型生成AST
         model:
           completion_params:
             num_ctx: 16384
@@ -815,7 +833,29 @@
           text: "{{#1775000000005.semantic_plan_user_prompt#}}"
         selected: false
         structured_output:
-          schema: {"type":"object","required":["execution_plan"],"properties":{"execution_plan":{"type":"object","required":["stages"],"properties":{"stages":{"type":"array","minItems":1,"items":{"type":"object","required":["stage_id","stage_type","primary_collection","intent_type"],"properties":{"stage_id":{"type":"string"},"stage_type":{"type":"string"},"primary_collection":{"type":"string"},"intent_type":{"type":"string"},"time_range":{"type":"object"},"filters":{"type":"array","items":{"type":"object"}},"group_fields":{"type":"array","items":{"type":"string"}},"metric_function":{"type":"string"},"metric_field":{"type":"string"},"metric_alias":{"type":"string"},"sort":{"type":"array","items":{"type":"object"}},"limit":{"type":"integer"}},"additionalProperties":true}}},"additionalProperties":true},"needs_chart":{"type":"boolean"},"chart_request":{"type":"object"},"answer_mode":{"type":"string"}},"additionalProperties":true}
+          schema:
+            type: object
+            required:
+            - execution_plan
+            properties:
+              execution_plan:
+                type: object
+                required:
+                - stages
+                properties:
+                  stages:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: object
+                additionalProperties: true
+              needs_chart:
+                type: boolean
+              chart_request:
+                type: object
+              answer_mode:
+                type: string
+            additionalProperties: true
         structured_output_enabled: true
         title: LLM_本地兜底生成语义计划
         type: llm
