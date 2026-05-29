@@ -1,192 +1,8 @@
-                      'merge_mode': merge_mode,
-                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
-                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
-                      'left_field': str(final_merge.get('left_field') or '').strip(),
-                      'right_field': str(final_merge.get('right_field') or '').strip(),
-                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
-                  },
-              }
-
-
-          def _build_stage_match(stage):
-              parts = []
-              time_expr = _apply_time_range(stage.get('time_range'))
-              if time_expr:
-                  parts.append(time_expr)
-              for idx, f in enumerate(stage.get('filters') or []):
-                  if not isinstance(f, dict):
-                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
-                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
-                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
-                  value = f.get('value')
-                  parts.append(_build_match_expr(field, operator, value))
-              return _merge_match(parts)
-
-
-          def _append_projection(pipeline, fields):
-              unique_fields = []
-              seen = set()
-              for field in fields or []:
-                  text = str(field or '').strip()
-                  if text and text not in seen:
-                      seen.add(text)
-                      unique_fields.append(text)
-              if not unique_fields:
-                  return
-              proj = {'_id': 0}
-              for field in unique_fields:
-                  proj[field] = f'${field}'
-              pipeline.append({'$project': proj})
-
-
-          def _compile_detail_query(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              _append_projection(pipeline, stage.get('projection_fields'))
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              validated_plan = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [],
-                  'group_by': [],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_plan, pipeline
-
-
-          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
-                      raise ValueError(f'unsupported metric_function: {metric_function}')
-                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
-              group_id = {field: f'${field}' for field in group_fields} if group_fields else None
-              group_stage = {'_id': group_id, metric_alias: agg_expr}
-              pipeline.append({'$group': group_stage})
-              project_stage = {'_id': 0}
-              for field in group_fields:
-                  project_stage[field] = f'$_id.{field}'
-              project_stage[metric_alias] = f'${metric_alias}'
-              pipeline.append({'$project': project_stage})
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
-              if projection_fields:
-                  _append_projection(pipeline, projection_fields)
-              validated_plan = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
-                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_plan, pipeline
-
-
-          def _compile_group_top_entity(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              entity_field = _ensure_non_empty_string(stage.get('entity_field'), f"{stage['stage_name']}.entity_field")
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              rank_n = int(stage.get('rank_n') or 0)
-              if rank_n <= 0:
-                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_entity")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
-                      raise ValueError(f'unsupported metric_function: {metric_function}')
-                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
-              first_group_id = {field: f'${field}' for field in group_fields}
-              first_group_id['__entity'] = f'${entity_field}'
-              pipeline.append({'$group': {'_id': first_group_id, metric_alias: agg_expr}})
-              sort_before_rank = {f'_id.{field}': 1 for field in group_fields}
-              sort_before_rank[metric_alias] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
-              pipeline.append({'$sort': sort_before_rank})
-              push_payload = {'entity': '$_id.__entity', metric_alias: f'${metric_alias}'}
-              pipeline.append({'$group': {'_id': {field: f'$_id.{field}' for field in group_fields}, 'items': {'$push': push_payload}}})
-              project_group = {'_id': 0, 'items': '$items'}
-              for field in group_fields:
-                  project_group[field] = f'$_id.{field}'
-              pipeline.append({'$project': project_group})
-              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
-              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
-              project_after_rank = {'_id': 0, entity_field: '$items.entity', metric_alias: f'$items.{metric_alias}'}
-              for field in group_fields:
-                  project_after_rank[field] = f'${field}'
-              pipeline.append({'$project': project_after_rank})
-              final_sort = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  final_sort[field] = direction
-              if final_sort and stage.get('apply_global_limit'):
-                  pipeline.append({'$sort': final_sort})
-              # group_top_entity: rank_n controls per-group topN. Do not apply global sort/limit by default.
-              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              projection_fields = stage.get('projection_fields') or (list(group_fields) + [entity_field, metric_alias])
-              if projection_fields:
-                  _append_projection(pipeline, projection_fields)
-              validated_plan = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
-                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in list(group_fields) + [entity_field]],
-                  'sort': stage.get('sort') or [],
                   'limit': int(stage.get('limit') or 0),
                   'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
                   'reasoning': stage['intent_type'],
               }
-              return validated_plan, pipeline
+              return validated_ast, pipeline
 
 
           def _compile_group_top_record(stage, schema_context, stage_outputs):
@@ -228,7 +44,7 @@
                   pipeline.append({'$limit': int(stage['limit'])})
               if projection_fields:
                   _append_projection(pipeline, projection_fields)
-              validated_plan = {
+              validated_ast = {
                   'primary_collection': stage['collection'],
                   'collections': [stage['collection']],
                   'expands': [],
@@ -241,7 +57,7 @@
                   'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
                   'reasoning': stage['intent_type'],
               }
-              return validated_plan, pipeline
+              return validated_ast, pipeline
 
 
           def _compile_enrich_related(stage, schema_context, stage_outputs):
@@ -256,7 +72,7 @@
                   projection_fields = _extract_returnable_fields(schema_context, stage['collection'])
               else:
                   projection_fields = list(stage.get('projection_fields') or [])
-              validated_plan = {
+              validated_ast = {
                   'primary_collection': stage['collection'],
                   'collections': [stage['collection']],
                   'expands': [],
@@ -270,7 +86,7 @@
                   'reasoning': f"enrich {stage['collection']} by {join_target_field}",
               }
               if not join_values:
-                  return validated_plan, [], True
+                  return validated_ast, [], True
               pipeline = []
               parts = [{join_target_field: {'$in': join_values}}]
               time_expr = _apply_time_range(stage.get('time_range'))
@@ -292,24 +108,24 @@
                   pipeline.append({'$sort': sort_stage})
               if int(stage.get('limit') or 0) > 0:
                   pipeline.append({'$limit': int(stage['limit'])})
-              return validated_plan, pipeline, False
+              return validated_ast, pipeline, False
 
 
           def _compile_stage(stage, schema_context, stage_outputs):
               stage = _sanitize_stage_for_compile(stage)
               intent = stage.get('intent_type')
               if intent == 'detail_query':
-                  validated_plan, pipeline = _compile_detail_query(stage, schema_context, stage_outputs)
-                  return validated_plan, pipeline, False
+                  validated_ast, pipeline = _compile_detail_query(stage, schema_context, stage_outputs)
+                  return validated_ast, pipeline, False
               if intent == 'aggregate_summary':
-                  validated_plan, pipeline = _compile_aggregate_summary(stage, schema_context, stage_outputs)
-                  return validated_plan, pipeline, False
+                  validated_ast, pipeline = _compile_aggregate_summary(stage, schema_context, stage_outputs)
+                  return validated_ast, pipeline, False
               if intent == 'group_top_entity':
-                  validated_plan, pipeline = _compile_group_top_entity(stage, schema_context, stage_outputs)
-                  return validated_plan, pipeline, False
+                  validated_ast, pipeline = _compile_group_top_entity(stage, schema_context, stage_outputs)
+                  return validated_ast, pipeline, False
               if intent == 'group_top_record':
-                  validated_plan, pipeline = _compile_group_top_record(stage, schema_context, stage_outputs)
-                  return validated_plan, pipeline, False
+                  validated_ast, pipeline = _compile_group_top_record(stage, schema_context, stage_outputs)
+                  return validated_ast, pipeline, False
               if intent == 'enrich_related':
                   return _compile_enrich_related(stage, schema_context, stage_outputs)
               raise ValueError(f'unsupported intent_type: {intent}')
@@ -678,7 +494,6 @@
               }
 
           def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str):
-              semantic_plan = json.loads(semantic_plan) if isinstance(semantic_plan, str) else semantic_plan
               plan = _ensure_obj(semantic_plan, 'semantic_plan')
               planner = _ensure_obj(planner, 'planner')
               urls = _parse_query_urls(query_urls)
@@ -691,7 +506,7 @@
 
               for stage in normalized_execution_plan.get('stages') or []:
                   stage = _sanitize_stage_for_compile(stage)
-                  validated_plan, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
+                  validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
                   pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
                   selected_url = ''
                   request_id = uuid.uuid4().hex
@@ -707,7 +522,7 @@
                   if not skip_query:
                       selected_url = random.choice(urls)
                       request_body = {
-                          'validated_plan': validated_plan or {},
+                          'validated_ast': validated_ast or {},
                           'pipeline_json': pipeline_json,
                           'validation_message': 'ok',
                           'request_id': request_id,
@@ -728,7 +543,7 @@
                       'collection': stage['collection'],
                       'intent_type': stage['intent_type'],
                       'sanitize_report': stage.get('sanitize_report') or {},
-                      'validated_plan': validated_plan,
+                      'validated_ast': validated_ast,
                       'pipeline': pipeline,
                       'pipeline_json': pipeline_json,
                       'selected_url': selected_url,
@@ -850,7 +665,7 @@
                   'answer_text': answer_text,
                   'question': str(question or '').strip(),
                   'normalized_execution_plan': normalized_execution_plan,
-                  'last_validated_ast': ((stage_execution_trace or [{}])[-1] or {}).get('validated_plan') if isinstance(stage_execution_trace, list) and stage_execution_trace else {},
+                  'last_validated_ast': ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {},
                   'last_pipeline_json': str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or ''),
                   'merged_rows': merged_rows,
                   'chart': chart_payload,
@@ -878,6 +693,8 @@
             type: string
           normalized_execution_plan:
             type: object
+          last_validated_ast:
+            type: object
           last_pipeline_json:
             type: string
           merged_rows:
@@ -898,3 +715,280 @@
             type: object
           normalized_execution_plan_json:
             children:
+            type: string
+          stage_execution_trace_json:
+            children:
+            type: string
+          chart_enabled:
+            children:
+            type: string
+          chart_type:
+            children:
+            type: string
+          chart_data:
+            children:
+            type: string
+          chart_title:
+            children:
+            type: string
+          chart_axis_x_title:
+            children:
+            type: string
+          chart_axis_y_title:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_遍历语义计划并统一编译执行
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000013'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: semantic_plan
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: planner
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - env
+          - SN_MONGODB_QUERY_URLS
+          value_type: string
+          variable: query_urls
+      height: 80
+      id: '1775000000007'
+      position:
+        x: 4090
+        "y": 280
+      positionAbsolute:
+        x: 4090
+        "y": 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: token-body-1
+            key: ''
+            type: text
+            value: "{{#1775000000005.token_request_body_json#}}"
+          type: json
+        desc: 使用静态token换取动态token
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_获取动态Token
+        type: http-request
+        url: "{{#1775000000005.token_url#}}"
+        variables: []
+      height: 123
+      id: '1775000000010'
+      position:
+        x: 2210
+        "y": 120
+      positionAbsolute:
+        x: 2210
+        "y": 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          UNSUPPORTED_JSON_SCHEMA_KEYS = {
+              'uniqueItems',
+          }
+
+
+          def _truncate_text(text, limit=2000):
+              text = '' if text is None else str(text)
+              return text if len(text) <= limit else text[:limit] + '...'
+
+
+          def _read_json_text(text):
+              if text is None:
+                  return None
+              if isinstance(text, (dict, list)):
+                  return text
+              raw = str(text).strip()
+              if not raw:
+                  return None
+              return json.loads(raw)
+
+
+          def _first_non_empty_string(*values):
+              for value in values:
+                  if isinstance(value, str) and value.strip():
+                      return value.strip()
+              return ''
+
+
+          def _sanitize_json_schema(value):
+              if isinstance(value, dict):
+                  cleaned = {}
+                  for key, item in value.items():
+                      if key in UNSUPPORTED_JSON_SCHEMA_KEYS:
+                          continue
+                      cleaned[key] = _sanitize_json_schema(item)
+                  return cleaned
+              if isinstance(value, list):
+                  return [_sanitize_json_schema(item) for item in value]
+              return value
+
+
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              return str(value or '').strip().lower() in {'1','true','yes','y','on'}
+
+
+          def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt: str, semantic_plan_json_schema: str,
+                   chat_url: str, llm_config_json: str, request_id: str, full_llm_response_format_enabled: str):
+              try:
+                  code = int(status_code or 0)
+                  if code < 200 or code >= 300:
+                      raise ValueError(f"动态token获取失败, status={code}, body={_truncate_text(body, 2000)}")
+                  resp_json = _read_json_text(body)
+                  if not resp_json or not isinstance(resp_json, dict):
+                      raise ValueError(f"动态token响应不是合法JSON: {_truncate_text(body, 1200)}")
+                  token_result = resp_json.get('result')
+                  if token_result is None:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not isinstance(token_result, str):
+                      raise ValueError('TOKEN_RESULT_INVALID_TYPE')
+                  authorization_value = token_result.strip()
+                  if not authorization_value:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not authorization_value.startswith('Basic '):
+                      print('WARN:TOKEN_RESULT_UNEXPECTED_PREFIX')
+                  llm_config = _read_json_text(llm_config_json)
+                  if not llm_config or not isinstance(llm_config, dict):
+                      raise ValueError('llm_config_json 不是合法JSON对象')
+                  schema = _read_json_text(semantic_plan_json_schema)
+                  if not schema or not isinstance(schema, dict):
+                      raise ValueError('semantic_plan_json_schema 不是合法JSON对象')
+                  sanitized_schema = _sanitize_json_schema(schema)
+                  if not sanitized_schema or not isinstance(sanitized_schema, dict):
+                      raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
+                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
+                  prompt = semantic_plan_user_prompt
+                  request_body = {
+                      'model': model,
+                      'messages': [
+                          {'role': 'system', 'content': semantic_plan_system_prompt},
+                          {'role': 'user', 'content': prompt},
+                      ],
+                      'stream': False,
+                  }
+                  rf_enabled = _to_bool(full_llm_response_format_enabled)
+                  if rf_enabled:
+                      request_body['response_format'] = {
+                          'type': 'json_schema',
+                          'json_schema': {
+                              'name': 'semantic_execution_plan',
+                              'strict': False,
+                              'schema': sanitized_schema,
+                          }
+                      }
+                  return {
+                      'request_enabled': 'true',
+                      'debug_summary': json.dumps({
+                          'request_url': str(chat_url or '').strip(),
+                          'model': model,
+                          'prompt_length': len(prompt or ''),
+                          'auth_present': bool(authorization_value),
+                          'auth_from': 'token_response.result',
+                          'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
+                          'auth_len': len(authorization_value or ''),
+                          'body_keys': list(request_body.keys()),
+                          'response_format_enabled': rf_enabled,
+                          'response_format_type': 'json_schema' if rf_enabled else '',
+                          'schema_name': 'semantic_execution_plan' if rf_enabled else '',
+                          'schema_required': ['execution_plan'],
+                          'prompt_preview': _truncate_text(prompt, 1000),
+                      }, ensure_ascii=False),
+                      'chat_url': chat_url,
+                      'authorization_value': authorization_value,
+                      'llm_request_body_json': json.dumps(request_body, ensure_ascii=False),
+                      'request_id': request_id,
+                  }
+              except Exception as e:
+                  return {
+                      'request_enabled': 'false',
+                      'debug_summary': _truncate_text(str(e), 2000),
+                      'chat_url': str(chat_url or '').strip(),
+                      'authorization_value': '',
+                      'llm_request_body_json': '',
+                      'request_id': str(request_id or '').strip(),
+                  }
+        code_language: python3
+        desc: 解析动态token并构造满血版LLM请求体�失败时转本地LLM
+        outputs:
+          authorization_value:
+            children:
+            type: string
+          chat_url:
+            children:
+            type: string
+          debug_summary:
+            children:
+            type: string
+          llm_request_body_json:
+            children:
+            type: string
+          request_enabled:
+            children:
+            type: string
+          request_id:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_构造满血LLM语义计划请求
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000010'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000010'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1775000000005'
+          - semantic_plan_system_prompt
+          value_type: string
+          variable: semantic_plan_system_prompt
+        - value_selector:
