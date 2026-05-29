@@ -367,17 +367,6 @@ workflow:
       type: custom
       zIndex: 0
     - data:
-        isInIteration: false
-        sourceType: if-else
-        targetType: llm
-      id: 1775000000020-fallback-1775000000018-target
-      source: '1775000000020'
-      sourceHandle: fallback
-      target: '1775000000018'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
         isInLoop: false
         sourceType: code
         targetType: if-else
@@ -984,3 +973,23 @@ workflow:
         iteration_id: '1775000000001'
         outputs:
           output:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_打包Schema结果
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000002'
+          - collection_name
+          value_type: string
+          variable: collection_name
+        - value_selector:
+          - '1775000000002'
+          - role
+          value_type: string
+          variable: role
+        - value_selector:
+          - '1775000000003'
+          - result
+          value_type: array[object]
