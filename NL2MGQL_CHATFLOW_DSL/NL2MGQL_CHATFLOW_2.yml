@@ -3,8 +3,6 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-
-
           def _compile_group_top_record(stage, schema_context, stage_outputs):
               pipeline = []
               match_expr = _build_stage_match(stage)
@@ -58,8 +56,6 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-
-
           def _compile_enrich_related(stage, schema_context, stage_outputs):
               depends_on = _ensure_non_empty_string(stage.get('depends_on'), f"{stage['stage_name']}.depends_on")
               prev = stage_outputs.get(depends_on) or {}
@@ -109,8 +105,6 @@
               if int(stage.get('limit') or 0) > 0:
                   pipeline.append({'$limit': int(stage['limit'])})
               return validated_ast, pipeline, False
-
-
           def _compile_stage(stage, schema_context, stage_outputs):
               stage = _sanitize_stage_for_compile(stage)
               intent = stage.get('intent_type')
@@ -129,8 +123,6 @@
               if intent == 'enrich_related':
                   return _compile_enrich_related(stage, schema_context, stage_outputs)
               raise ValueError(f'unsupported intent_type: {intent}')
-
-
           def _post_json(url, payload_obj, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
               body = json.dumps(payload_obj, ensure_ascii=False).encode('utf-8')
               req = urllib.request.Request(url=url, data=body, headers={'Content-Type': 'application/json'}, method='POST')
@@ -147,8 +139,6 @@
                   body_text = e.read().decode('utf-8', errors='replace') if hasattr(e, 'read') else str(e)
                   headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
                   return int(getattr(e, 'code', 0) or 0), body_text, headers
-
-
           def _merge_rows(left_rows, right_rows, left_field, right_field, attach_as):
               right_index = {}
               for row in right_rows or []:
@@ -180,8 +170,6 @@
                       item[attach_as] = matches
                   merged.append(item)
               return merged
-
-
           def _normalize_visualization(value):
               if not isinstance(value, dict):
                   return {'enabled': False}
@@ -203,7 +191,6 @@
                   'series_name': series_name,
                   'title': title,
               }
-
 
           def _to_float(value):
               if isinstance(value, bool):
@@ -249,6 +236,24 @@
 
               return x_field, y_field
 
+          def build_short_chart_title(normalized_plan=None, visualization=None, chart_type='', x_field='', y_field='', question=''):
+              visualization = visualization or {}; stages = (normalized_plan or {}).get('stages') or []; stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}; raw_title = str(visualization.get('title') or '').strip(); question = str(question or '').strip()
+              cleaned = ''.join(raw_title.split())
+              for word in ['帮我','请帮我','查询','统计','做一个','做个','做图','画图','图表','柱状图','折线图','饼图','描述','简单分析','分析','看一下','进行']:
+                  cleaned = cleaned.replace(word, '')
+              for ch in ['，', ',', '。', '？', '?', '！', '!', '、', ';', '；']:
+                  cleaned = cleaned.replace(ch, '')
+              if cleaned and raw_title != question and not (len(raw_title) > 32 and any(w in raw_title for w in ['查询','统计','做图','画图','描述','分析'])):
+                  return cleaned[:24]
+              tr = stage0.get('time_range') if isinstance(stage0.get('time_range'), dict) else {}; days = int(tr.get('relative_days') or 0) if str(tr.get('mode') or '') == 'relative_days' else 0; time_label = '过去一个月' if days in (28, 29, 30, 31) else ('最近7天' if days == 7 else ('昨日' if days == 1 else ('最近' + str(days) + '天' if days > 0 else '')))
+              if str(tr.get('mode') or '') == 'absolute':
+                  start = str(tr.get('start') or '').strip()[:10]; end = str(tr.get('end') or '').strip()[:10]; time_label = (start + '至' + end) if start and end else (start or end)
+              group_fields = stage0.get('group_fields') or []; dim_src = str((group_fields[0] if group_fields else '') or x_field or visualization.get('x_field') or '').strip(); metric_src = str(stage0.get('metric_alias') or y_field or visualization.get('y_field') or '').strip(); dim_lower = dim_src.lower(); metric_lower = metric_src.lower(); collection = str(stage0.get('collection') or stage0.get('primary_collection') or '').lower()
+              dim = '厂商' if any(k in dim_lower or k in dim_src for k in ['manufacturer','vendor','factory','supplier','merchant','厂商','厂家','供应商']) else ('品牌' if 'brand' in dim_lower or '品牌' in dim_src else ('商品' if any(k in dim_lower or k in dim_src for k in ['product','sku','spu','商品','产品']) else ('客户' if any(k in dim_lower or k in dim_src for k in ['customer','user','member','客户','用户','会员']) else (dim_src.replace('_id','').replace('_',' ')[:6] if dim_src else ''))))
+              metric = '订单数' if any(k in metric_lower or k in metric_src for k in ['order_count','orders_count','order_num','订单数']) or (str(stage0.get('metric_function') or '').lower() == 'count' and ('order' in collection or '订单' in collection)) else ('销售额' if any(k in metric_lower or k in metric_src for k in ['amount','gmv','sales','金额','销售额']) else ('数量' if str(stage0.get('metric_function') or '').lower() == 'count' or any(k in metric_lower or k in metric_src for k in ['quantity','qty','数量']) else (metric_src[:8] if metric_src else '指标')))
+              suffix = '趋势' if str(chart_type or visualization.get('chart_type') or '').lower() == 'line' else ('分布' if str(chart_type or visualization.get('chart_type') or '').lower() == 'pie' else '对比')
+              return (time_label + (('各' + dim) if dim else '') + metric + suffix)[:24]
+
 
           def _build_local_chart(visualization, normalized_execution_plan, rows, chart_decision, question=''):
               chart_type = str((visualization or {}).get('chart_type') or '').strip().lower() or str((chart_decision or {}).get('chart_type') or '').strip().lower() or 'bar'
@@ -258,7 +263,7 @@
               if not x_field or not y_field:
                   return False, {}, '', x_field, y_field, chart_type, 'å·²è¯å«å¾è¡¨æå¾ä¸æ¥è¯¢å°æ°æ®ï¼ä½æ æ³ç¡®å®å¾è¡¨æ¨ªè½´æçºµè½´å­æ®µã'
 
-              title = str((visualization or {}).get('title') or '').strip() or str(question or '').strip()
+              title = build_short_chart_title(normalized_execution_plan, visualization, chart_type, x_field, y_field, question)
               series_name = str((visualization or {}).get('series_name') or '').strip() or str(y_field or '').strip() or 'value'
               series_values = []
               categories = []
@@ -387,13 +392,12 @@
               viz['chart_type'] = chart_type
               viz['x_field'] = x_field
               viz['y_field'] = y_field
-              if not str(viz.get('title') or '').strip() and str(question or '').strip():
-                  viz['title'] = str(question or '').strip()
+              viz['title'] = build_short_chart_title(normalized_plan, viz, chart_type, x_field, y_field, question)
 
               option = _build_echarts_option(viz, rows)
               if not option:
                   option = _build_echarts_option(
-                      {'enabled': True, 'chart_type': chart_type, 'x_field': x_field, 'y_field': y_field, 'title': str(question or '').strip()},
+                      {'enabled': True, 'chart_type': chart_type, 'x_field': x_field, 'y_field': y_field, 'title': build_short_chart_title(normalized_plan, visualization, chart_type, x_field, y_field, question)},
                       rows,
                   )
               if not option:
@@ -581,7 +585,7 @@
                       normalized_execution_plan.setdefault('visualization', {})['enabled'] = True
                   if not str((normalized_execution_plan.get('visualization') or {}).get('chart_type') or '').strip():
                       normalized_execution_plan.setdefault('visualization', {})['chart_type'] = str(chart_decision.get('chart_type') or 'bar')
-              option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip() or str(question or '').strip()
+              option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip()
               option_series_name = ''
               if isinstance((chart_option or {}).get('series'), list) and (chart_option or {}).get('series'):
                   option_series_name = str((((chart_option or {}).get('series') or [{}])[0].get('name')) or '').strip()
@@ -682,7 +686,7 @@
                   'chart_enabled': 'true' if bool(chart_option) else 'false',
                   'chart_type': str(chart_decision.get('chart_type') or '') if bool(chart_option) else '',
                   'chart_data': json.dumps(chart_option, ensure_ascii=False) if bool(chart_option) else '',
-                  'chart_title': str((visualization or {}).get('title') or ''),
+                  'chart_title': option_title,
                   'chart_axis_x_title': str(chart_x_field or ''),
                   'chart_axis_y_title': str(chart_y_field or ''),
               }
