@@ -80,6 +80,14 @@ workflow:
     - last_error
     value: ''
     value_type: string
+  - description: 上一轮 ECharts 图表 markdown，用于多轮改图、继续展示和回答合并
+    id: 5dbe512a-0fbe-40c3-823a-8cd3f605c557
+    name: last_chart_echarts_markdown
+    selector:
+    - conversation
+    - last_chart_echarts_markdown
+    value: ''
+    value_type: string
   environment_variables:
   - description: 用静态 token 换动态 token 的接口
     id: 4fef4aee-cdc8-4b9c-bef8-be75bfeafa43
@@ -244,17 +252,6 @@ workflow:
     edges:
     - data:
         isInLoop: false
-        sourceType: start
-        targetType: llm
-      id: 1773909192919-source-1773975766025-target
-      source: '1773909192919'
-      sourceHandle: source
-      target: '1773975766025'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
         sourceType: llm
         targetType: code
       id: 1773975766025-source-1774083951307-target
@@ -352,17 +349,6 @@ workflow:
       source: '1775000000020'
       sourceHandle: 'true'
       target: '1775000000007'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        sourceType: if-else
-        targetType: answer
-      id: 1775000000020-false-1775000000021-target
-      source: '1775000000020'
-      sourceHandle: 'false'
-      target: '1775000000021'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -515,6 +501,160 @@ workflow:
       target: '1773910028939'
       targetHandle: target
       type: custom
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: code
+      id: 1773909192919-source-1776000000001-target
+      source: '1773909192919'
+      sourceHandle: source
+      target: '1776000000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000001-source-1776000000002-target
+      source: '1776000000001'
+      sourceHandle: source
+      target: '1776000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: 1776000000002-source-1776000000003-target
+      source: '1776000000002'
+      sourceHandle: source
+      target: '1776000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1776000000003-source-1776000000004-target
+      source: '1776000000003'
+      sourceHandle: source
+      target: '1776000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1776000000004-source-1776000000005-target
+      source: '1776000000004'
+      sourceHandle: source
+      target: '1776000000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776000000005-query-1773975766025-target
+      source: '1776000000005'
+      sourceHandle: query
+      target: '1773975766025'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776000000005-modify_chart-1776000000006-target
+      source: '1776000000005'
+      sourceHandle: modify_chart
+      target: '1776000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776000000005-analysis-1776000000007-target
+      source: '1776000000005'
+      sourceHandle: analysis
+      target: '1776000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776000000005-false-1776000000008-target
+      source: '1776000000005'
+      sourceHandle: 'false'
+      target: '1776000000008'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: 1776000000006-source-1776000000009-target
+      source: '1776000000006'
+      sourceHandle: source
+      target: '1776000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: 1776000000007-source-1776000000010-target
+      source: '1776000000007'
+      sourceHandle: source
+      target: '1776000000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: 1776000000008-source-1776000000011-target
+      source: '1776000000008'
+      sourceHandle: source
+      target: '1776000000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1775000000020-false-1776000000012-target
+      source: '1775000000020'
+      sourceHandle: 'false'
+      target: '1776000000012'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: 1776000000012-source-1775000000021-target
+      source: '1776000000012'
+      sourceHandle: source
+      target: '1775000000021'
+      targetHandle: target
+      type: custom
+      zIndex: 0
     nodes:
     - data:
         selected: false
@@ -653,7 +793,10 @@ workflow:
             - related_collections = ["products"]
         - id: planner-user
           role: user
-          text: 用户问题:{{#sys.query#}}
+          text: |-
+            用户问题:{{#sys.query#}}
+            多轮意图:{{#1776000000004.turn_intent#}}
+            上一轮上下文:{{#1776000000001.last_context_json#}}
         selected: false
         structured_output:
           schema:
@@ -733,268 +876,3 @@ workflow:
                   role = "primary" if name == primary else "related"
                   query_text = (
                       f"用户问题: {question}\n"
-                      f"当前�标 collection: {name}\n"
-                      "请检索该 collection 的 schema、字段含义、典型过滤字段、聚合指标、"
-                      "与其他 collection 的关联线索、以及任何能帮助生成 Mongo 聚合 AST 的信息。"
-                  )
-                  collection_tasks.append({
-                      "collection_name": name,
-                      "role": role,
-                      "query_text": query_text
-                  })
-
-              return {
-                  "result": ordered,
-                  "collection_tasks": collection_tasks,
-                  "planner_json": json.dumps(planner, ensure_ascii=False, indent=2)
-              }
-        code_language: python3
-        desc: 构建待检索的 collection 任务
-        outputs:
-          collection_tasks:
-            children:
-            type: array[object]
-          planner_json:
-            children:
-            type: string
-          result:
-            children:
-            type: array[string]
-        selected: false
-        title: 代码执行_构建检索任务
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1773975766025'
-          - structured_output
-          value_type: object
-          variable: planner
-      height: 80
-      id: '1774083951307'
-      position:
-        x: 561.0104777110068
-        "y": 320
-      positionAbsolute:
-        x: 561.0104777110068
-        "y": 320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        desc: ''
-        error_handle_mode: terminated
-        height: 360
-        is_parallel: false
-        iterator_selector:
-        - '1774083951307'
-        - collection_tasks
-        output_selector:
-        - '1775000000004'
-        - output
-        output_type: array[string]
-        parallel_nums: 10
-        selected: false
-        start_node_id: 1775000000001start
-        title: 遍历Collections检索Schema
-        type: iteration
-        width: 980
-      height: 360
-      id: '1775000000001'
-      position:
-        x: 892.8392659156048
-        "y": 320
-      positionAbsolute:
-        x: 892.8392659156048
-        "y": 320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 980
-    - data:
-        desc: ''
-        isInIteration: true
-        selected: false
-        title: ''
-        type: iteration-start
-      draggable: false
-      height: 48
-      id: 1775000000001start
-      parentId: '1775000000001'
-      position:
-        x: 24
-        "y": 68
-      positionAbsolute:
-        x: 916.8392659156048
-        "y": 388
-      selectable: false
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom-iteration-start
-      width: 44
-      zIndex: 1002
-    - data:
-        code: |
-          import json
-
-          def main(item):
-              data = item
-              if isinstance(data, str):
-                  data = json.loads(data)
-
-              collection_name = str((data or {}).get("collection_name") or "").strip()
-              role = str((data or {}).get("role") or "").strip()
-              query_text = str((data or {}).get("query_text") or "").strip()
-
-              return {
-                  "collection_name": collection_name,
-                  "role": role,
-                  "query_text": query_text
-              }
-        code_language: python3
-        desc: ''
-        isInIteration: true
-        isIterationStart: true
-        iteration_id: '1775000000001'
-        outputs:
-          collection_name:
-            children:
-            type: string
-          query_text:
-            children:
-            type: string
-          role:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_解析当前任务
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000001'
-          - item
-          variable: item
-      height: 52
-      id: '1775000000002'
-      parentId: '1775000000001'
-      position:
-        x: 96
-        "y": 64
-      positionAbsolute:
-        x: 988.8392659156048
-        "y": 384
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-      zIndex: 1001
-    - data:
-        dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
-        isInIteration: true
-        iteration_id: '1775000000001'
-        metadata_filtering_conditions:
-          conditions:
-          - comparison_operator: is
-            id: ca7255e8-5829-4063-9def-1e9ec392f49b
-            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
-            name: collection_name
-            value: "{{#1775000000002.collection_name#}}"
-          logical_operator: and
-        metadata_filtering_mode: manual
-        multiple_retrieval_config:
-          reranking_enable: false
-          reranking_mode: weighted_score
-          top_k: 4
-          weights:
-            keyword_setting:
-              keyword_weight: 0.3
-            vector_setting:
-              embedding_model_name: nomic-embed-text:v1.5
-              embedding_provider_name: langgenius/ollama/ollama
-              vector_weight: 0.7
-            weight_type: customized
-        query_attachment_selector: []
-        query_variable_selector:
-        - '1775000000002'
-        - query_text
-        retrieval_mode: multiple
-        selected: false
-        title: 知识检索_当前CollectionSchema
-        type: knowledge-retrieval
-      height: 90
-      id: '1775000000003'
-      parentId: '1775000000001'
-      position:
-        x: 365.9999999999998
-        "y": 65
-      positionAbsolute:
-        x: 1258.8392659156045
-        "y": 385
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-      zIndex: 1002
-    - data:
-        code: |
-          import json
-
-          def main(collection_name: str, role: str, docs):
-              docs = docs or []
-              parts = []
-              for idx, item in enumerate(docs):
-                  title = str((item or {}).get("title") or "").strip()
-                  content = str((item or {}).get("content") or "").strip()
-                  metadata = (item or {}).get("metadata") or {}
-                  score = metadata.get("score", "")
-                  chunk = f"[{idx+1}] title={title} score={score}\n{content}".strip()
-                  if chunk:
-                      parts.append(chunk)
-
-              payload = {
-                  "collection_name": collection_name,
-                  "role": role,
-                  "context_text": "\n\n".join(parts)
-              }
-
-              return {
-                  "output": json.dumps(payload, ensure_ascii=False)
-              }
-        code_language: python3
-        desc: ''
-        isInIteration: true
-        iteration_id: '1775000000001'
-        outputs:
-          output:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_打包Schema结果
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000002'
-          - collection_name
-          value_type: string
-          variable: collection_name
-        - value_selector:
-          - '1775000000002'
-          - role
-          value_type: string
-          variable: role
-        - value_selector:
-          - '1775000000003'
-          - result
-          value_type: array[object]
