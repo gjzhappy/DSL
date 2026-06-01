@@ -1,332 +1,3 @@
-              y_field = str(visualization.get('y_field') or '').strip()
-              title = str(visualization.get('title') or '').strip()
-              series_name = str(visualization.get('series_name') or y_field or 'value').strip() or 'value'
-              if not x_field or not y_field:
-                  return {}
-              points = []
-              for row in rows:
-                  if not isinstance(row, dict):
-                      continue
-                  x = row.get(x_field)
-                  y = row.get(y_field)
-                  if x is None or y is None:
-                      continue
-                  points.append((x, y))
-              if not points:
-                  return {}
-              if chart_type == 'pie':
-                  return {
-                      'title': {'text': title or y_field},
-                      'tooltip': {'trigger': 'item'},
-                      'series': [{
-                          'name': series_name,
-                          'type': 'pie',
-                          'data': [{'name': str(x), 'value': y} for x, y in points],
-                      }],
-                  }
-              x_axis = [str(x) for x, _ in points]
-              y_axis = [y for _, y in points]
-              return {
-                  'title': {'text': title or y_field},
-                  'tooltip': {'trigger': 'axis'},
-                  'xAxis': {'type': 'category', 'data': x_axis},
-                  'yAxis': {'type': 'value'},
-                  'series': [{
-                      'name': series_name,
-                      'type': 'line' if chart_type == 'line' else 'bar',
-                      'data': y_axis,
-                  }],
-              }
-
-          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str):
-              if isinstance(semantic_plan, str):
-                  semantic_plan = json.loads(semantic_plan)
-              plan = _ensure_obj(semantic_plan, 'semantic_plan')
-              planner = _ensure_obj(planner, 'planner')
-              urls = _parse_query_urls(query_urls)
-              if not urls:
-                  raise ValueError('SN_MONGODB_QUERY_URLS is empty')
-
-              normalized_execution_plan = _normalize_plan(plan, planner, question)
-              stage_outputs = {}
-              stage_execution_trace = []
-
-              for stage in normalized_execution_plan.get('stages') or []:
-                  stage = _sanitize_stage_for_compile(stage)
-                  validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
-                  pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
-                  selected_url = ''
-                  request_id = uuid.uuid4().hex
-                  request_body = {}
-                  status_code = 0
-                  response_body = ''
-                  response_headers = {}
-                  rows = []
-                  reason = ''
-                  if (not skip_query) and (not pipeline):
-                      skip_query = True
-                      reason = 'empty pipeline'
-                  if not skip_query:
-                      selected_url = random.choice(urls)
-                      request_body = {
-                          'validated_ast': validated_ast or {},
-                          'pipeline_json': pipeline_json,
-                          'validation_message': 'ok',
-                          'request_id': request_id,
-                      }
-                      status_code, response_body, response_headers = _post_json(selected_url, request_body)
-                      if status_code < 200 or status_code >= 300:
-                          raise ValueError(f"stage `{stage['stage_name']}` query failed: status={status_code}, body={response_body[:1200]}")
-                      response_json = _read_json_text(response_body)
-                      rows = _find_best_rows(response_json)
-                  else:
-                      response_body = json.dumps({'msg': 'skip query', 'code': 200, 'data': {'rows': []}}, ensure_ascii=False)
-                      rows = []
-                      if not reason:
-                          reason = 'no join values from previous stage'
-
-                  trace_item = {
-                      'stage_name': stage['stage_name'],
-                      'collection': stage['collection'],
-                      'intent_type': stage['intent_type'],
-                      'sanitize_report': stage.get('sanitize_report') or {},
-                      'validated_ast': validated_ast,
-                      'pipeline': pipeline,
-                      'pipeline_json': pipeline_json,
-                      'selected_url': selected_url,
-                      'request_id': request_id,
-                      'query_request_body': request_body,
-                      'query_status_code': status_code,
-                      'query_response_body': response_body,
-                      'query_response_headers': response_headers,
-                      'rows': rows,
-                      'skipped': bool(skip_query),
-                      'skip_reason': reason,
-                  }
-                  stage_execution_trace.append(trace_item)
-                  stage_outputs[stage['stage_name']] = trace_item
-
-              execution_mode = normalized_execution_plan.get('execution_mode')
-              final_merge = normalized_execution_plan.get('final_merge') or {}
-              if execution_mode == 'multi_stage' and final_merge.get('left_stage') and final_merge.get('right_stage'):
-                  left_rows = (stage_outputs.get(final_merge['left_stage']) or {}).get('rows') or []
-                  right_rows = (stage_outputs.get(final_merge['right_stage']) or {}).get('rows') or []
-                  merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), final_merge.get('attach_as') or 'related_info')
-              else:
-                  first_stage_name = normalized_execution_plan['stages'][0]['stage_name']
-                  merged_rows = (stage_outputs.get(first_stage_name) or {}).get('rows') or []
-              visualization = normalized_execution_plan.get('visualization') or {}
-              chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'line', 'pie'})
-              chart_option = _build_echarts_option(visualization, merged_rows)
-              chart_x_field = str(chart_decision.get('x_field') or '')
-              chart_y_field = str(chart_decision.get('y_field') or '')
-              chart_enabled, chart_option, chart_markdown, _, _, _, _ = _build_chart_payload(visualization, merged_rows, {'bar', 'line', 'pie'}, normalized_execution_plan, question)
-              if chart_enabled and chart_option:
-                  if not bool((normalized_execution_plan.get('visualization') or {}).get('enabled')):
-                      normalized_execution_plan.setdefault('visualization', {})['enabled'] = True
-                  if not str((normalized_execution_plan.get('visualization') or {}).get('chart_type') or '').strip():
-                      normalized_execution_plan.setdefault('visualization', {})['chart_type'] = str(chart_decision.get('chart_type') or 'bar')
-              option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip()
-              option_series_name = ''
-              if isinstance((chart_option or {}).get('series'), list) and (chart_option or {}).get('series'):
-                  option_series_name = str((((chart_option or {}).get('series') or [{}])[0].get('name')) or '').strip()
-              chart_decision = {
-                  'enabled': bool(chart_enabled and chart_option),
-                  'chart_type': str(chart_decision.get('chart_type') or 'bar'),
-                  'x_field': str(chart_decision.get('x_field') or ''),
-                  'y_field': str(chart_decision.get('y_field') or ''),
-                  'title': option_title,
-                  'series_name': option_series_name or str(chart_decision.get('y_field') or '') or 'value',
-                  'reason': 'local echarts option generated' if bool(chart_enabled and chart_option) else '',
-              }
-              chart_payload = {
-                  'enabled': bool(chart_enabled and chart_option),
-                  'renderer': 'echarts',
-                  'library': 'echarts',
-                  'option': chart_option,
-                  'echarts_markdown': chart_markdown,
-                  'decision': chart_decision,
-              }
-
-              no_data_message = ''
-              if visualization.get('enabled') and not (merged_rows or []):
-                  no_data_message = 'æ¥è¯¢æåï¼ä½ç»æä¸ºç©ºï¼æ æ³çæå¾è¡¨ã'
-              final_payload = {
-                  'question': str(question or '').strip(),
-                  'normalized_execution_plan': normalized_execution_plan,
-                  'stage_execution_trace': stage_execution_trace,
-                  'merged_rows': merged_rows,
-                  'chart': chart_payload,
-                  'message': no_data_message,
-              }
-              final_response_summary = {
-                  'question': str(question or '').strip(),
-                  'execution_mode': str(normalized_execution_plan.get('execution_mode') or ''),
-                  'stage_count': len(normalized_execution_plan.get('stages') or []),
-                  'merged_row_count': len(merged_rows or []),
-                  'has_chart': bool((chart_payload or {}).get('enabled')),
-                  'chart_type': str(chart_decision.get('chart_type') or ''),
-                  'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
-              }
-
-              nl = chr(10)
-              message_text = str(no_data_message or '').strip()
-              error_text = ''
-              if isinstance(stage_execution_trace, list):
-                  for trace_item in reversed(stage_execution_trace):
-                      if isinstance(trace_item, dict):
-                          stage_error = str(trace_item.get('error') or '').strip()
-                          if stage_error:
-                              error_text = stage_error
-                              break
-              summary_text = str(final_response_summary.get('summary') or '').strip()
-              if not summary_text and (merged_rows or []):
-                  summary_text = '查询完成，共返回 ' + str(len(merged_rows or [])) + ' 条结果。'
-              chart_markdown = ''
-              if isinstance(chart_payload, dict):
-                  chart_markdown = str(chart_payload.get('echarts_markdown') or '').strip()
-              chart_enabled = isinstance(chart_payload, dict) and bool(chart_payload.get('enabled'))
-
-              if error_text or message_text:
-                  answer_text = '执行失败：' + (error_text or message_text)
-              elif chart_enabled and chart_markdown:
-                  answer_text = (
-                      '查询结果如下：'
-                      + nl
-                      + nl
-                      + chart_markdown
-                      + nl
-                      + nl
-                      + '结果摘要：'
-                      + nl
-                      + (summary_text or '已生成图表。')
-                  )
-              elif summary_text:
-                  answer_text = summary_text
-              elif merged_rows:
-                  answer_text = '查询完成，共返回 ' + str(len(merged_rows)) + ' 条结果。'
-              else:
-                  answer_text = '查询成功，但结果为空。'
-
-              return {
-                  'answer_text': answer_text,
-                  'question': str(question or '').strip(),
-                  'normalized_execution_plan': normalized_execution_plan,
-                  'last_validated_ast': ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {},
-                  'last_pipeline_json': str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or ''),
-                  'merged_rows': merged_rows,
-                  'chart': chart_payload,
-                  'chart_echarts_markdown': chart_markdown,
-                  'result_summary': summary_text,
-                  'last_error': error_text,
-                  'final_response_summary': final_response_summary,
-                  'normalized_execution_plan_json': json.dumps(normalized_execution_plan, ensure_ascii=False),
-                  'stage_execution_trace_json': json.dumps(stage_execution_trace, ensure_ascii=False),
-                  'final_response_body': json.dumps(final_payload, ensure_ascii=False),
-                  'final_response_summary': final_response_summary,
-                  'chart_enabled': 'true' if bool(chart_option) else 'false',
-                  'chart_type': str(chart_decision.get('chart_type') or '') if bool(chart_option) else '',
-                  'chart_data': json.dumps(chart_option, ensure_ascii=False) if bool(chart_option) else '',
-                  'chart_title': option_title,
-                  'chart_axis_x_title': str(chart_x_field or ''),
-                  'chart_axis_y_title': str(chart_y_field or ''),
-              }
-        code_language: python3
-        desc: 校验语义计划并编译第一阶段 Pipeline
-        outputs:
-          answer_text:
-            type: string
-          question:
-            type: string
-          normalized_execution_plan:
-            type: object
-          last_validated_ast:
-            type: object
-          last_pipeline_json:
-            type: string
-          merged_rows:
-            type: array[object]
-          chart:
-            type: object
-          chart_echarts_markdown:
-            type: string
-          result_summary:
-            type: string
-          last_error:
-            type: string
-          final_response_body:
-            children:
-            type: string
-          final_response_summary:
-            children:
-            type: object
-          normalized_execution_plan_json:
-            children:
-            type: string
-          stage_execution_trace_json:
-            children:
-            type: string
-          chart_enabled:
-            children:
-            type: string
-          chart_type:
-            children:
-            type: string
-          chart_data:
-            children:
-            type: string
-          chart_title:
-            children:
-            type: string
-          chart_axis_x_title:
-            children:
-            type: string
-          chart_axis_y_title:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_遍历语义计划并统一编译执行
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000013'
-          - normalized_semantic_plan_json
-          value_type: string
-          variable: semantic_plan
-        - value_selector:
-          - '1773975766025'
-          - structured_output
-          value_type: object
-          variable: planner
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1775000000005'
-          - schema_context
-          value_type: string
-          variable: schema_context
-        - value_selector:
-          - env
-          - SN_MONGODB_QUERY_URLS
-          value_type: string
-          variable: query_urls
-      height: 80
-      id: '1775000000007'
-      position:
-        x: 4090
-        "y": 280
-      positionAbsolute:
-        x: 4090
-        "y": 280
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
         authorization:
           config:
           type: no-auth
@@ -876,3 +547,474 @@
               seen_positions = set()
               for match in re.finditer(r'\{', raw):
                   pos = match.start()
+
+                  if pos in seen_positions:
+                      continue
+                  seen_positions.add(pos)
+                  parsed = _try_decode_object(raw[pos:])
+                  if parsed:
+                      obj, obj_text, tail = parsed
+                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
+              if candidates:
+                  candidates.sort(key=lambda item: (-item[0], item[1], -len(item[2])))
+                  return candidates[0][2]
+              raise ValueError(f'LLM返�内容不是合法JSON对象: {_truncate_text(raw, 1200)}')
+
+
+          def _pick_response(full_status_code, full_body, local_status_code, local_body):
+              local_body_text = '' if local_body is None else str(local_body).strip()
+              if local_body_text:
+                  return int(local_status_code or 0), local_body, 'local_llm'
+              return int(full_status_code or 0), full_body, 'full_llm'
+
+
+          def _contains_chart_intent(question: str):
+              q = str(question or '')
+              return any(k in q for k in ['柱状图', '折线图', '饼图', '图表', '可视化'])
+
+
+          def _detect_relative_days(question_text):
+              q = str(question_text or '')
+              if any(t in q for t in ['近7天', '最近7天']):
+                  return 7
+              if any(t in q for t in ['过去一个月', '近一个月', '最近一个月', '最近30天', '近30天']):
+                  return 30
+              return 0
+
+
+          def _is_abs_date_between_filter(item):
+              if not isinstance(item, dict):
+                  return False
+              if str(item.get('field') or '').strip() != 'created_at':
+                  return False
+              if str(item.get('op') or '').strip() != 'between':
+                  return False
+              value = item.get('value')
+              if not isinstance(value, list) or len(value) != 2:
+                  return False
+              return all(isinstance(v, dict) and '$date' in v for v in value)
+
+
+          def _fill_count_metric_field(stage):
+              if not isinstance(stage, dict):
+                  return ''
+              metric_function = str(stage.get('metric_function') or '').strip().lower()
+              if metric_function != 'count':
+                  return ''
+              if str(stage.get('metric_field') or '').strip():
+                  return ''
+              primary_collection = str(stage.get('primary_collection') or '').strip().lower()
+              preferred = 'order_id' if primary_collection == 'orders' else '_id'
+              stage['metric_field'] = preferred
+              return f'count_metric_field_filled:{preferred}'
+
+
+          def _validate_and_normalize_semantic_execution_plan(plan):
+              if not isinstance(plan, dict):
+                  return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+              execution_plan = plan.get('execution_plan')
+              stages = execution_plan.get('stages') if isinstance(execution_plan, dict) else None
+              if not isinstance(stages, list) or not stages:
+                  return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+              normalized = dict(plan)
+              normalized_execution_plan = dict(execution_plan)
+              normalized_stages = []
+              warnings = []
+              for idx, raw_stage in enumerate(stages):
+                  if not isinstance(raw_stage, dict):
+                      return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+                  stage = dict(raw_stage)
+                  stage.setdefault('stage_id', f'stage{idx + 1}')
+                  stage.setdefault('stage_type', 'primary_query')
+                  if not str(stage.get('primary_collection') or '').strip() or not str(stage.get('intent_type') or '').strip():
+                      return {}, False, 'INVALID_SEMANTIC_PLAN_SCHEMA', ''
+                  warn = _fill_count_metric_field(stage)
+                  if warn:
+                      warnings.append(warn)
+                  normalized_stages.append(stage)
+              normalized_execution_plan['stages'] = normalized_stages
+              normalized['execution_plan'] = normalized_execution_plan
+              return normalized, True, '', ';'.join(warnings)
+
+
+          def main(full_status_code, full_body, local_status_code, local_body, question=''):
+              code, body, source = _pick_response(full_status_code, full_body, local_status_code, local_body)
+              payload = None
+              result = ''
+              try:
+                  if code < 200 or code >= 300:
+                      result = _truncate_text(body, 4000)
+                  elif not body:
+                      result = ''
+                  else:
+                      resp_json = _read_json_text(body)
+                      payload = resp_json
+                      result = (_extract_chat_text(resp_json) if resp_json else '') or _truncate_text(body, 4000)
+              except Exception as e:
+                  result = _truncate_text(f"{body}\n\nexception={e}", 4000)
+              semantic_plan_raw_text = result
+              parsed = None
+              json_parse_ok = False
+              parse_error = ''
+              try:
+                  semantic_plan_text = _extract_json_object_text(result)
+                  semantic_plan_raw_text = semantic_plan_text or result
+                  parsed = json.loads(semantic_plan_text)
+                  json_parse_ok = True
+              except Exception as e:
+                  parse_error = str(e)
+              parsed_keys = list(parsed.keys()) if isinstance(parsed, dict) else []
+              normalized, plan_valid, schema_error, warning = _validate_and_normalize_semantic_execution_plan(parsed)
+              normalizer_error = '' if plan_valid else (schema_error or 'INVALID_SEMANTIC_PLAN_SCHEMA')
+              stages = ((normalized.get('execution_plan') or {}).get('stages') or []) if isinstance(normalized, dict) else []
+              content_preview = str(semantic_plan_raw_text or '')[:1000]
+              debug_summary = {
+                  'source': source,
+                  'http_status_code': code,
+                  'body_type': type(payload).__name__ if payload is not None else 'none',
+                  'content_extracted': bool(result),
+                  'content_length': len(str(semantic_plan_raw_text or '')),
+                  'content_preview': content_preview,
+                  'json_parse_ok': json_parse_ok,
+                  'parsed_type': type(parsed).__name__ if parsed is not None else 'none',
+                  'parsed_keys': parsed_keys,
+                  'plan_valid': plan_valid,
+                  'has_execution_plan': isinstance(parsed, dict) and isinstance(parsed.get('execution_plan'), dict),
+                  'has_stages': bool(stages),
+                  'stages_count': len(stages),
+                  'normalized': plan_valid,
+                  'normalizer_warning': warning,
+                  'normalizer_error': normalizer_error,
+                  'content_protocol': 'semantic_execution_plan',
+                  'error': parse_error,
+              }
+              answer_mode = ''
+              needs_chart = False
+              chart_request = {}
+              if isinstance(normalized, dict):
+                  answer_mode = str(normalized.get('answer_mode') or '').strip()
+                  needs_chart = bool(normalized.get('needs_chart'))
+                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
+              if isinstance(parsed, dict):
+                  answer_mode = answer_mode or str(parsed.get('answer_mode') or '').strip()
+                  needs_chart = needs_chart or bool(parsed.get('needs_chart'))
+                  if not chart_request and isinstance(parsed.get('chart_request'), dict):
+                      chart_request = parsed.get('chart_request')
+              return {
+                  'semantic_plan_json': json.dumps(parsed if isinstance(parsed, dict) else {}, ensure_ascii=False),
+                  'normalized_semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
+                  'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
+                  'plan_valid': plan_valid,
+                  'legacy_ast_detected': False,
+                  'normalizer_warning': warning,
+                  'normalizer_error': normalizer_error,
+                  'parse_error': parse_error,
+                  'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
+                  'answer_mode': answer_mode,
+                  'needs_chart': needs_chart,
+                  'chart_request_json': json.dumps(chart_request, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
+        outputs:
+          semantic_plan_json:
+            children:
+            type: string
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          plan_valid:
+            children:
+            type: boolean
+          legacy_ast_detected:
+            children:
+            type: boolean
+          normalizer_warning:
+            children:
+            type: string
+          normalizer_error:
+            children:
+            type: string
+          debug_summary_json:
+            children:
+            type: string
+          semantic_plan_raw_text:
+            children:
+            type: string
+          parse_error:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+          needs_chart:
+            children:
+            type: boolean
+          chart_request_json:
+            children:
+            type: string
+        selected: true
+        title: 代码执行_提取语义计划结果
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000012'
+          - status_code
+          value_type: number
+          variable: full_status_code
+        - value_selector:
+          - '1775000000012'
+          - body
+          value_type: string
+          variable: full_body
+        - value_selector:
+          - '1775000000019'
+          - status_code
+          value_type: number
+          variable: local_status_code
+        - value_selector:
+          - '1775000000019'
+          - body
+          value_type: string
+          variable: local_body
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+      height: 96
+      id: '1775000000013'
+      position:
+        x: 3776.6804920892264
+        "y": 280
+      positionAbsolute:
+        x: 3776.6804920892264
+        "y": 280
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: e9d1dd42-24bd-49fd-a935-c52d4737ce24
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1775000000013'
+            - plan_valid
+          id: 'true'
+          logical_operator: and
+        desc: 仅当语义计划规范化成功且 execution_plan.stages 非空时进入编译执行
+        selected: false
+        title: 条件分支_语义计划是否有效
+        type: if-else
+      height: 148
+      id: '1775000000020'
+      position:
+        x: 4088
+        "y": 280
+      positionAbsolute:
+        x: 4088
+        "y": 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: "{{#1776000000012.final_answer_markdown#}}"
+        desc: 语义计划无效时直接返回错误，避免空计划进入编译节点
+        selected: false
+        title: Answer_语义计划无效
+        type: answer
+        variables: []
+      height: 140
+      id: '1775000000021'
+      position:
+        x: 4400
+        "y": 520
+      positionAbsolute:
+        x: 4400
+        "y": 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 19f817f4-cd31-49fb-a97e-9aebd2531262
+            value: 'true'
+            varType: string
+            variable_selector:
+            - env
+            - ENABLE_FULL_LLM
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_是否启用满血LLM
+        type: if-else
+      height: 124
+      id: '1775000000014'
+      position:
+        x: 2210
+        "y": 320
+      positionAbsolute:
+        x: 2210
+        "y": 320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ad4255b8-c185-494f-a717-76ba66eb92c5
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000011'
+            - request_enabled
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血请求是否可用
+        type: if-else
+      height: 148
+      id: '1775000000015'
+      position:
+        x: 2524
+        "y": 258.2072454929678
+      positionAbsolute:
+        x: 2524
+        "y": 258.2072454929678
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          def _truncate_text(text, limit=1200):
+              text = '' if text is None else str(text)
+              return text if len(text) <= limit else text[:limit] + '...'
+
+
+          def main(status_code, body):
+              code = int(status_code or 0)
+              body_text = '' if body is None else str(body).strip()
+              ok = 200 <= code < 300 and bool(body_text)
+              return {
+                  'full_http_ok': 'true' if ok else 'false',
+                  'full_http_error': '' if ok else f"status={code}, body={_truncate_text(body, 1200)}",
+              }
+        code_language: python3
+        desc: 根据满血LLM HTTP状态决定是否�退本地LLM
+        outputs:
+          full_http_error:
+            children:
+            type: string
+          full_http_ok:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_判断满血LLM状态
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000012'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1775000000012'
+          - body
+          value_type: string
+          variable: body
+      height: 96
+      id: '1775000000016'
+      position:
+        x: 3150
+        "y": 190
+      positionAbsolute:
+        x: 3150
+        "y": 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: 8a92198b-df4d-4bcf-8338-fa4f5b701933
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000016'
+            - full_http_ok
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血LLM是否成功
+        type: if-else
+      height: 148
+      id: '1775000000017'
+      position:
+        x: 3465
+        "y": 190
+      positionAbsolute:
+        x: 3465
+        "y": 190
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 满血LLM关闭或失败时，使用本地模型生成AST
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 2048
+            temperature: 0
+          mode: chat
+          name: qwen3:32b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: local-plan-system
+          role: system
+          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
+        - id: local-plan-user
+          role: user
+          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            required:
+            - execution_plan
+            properties:
+              execution_plan:
+                type: object
+                required:
+                - stages
+                properties:

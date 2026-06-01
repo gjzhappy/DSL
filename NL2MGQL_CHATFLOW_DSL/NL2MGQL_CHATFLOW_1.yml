@@ -1,54 +1,3 @@
-                      f"当前�标 collection: {name}\n"
-                      "请检索该 collection 的 schema、字段含义、典型过滤字段、聚合指标、"
-                      "与其他 collection 的关联线索、以及任何能帮助生成 Mongo 聚合 AST 的信息。"
-                  )
-                  collection_tasks.append({
-                      "collection_name": name,
-                      "role": role,
-                      "query_text": query_text
-                  })
-
-              return {
-                  "result": ordered,
-                  "collection_tasks": collection_tasks,
-                  "planner_json": json.dumps(planner, ensure_ascii=False, indent=2)
-              }
-        code_language: python3
-        desc: 构建待检索的 collection 任务
-        outputs:
-          collection_tasks:
-            children:
-            type: array[object]
-          planner_json:
-            children:
-            type: string
-          result:
-            children:
-            type: array[string]
-        selected: false
-        title: 代码执行_构建检索任务
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1773975766025'
-          - structured_output
-          value_type: object
-          variable: planner
-      height: 80
-      id: '1774083951307'
-      position:
-        x: 561.0104777110068
-        "y": 320
-      positionAbsolute:
-        x: 561.0104777110068
-        "y": 320
-      selected: false
-      sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
@@ -554,7 +503,11 @@
           from datetime import datetime, timedelta, timezone
 
           SGT = timezone(timedelta(hours=8))
-          DEFAULT_TIMEOUT_SECONDS = 600
+          DEFAULT_TIMEOUT_SECONDS = 60
+
+          FORBIDDEN_MONGO_TOKENS = {'$out','$merge','$function','$where','drop','delete','update','insert'}
+          MAX_RETURN_ROWS = 200
+          MAX_RESULT_JSON_CHARS = 200000
 
 
           def _read_json_text(value):
@@ -876,3 +829,192 @@
 
           def _detect_visualization_intent(query_text):
               text = str(query_text or '').strip()
+
+              if not text:
+                  return {'enabled': False, 'chart_type': ''}
+              has_generic = any(k in text for k in ['图表', '可视化'])
+              has_bar = any(k in text for k in ['柱状图', '条形图', '对比图'])
+              has_line = any(k in text for k in ['折线图', '趋势图'])
+              has_pie = '饼图' in text
+              enabled = has_generic or has_bar or has_line or has_pie
+              chart_type = ''
+              if has_bar:
+                  chart_type = 'bar'
+              elif has_line:
+                  chart_type = 'line'
+              elif has_pie:
+                  chart_type = 'pie'
+              elif has_generic:
+                  chart_type = 'bar'
+              return {'enabled': enabled, 'chart_type': chart_type}
+
+
+          def _is_effectively_empty_stage(stage):
+              if not isinstance(stage, dict):
+                  return True
+              intent = str(stage.get('intent_type') or '').strip()
+              filters = stage.get('filters') or []
+              group_fields = stage.get('group_fields') or []
+              projection_fields = stage.get('projection_fields') or []
+              metric_function = str(stage.get('metric_function') or '').strip()
+              join_source_field = str(stage.get('join_source_field') or '').strip()
+              join_target_field = str(stage.get('join_target_field') or '').strip()
+              limit = int(stage.get('limit') or 0)
+              tr_mode = str(((stage.get('time_range') or {}).get('mode')) or 'none').strip() or 'none'
+              return (
+                  intent in {'', 'detail_query'}
+                  and not filters
+                  and not group_fields
+                  and not projection_fields
+                  and not metric_function
+                  and not join_source_field
+                  and not join_target_field
+                  and tr_mode == 'none'
+                  and limit == 0
+              )
+
+
+          def _coerce_semantic_execution_plan(plan):
+              if not isinstance(plan, dict):
+                  return {}
+              root = plan
+              execution_plan = root.get('execution_plan')
+              if isinstance(execution_plan, dict):
+                  coerced = dict(execution_plan)
+                  for key in ('needs_chart', 'chart_request', 'answer_mode', 'visualization'):
+                      if key in root and key not in coerced:
+                          coerced[key] = root.get(key)
+              else:
+                  coerced = dict(root)
+              stages = coerced.get('stages') if isinstance(coerced.get('stages'), list) else []
+              normalized_stages = []
+              for idx, raw in enumerate(stages):
+                  if not isinstance(raw, dict):
+                      normalized_stages.append(raw)
+                      continue
+                  stage = dict(raw)
+                  stage['stage_name'] = str(stage.get('stage_name') or stage.get('stage_id') or f'stage{idx + 1}').strip()
+                  stage['collection'] = str(stage.get('collection') or stage.get('primary_collection') or coerced.get('primary_collection') or '').strip()
+                  intent_type = str(stage.get('intent_type') or '').strip()
+                  intent = str(stage.get('intent') or '').strip().lower()
+                  if not intent_type:
+                      if intent in {'find', 'detail', 'detail_query'}:
+                          intent_type = 'detail_query'
+                      elif intent in {'aggregate', 'aggregation', 'summary', 'aggregate_summary'}:
+                          intent_type = 'aggregate_summary'
+                      elif intent in {'group_top_entity', 'top_entity'}:
+                          intent_type = 'group_top_entity'
+                      elif intent in {'group_top_record', 'top_record'}:
+                          intent_type = 'group_top_record'
+                      elif intent in {'enrich_related', 'join'}:
+                          intent_type = 'enrich_related'
+                      else:
+                          has_group = bool(stage.get('group_by') or stage.get('group_fields'))
+                          has_metric = bool(stage.get('metrics') or stage.get('metric_function'))
+                          intent_type = 'aggregate_summary' if (has_group or has_metric) else 'detail_query'
+                      stage['intent_type'] = intent_type
+                  if not stage.get('group_fields') and isinstance(stage.get('group_by'), list):
+                      group_fields = []
+                      for item in stage.get('group_by') or []:
+                          if isinstance(item, str):
+                              group_fields.append(item)
+                          elif isinstance(item, dict):
+                              group_fields.append(str(item.get('field') or item.get('name') or item.get('alias') or '').strip())
+                      stage['group_fields'] = [field for field in group_fields if field]
+                  metrics = stage.get('metrics') if isinstance(stage.get('metrics'), list) else []
+                  if metrics and not stage.get('metric_function'):
+                      metric = metrics[0] if isinstance(metrics[0], dict) else {'function': str(metrics[0])}
+                      stage['metric_function'] = str(metric.get('function') or metric.get('op') or metric.get('name') or 'count').strip()
+                      stage['metric_field'] = str(metric.get('field') or '').strip()
+                      stage['metric_alias'] = str(metric.get('alias') or metric.get('name') or stage['metric_function']).strip()
+                  if not stage.get('projection_fields') and isinstance(stage.get('projection'), list):
+                      stage['projection_fields'] = [str(item.get('field') if isinstance(item, dict) else item).strip() for item in stage.get('projection') or [] if str(item.get('field') if isinstance(item, dict) else item).strip()]
+                  normalized_stages.append(stage)
+              coerced['stages'] = normalized_stages
+              if not str(coerced.get('primary_collection') or '').strip() and normalized_stages:
+                  first = normalized_stages[0] if isinstance(normalized_stages[0], dict) else {}
+                  coerced['primary_collection'] = str(first.get('collection') or first.get('primary_collection') or '').strip()
+              if 'collections' not in coerced:
+                  collections = []
+                  for stage in normalized_stages:
+                      if isinstance(stage, dict) and str(stage.get('collection') or '').strip():
+                          collections.append(str(stage.get('collection')).strip())
+                  coerced['collections'] = list(dict.fromkeys(collections))
+              chart_request = coerced.get('chart_request') if isinstance(coerced.get('chart_request'), dict) else {}
+              if coerced.get('needs_chart') and chart_request and not isinstance(coerced.get('visualization'), dict):
+                  coerced['visualization'] = {
+                      'enabled': True,
+                      'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or '').strip(),
+                      'x_field': str(chart_request.get('x_field') or chart_request.get('x_axis') or '').strip(),
+                      'y_field': str(chart_request.get('y_field') or chart_request.get('y_axis') or '').strip(),
+                      'title': str(chart_request.get('title') or '').strip(),
+                  }
+              return coerced
+
+
+          def _normalize_plan(plan, planner, question=''):
+              plan = _coerce_semantic_execution_plan(plan)
+              planner_primary = _ensure_non_empty_string(planner.get('primary_collection'), 'planner.primary_collection')
+              planner_related = set(_ensure_string_list(planner.get('related_collections') or [], 'planner.related_collections'))
+              execution_mode = str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage'
+              primary_collection = _ensure_non_empty_string(plan.get('primary_collection') or planner_primary, 'execution_plan.primary_collection')
+              if primary_collection != planner_primary:
+                  raise ValueError('execution_plan.primary_collection must match planner.primary_collection')
+              collections = _ensure_string_list(plan.get('collections') or [primary_collection], 'execution_plan.collections')
+              if primary_collection not in collections:
+                  collections = [primary_collection] + [c for c in collections if c != primary_collection]
+              for c in collections:
+                  if c != primary_collection:
+                      planner_related.add(c)
+
+              raw_stages = plan.get('stages') or []
+              if not isinstance(raw_stages, list) or not raw_stages:
+                  raise ValueError('execution_plan.stages must be a non-empty array')
+              for raw in raw_stages:
+                  if not isinstance(raw, dict):
+                      continue
+                  stage_collection = str(raw.get('collection') or '').strip()
+                  if stage_collection and stage_collection not in collections:
+                      collections.append(stage_collection)
+
+              normalized_stages = []
+              seen_stage_names = set()
+              allowed_intents = {'detail_query', 'aggregate_summary', 'group_top_entity', 'group_top_record', 'enrich_related'}
+              for idx, raw in enumerate(raw_stages):
+                  if not isinstance(raw, dict):
+                      raise ValueError(f'stages[{idx}] must be an object')
+                  stage_name = _ensure_non_empty_string(raw.get('stage_name') or f'stage{idx + 1}', f'stages[{idx}].stage_name')
+                  if stage_name in seen_stage_names:
+                      raise ValueError(f'duplicate stage_name: {stage_name}')
+                  seen_stage_names.add(stage_name)
+                  collection = _ensure_non_empty_string(raw.get('collection'), f'stages[{idx}].collection')
+                  if collection not in collections:
+                      collections.append(collection)
+                  if collection != primary_collection and collection not in planner_related:
+                      planner_related.add(collection)
+                  intent_type = _ensure_non_empty_string(raw.get('intent_type'), f'stages[{idx}].intent_type')
+                  if intent_type not in allowed_intents:
+                      raise ValueError(f'unsupported intent_type: {intent_type}')
+                  default_limit = 0 if intent_type in {'group_top_entity', 'group_top_record'} else 20
+                  limit = int(raw.get('limit') if raw.get('limit') is not None else default_limit)
+                  if limit < 0:
+                      raise ValueError(f'stages[{idx}].limit must be >= 0')
+                  rank_n = int(raw.get('rank_n') or 0)
+                  if intent_type in {'group_top_entity', 'group_top_record'} and rank_n <= 0:
+                      rank_n = 1
+                  stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
+                  stage_time_range = _force_relative_month_time_range(question, stage_time_range, collection)
+                  stage = {
+                      'stage_name': stage_name,
+                      'collection': collection,
+                      'depends_on': str(raw.get('depends_on') or '').strip(),
+                      'intent_type': intent_type,
+                      'time_range': stage_time_range,
+                      'group_fields': _ensure_string_list(raw.get('group_fields') or [], f'stages[{idx}].group_fields'),
+                      'entity_field': str(raw.get('entity_field') or '').strip(),
+                      'metric_function': str(raw.get('metric_function') or '').strip(),
+                      'metric_field': str(raw.get('metric_field') or '').strip(),
+                      'metric_alias': str(raw.get('metric_alias') or '').strip(),
+                      'rank_n': rank_n,
+                      'rank_order_field': str(raw.get('rank_order_field') or '').strip(),
+                      'rank_direction': str(raw.get('rank_direction') or '').strip() or 'desc',
