@@ -344,6 +344,11 @@
           value_type: object
           variable: last_normalized_execution_plan
         - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: last_normalized_semantic_plan_json
+        - value_selector:
           - '1775000000007'
           - last_validated_ast
           value_type: object
@@ -422,7 +427,7 @@
               return []
 
 
-          def main(last_question: str, last_normalized_execution_plan, last_merged_rows, last_chart, last_chart_echarts_markdown: str, last_result_summary: str):
+          def main(last_question: str, last_normalized_semantic_plan_json: str, last_normalized_execution_plan, last_merged_rows, last_chart, last_chart_echarts_markdown: str, last_result_summary: str):
               rows = _rows(last_merged_rows)
               result_fields = []
               if rows:
@@ -432,7 +437,7 @@
                           if key not in seen:
                               seen.append(key)
                   result_fields = seen
-              last_plan_json = _safe_json(last_normalized_execution_plan)
+              last_plan_json = _safe_json(last_normalized_semantic_plan_json)
               last_rows_json = json.dumps(rows, ensure_ascii=False)
               last_chart_json = _safe_json(last_chart)
               has_last_context = bool(str(last_plan_json or '').strip() or rows)
@@ -467,6 +472,11 @@
           - last_question
           value_type: string
           variable: last_question
+        - value_selector:
+          - conversation
+          - last_normalized_semantic_plan_json
+          value_type: string
+          variable: last_normalized_semantic_plan_json
         - value_selector:
           - conversation
           - last_normalized_execution_plan

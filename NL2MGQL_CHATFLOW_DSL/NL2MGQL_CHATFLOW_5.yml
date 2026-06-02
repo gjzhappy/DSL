@@ -330,7 +330,7 @@
             上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
             上一轮图表请求：{{#conversation.last_chart#}}
             图表修改意图：{{#1776000000004.chart_modification_json#}}
-            上一轮语义计划：{{#conversation.last_normalized_execution_plan#}}
+            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
         selected: false
         structured_output:
           schema:
@@ -595,7 +595,7 @@
           text: |-
             当前用户问题：{{#sys.query#}}
             上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
-            上一轮语义计划：{{#conversation.last_normalized_execution_plan#}}
+            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
             上一轮最终摘要：{{#conversation.last_result_summary#}}
             分析关注点：{{#1776000000004.analysis_focus#}}
         selected: false
@@ -800,13 +800,10 @@
         prompt_template:
         - id: replan-system
           role: system
-          text: 你是语义计划重规划器。只输出 JSON 对象，不要 markdown。必须输出完整语义计划；未被用户明确修改的字段必须保持上一轮不变。
+          text: "{{#1776000000027.replan_system_prompt#}}"
         - id: replan-user
           role: user
-          text: |-
-            当前问题：{{#sys.query#}}
-            上一轮计划：{{#conversation.last_normalized_execution_plan#}}
-            Schema上下文：{{#1775000000005.schema_context#}}
+          text: "{{#1776000000027.replan_user_prompt#}}"
         selected: false
         structured_output:
           schema:
@@ -814,6 +811,9 @@
             additionalProperties: true
             required:
             - execution_plan
+            - needs_chart
+            - chart_request
+            - answer_mode
             properties:
               execution_plan:
                 type: object
@@ -823,6 +823,10 @@
                 type: object
               answer_mode:
                 type: string
+              replan_error:
+                type: string
+              clarify_suggestion:
+                type: string
         structured_output_enabled: true
         title: LLM_基于上一轮计划重新生成语义计划
         type: llm
@@ -831,11 +835,11 @@
       height: 98
       id: '1776000000020'
       position:
-        x: 4000
-        "y": 180
+        x: 5200
+        "y": 520
       positionAbsolute:
-        x: 4000
-        "y": 180
+        x: 5200
+        "y": 520
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -843,38 +847,91 @@
       width: 242
     - data:
         code: |
-          import json,re
-          PROTECT=['primary_collection','group_fields','metric_function','metric_field','metric_alias','filters','time_range','sort','limit','chart_request']
+          import json, re
+          PROTECT=['primary_collection','related_collections','group_fields','metric_function','metric_field','metric_alias','filters','time_range','sort','limit','needs_chart','chart_request','answer_mode']
 
           def _loads(v):
               if isinstance(v,dict): return v
               if isinstance(v,str) and v.strip():
-                  try: return json.loads(v)
+                  try:
+                      x=json.loads(v); return x if isinstance(x,dict) else {}
                   except Exception: return {}
               return {}
 
-          def main(old_plan, new_plan, current_question: str):
-              old=_loads(old_plan); new=_loads(new_plan) or old; warnings=[]; q=str(current_question or '')
-              # conservative: if question does not mention obvious field-changing words, preserve core collection/metric/group fields
-              mutable=[]
-              if any(w in q for w in ['时间','近','最近','过去']): mutable.append('time_range')
-              if any(w in q.lower() for w in ['top','前','limit']): mutable.append('limit')
-              if any(w in q for w in ['排序','升序','降序']): mutable.append('sort')
-              if any(w in q for w in ['图','饼图','折线图','柱状图']): mutable.append('chart_request')
-              os=((old.get('execution_plan') or {}).get('stages') or [{}])[0] if old else {}
-              ns=((new.get('execution_plan') or {}).get('stages') or [{}])[0] if new else {}
+          def _list(v):
+              if isinstance(v,list): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(v); return x if isinstance(x,list) else []
+                  except Exception: return []
+              return []
+
+          def _first_stage(plan):
+              stages=((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan,dict) else []
+              return stages[0] if isinstance(stages,list) and stages and isinstance(stages[0],dict) else {}
+
+          def _set_stage(plan, stage):
+              if not isinstance(plan.get('execution_plan'),dict): plan['execution_plan']={}
+              stages=plan['execution_plan'].get('stages')
+              if not isinstance(stages,list) or not stages: stages=[{}]
+              stages[0].update(stage); plan['execution_plan']['stages']=stages
+
+          def _allowed_fields(question, query_refinement_json, changed_fields_json):
+              text=(str(question or '')+' '+json.dumps(_loads(query_refinement_json),ensure_ascii=False)).lower()
+              allowed=set(_list(changed_fields_json))
+              rules={'time_range':['时间','近','最近','过去','天','月','年'],'filters':['筛选','过滤','条件','只看','排除','口径'],'group_fields':['分组','按','维度','口径','厂商','供应商','vendor'],'metric_field':['指标','金额','数量','统计','真实'],'metric_function':['求和','平均','最大','最小','计数','count','sum','avg'],'metric_alias':['别名'],'sort':['排序','升序','降序'],'limit':['top','前','limit'],'chart_request':['图','柱状图','折线图','饼图','可视化'],'needs_chart':['图','可视化'],'answer_mode':['分析','解释','明细'],'primary_collection':['换成','改查','查询对象','collection'],'related_collections':['关联','join','补充']}
+              for field, keys in rules.items():
+                  if any(k.lower() in text for k in keys): allowed.add(field)
+              return allowed
+
+          def main(old_normalized_semantic_plan_json: str, replanned_normalized_semantic_plan_json: str, current_question: str, query_refinement_json: str, changed_fields_json: str, refine_schema_context: str, patch_reason: str, replan_valid=True, replan_error: str=''):
+              old=_loads(old_normalized_semantic_plan_json); new=_loads(replanned_normalized_semantic_plan_json)
+              if str(replan_valid).lower() in {'false','0','no'} or not new:
+                  return {'normalized_semantic_plan_json':json.dumps(old,ensure_ascii=False),'guard_valid':False,'guard_warning':'','guard_error':str(replan_error or '重规划结果无效'),'guard_changed_fields_json':'[]','guard_rollback_fields_json':'[]','guard_debug_json':json.dumps({'fallback':'old_plan'},ensure_ascii=False)}
+              if not old:
+                  return {'normalized_semantic_plan_json':'','guard_valid':False,'guard_warning':'','guard_error':'缺少上一轮归一化语义计划，无法进行差异保护','guard_changed_fields_json':'[]','guard_rollback_fields_json':'[]','guard_debug_json':'{}'}
+              os=_first_stage(old); ns=_first_stage(new); allowed=_allowed_fields(current_question,query_refinement_json,changed_fields_json)
+              changed=[]; rollback=[]; warnings=[]; errors=[]
               for k in PROTECT:
-                  if k in ['chart_request']:
-                      if k not in mutable and old.get(k) and new.get(k)!=old.get(k): new[k]=old.get(k); warnings.append(k)
-                  elif k not in mutable and os.get(k) not in (None,'',[],{}) and ns.get(k)!=os.get(k): ns[k]=os.get(k); warnings.append(k)
-              return {'normalized_semantic_plan_json':json.dumps(new,ensure_ascii=False),'plan_guard_warning':json.dumps(warnings,ensure_ascii=False)}
+                  if k in ['needs_chart','chart_request','answer_mode']:
+                      ov,nv=old.get(k),new.get(k)
+                      if nv!=ov:
+                          changed.append(k)
+                          if k not in allowed and ov not in (None,'',[],{}): new[k]=ov; rollback.append(k)
+                  else:
+                      ov,nv=os.get(k),ns.get(k)
+                      if nv!=ov:
+                          changed.append(k)
+                          if k not in allowed and ov not in (None,'',[],{}): ns[k]=ov; rollback.append(k)
+              for k in ['execution_plan','needs_chart','chart_request','answer_mode']:
+                  if k not in new and k in old: new[k]=old[k]; warnings.append('补齐缺失字段:'+k)
+              _set_stage(new,ns)
+              valid=bool(new.get('execution_plan') and ((new.get('execution_plan') or {}).get('stages')))
+              if not valid: errors.append('guard 后 semantic plan 缺少 execution_plan.stages')
+              if rollback: warnings.append('已回滚未授权漂移字段: '+','.join(sorted(set(rollback))))
+              return {'normalized_semantic_plan_json':json.dumps(new,ensure_ascii=False),'guard_valid':valid,'guard_warning':'; '.join(warnings),'guard_error':'; '.join(errors),'guard_changed_fields_json':json.dumps(sorted(set(changed)),ensure_ascii=False),'guard_rollback_fields_json':json.dumps(sorted(set(rollback)),ensure_ascii=False),'guard_debug_json':json.dumps({'allowed_fields':sorted(allowed),'patch_reason':patch_reason},ensure_ascii=False)}
         code_language: python3
-        desc: 比较 old_plan/new_plan/current_question，回滚明显漂移字段。
+        desc: refine_query full replan 差异保护：比较 old/new semantic plan，回滚未授权漂移字段，输出统一 normalized_semantic_plan_json。
         outputs:
           normalized_semantic_plan_json:
             children:
             type: string
-          plan_guard_warning:
+          guard_valid:
+            children:
+            type: boolean
+          guard_warning:
+            children:
+            type: string
+          guard_error:
+            children:
+            type: string
+          guard_changed_fields_json:
+            children:
+            type: string
+          guard_rollback_fields_json:
+            children:
+            type: string
+          guard_debug_json:
             children:
             type: string
         selected: false
@@ -882,28 +939,58 @@
         type: code
         variables:
         - value_selector:
-          - conversation
-          - last_normalized_execution_plan
-          value_type: object
-          variable: old_plan
+          - '1776000000027'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
         - value_selector:
-          - '1776000000020'
-          - structured_output
-          value_type: object
-          variable: new_plan
+          - '1776000000028'
+          - replanned_normalized_semantic_plan_json
+          value_type: string
+          variable: replanned_normalized_semantic_plan_json
         - value_selector:
           - sys
           - query
           value_type: string
           variable: current_question
+        - value_selector:
+          - '1776000000027'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000027'
+          - changed_fields_json
+          value_type: string
+          variable: changed_fields_json
+        - value_selector:
+          - '1776000000027'
+          - schema_context_for_replan
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000027'
+          - patch_reason
+          value_type: string
+          variable: patch_reason
+        - value_selector:
+          - '1776000000028'
+          - replan_valid
+          value_type: boolean
+          variable: replan_valid
+        - value_selector:
+          - '1776000000028'
+          - replan_error
+          value_type: string
+          variable: replan_error
       height: 80
       id: '1776000000021'
       position:
-        x: 4400
-        "y": 180
+        x: 6000
+        "y": 520
       positionAbsolute:
-        x: 4400
-        "y": 180
+        x: 6000
+        "y": 520
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1022,25 +1109,35 @@
               })
               return planner
 
-          def main(turn_intent: str, patch_applied, original_normalized_semantic_plan_json: str, patched_normalized_semantic_plan_json: str, guarded_normalized_semantic_plan_json: str, original_planner, original_schema_context: str):
+          def main(turn_intent: str, patch_applied, original_normalized_semantic_plan_json: str, patched_normalized_semantic_plan_json: str, guarded_normalized_semantic_plan_json: str, original_planner, original_schema_context: str, refine_schema_context: str, guard_valid=True, guard_error: str=''):
               intent = str(turn_intent or '').strip()
               if intent == 'refine_query' and _bool(patch_applied):
                   selected_json = patched_normalized_semantic_plan_json
                   source = 'patch'
+                  schema_context = str(refine_schema_context or original_schema_context or '')
               elif intent == 'refine_query':
                   selected_json = guarded_normalized_semantic_plan_json
                   source = 'replan_guard'
+                  schema_context = str(refine_schema_context or '')
               else:
                   selected_json = original_normalized_semantic_plan_json
                   source = 'new_query'
-              plan = _loads(selected_json) or _loads(original_normalized_semantic_plan_json)
-              normalized_json = json.dumps(plan, ensure_ascii=False)
-              planner = _derive_planner(plan, _loads(original_planner))
+                  schema_context = str(original_schema_context or '')
+              plan = _loads(selected_json)
+              execution_input_error = ''
+              if intent == 'refine_query' and source == 'replan_guard' and not _bool(guard_valid):
+                  execution_input_error = str(guard_error or 'refine_query 重规划差异保护未通过')
+              if not plan:
+                  execution_input_error = execution_input_error or '缺少可用于 Mongo 编译的 normalized_semantic_plan_json'
+              normalized_json = json.dumps(plan, ensure_ascii=False) if plan else ''
+              planner = _derive_planner(plan, _loads(original_planner)) if plan else _loads(original_planner)
               return {
                   'normalized_semantic_plan_json': normalized_json,
                   'planner': planner,
                   'semantic_plan_source': source,
-                  'schema_context': str(original_schema_context or ''),
+                  'schema_context': schema_context,
+                  'execution_input_valid': bool(plan) and not execution_input_error,
+                  'execution_input_error': execution_input_error,
               }
         code_language: python3
         desc: 将 new_query 原始语义计划、refine_query 确定性 patch、refine_query 重规划差异保护三种来源统一为 Mongo 编译节点固定输入变量。
@@ -1055,6 +1152,12 @@
             children:
             type: string
           schema_context:
+            children:
+            type: string
+          execution_input_valid:
+            children:
+            type: boolean
+          execution_input_error:
             children:
             type: string
         selected: false
@@ -1096,6 +1199,21 @@
           - schema_context
           value_type: string
           variable: original_schema_context
+        - value_selector:
+          - '1776000000027'
+          - schema_context_for_replan
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000021'
+          - guard_valid
+          value_type: boolean
+          variable: guard_valid
+        - value_selector:
+          - '1776000000021'
+          - guard_error
+          value_type: string
+          variable: guard_error
       height: 80
       id: '1776000000024'
       position:
@@ -1104,6 +1222,395 @@
       positionAbsolute:
         x: 9200
         "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+
+    - data:
+        code: |
+          import json
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(v); return x if isinstance(x,dict) else {}
+                  except Exception: return {}
+              return {}
+          def _arr(v): return v if isinstance(v,list) else []
+          def _add(xs,v):
+              v=str(v or '').strip()
+              if v and v not in xs: xs.append(v)
+          def _first_stage(plan):
+              stages=((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan,dict) else []
+              return stages[0] if isinstance(stages,list) and stages and isinstance(stages[0],dict) else {}
+          def main(question: str, last_context_json: str, query_refinement_json: str, normalized_turn_intent_json: str, patch_reason: str, changed_fields: str, requires_full_replan):
+              ctx=_loads(last_context_json); old=_loads(ctx.get('last_normalized_semantic_plan_json'))
+              if not old:
+                  return {'replan_input_valid':False,'replan_input_error':'缺少上一轮归一化语义计划，无法进行 refine_query 重规划','old_normalized_semantic_plan_json':'','query_refinement_json':str(query_refinement_json or ''),'refine_replan_schema_tasks_json':'[]','refine_replan_keywords':str(question or ''),'refine_replan_primary_collection':'','refine_replan_related_collections_json':'[]','patch_reason':str(patch_reason or ''),'changed_fields_json':str(changed_fields or '[]'),'refine_replan_debug_json':json.dumps({'last_context_keys':list(ctx.keys())},ensure_ascii=False)}
+              st=_first_stage(old); chart=old.get('chart_request') if isinstance(old.get('chart_request'),dict) else _loads(ctx.get('last_chart_request_json'))
+              primary=str(old.get('primary_collection') or st.get('primary_collection') or st.get('collection') or '').strip(); related=[]
+              for c in _arr(old.get('related_collections'))+_arr(st.get('related_collections'))+_arr(old.get('collections')):
+                  c=str(c or '').strip()
+                  if c and c!=primary and c not in related: related.append(c)
+              fields=[]
+              for x in _arr(st.get('group_fields')): _add(fields,x)
+              _add(fields,st.get('metric_field')); tr=st.get('time_range') if isinstance(st.get('time_range'),dict) else {}; _add(fields,tr.get('field'))
+              for f in _arr(st.get('filters')):
+                  if isinstance(f,dict): _add(fields,f.get('field'))
+              if isinstance(chart,dict): _add(fields,chart.get('x_field')); _add(fields,chart.get('y_field'))
+              qr=_loads(query_refinement_json); keywords=[str(question or '').strip(),json.dumps(qr,ensure_ascii=False),str(patch_reason or '')]
+              tasks=[]
+              for role,col in [('primary',primary)]+[('related',c) for c in related]:
+                  if col: tasks.append({'collection_name':col,'role':role,'query_text':' '.join([col]+fields+keywords)[:1200],'fields':fields})
+              return {'replan_input_valid':True,'replan_input_error':'','old_normalized_semantic_plan_json':json.dumps(old,ensure_ascii=False),'query_refinement_json':json.dumps(qr,ensure_ascii=False),'refine_replan_schema_tasks_json':json.dumps(tasks,ensure_ascii=False),'refine_replan_keywords':' '.join(keywords)[:2000],'refine_replan_primary_collection':primary,'refine_replan_related_collections_json':json.dumps(related,ensure_ascii=False),'patch_reason':str(patch_reason or ''),'changed_fields_json':str(changed_fields or '[]'),'refine_replan_debug_json':json.dumps({'fields':fields,'last_query_result_json_present':bool(ctx.get('last_query_result_json')),'last_final_answer_summary_present':bool(ctx.get('last_final_answer_summary'))},ensure_ascii=False)}
+        code_language: python3
+        desc: 解析会话状态中的 last_normalized_semantic_plan_json，构造 refine full replan schema 检索任务。
+        outputs:
+          replan_input_valid:
+            children:
+            type: boolean
+          replan_input_error:
+            children:
+            type: string
+          old_normalized_semantic_plan_json:
+            children:
+            type: string
+          query_refinement_json:
+            children:
+            type: string
+          refine_replan_schema_tasks_json:
+            children:
+            type: string
+          refine_replan_keywords:
+            children:
+            type: string
+          refine_replan_primary_collection:
+            children:
+            type: string
+          refine_replan_related_collections_json:
+            children:
+            type: string
+          patch_reason:
+            children:
+            type: string
+          changed_fields_json:
+            children:
+            type: string
+          refine_replan_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_准备Refine重规划Schema检索任务
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1776000000004'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000019'
+          - patch_reason
+          value_type: string
+          variable: patch_reason
+        - value_selector:
+          - '1776000000019'
+          - changed_fields
+          value_type: string
+          variable: changed_fields
+        - value_selector:
+          - '1776000000019'
+          - requires_full_replan
+          value_type: boolean
+          variable: requires_full_replan
+      height: 80
+      id: '1776000000025'
+      position:
+        x: 4000
+        "y": 520
+      positionAbsolute:
+        x: 4000
+        "y": 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _list(v):
+              if isinstance(v,list): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(v); return x if isinstance(x,list) else []
+                  except Exception: return []
+              return []
+          def main(refine_replan_schema_tasks_json: str, old_normalized_semantic_plan_json: str, replan_input_valid=True, replan_input_error: str=''):
+              tasks=_list(refine_replan_schema_tasks_json); sections=[]
+              for t in tasks:
+                  if not isinstance(t,dict): continue
+                  col=str(t.get('collection_name') or '').strip(); role=str(t.get('role') or '').strip(); fields=t.get('fields') if isinstance(t.get('fields'),list) else []
+                  if col: sections.append('## collection=%s\nrole=%s\nfields_from_previous_semantic_plan=%s' % (col,role,json.dumps(fields,ensure_ascii=False)))
+              warning='' if sections else 'Refine schema 检索为空，将只允许基于上一轮 semantic plan 已有字段做保守重规划。'
+              ctx='### refine_query schema_context_for_replan\n'+'\n\n'.join(sections)
+              return {'refine_schema_context':ctx,'refine_schema_context_valid':bool(sections),'refine_schema_warning':warning or str(replan_input_error or ''),'refine_schema_debug_json':json.dumps({'task_count':len(tasks),'input_valid':replan_input_valid},ensure_ascii=False)}
+        code_language: python3
+        desc: Refine Schema 检索：为 refine full replan 分支准备合法 schema_context；为空时输出 warning 并保守降级。
+        outputs:
+          refine_schema_context:
+            children:
+            type: string
+          refine_schema_context_valid:
+            children:
+            type: boolean
+          refine_schema_warning:
+            children:
+            type: string
+          refine_schema_debug_json:
+            children:
+            type: string
+        selected: false
+        title: Refine Schema 检索
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000025'
+          - refine_replan_schema_tasks_json
+          value_type: string
+          variable: refine_replan_schema_tasks_json
+        - value_selector:
+          - '1776000000025'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000025'
+          - replan_input_valid
+          value_type: boolean
+          variable: replan_input_valid
+        - value_selector:
+          - '1776000000025'
+          - replan_input_error
+          value_type: string
+          variable: replan_input_error
+      height: 80
+      id: '1776000000026'
+      position:
+        x: 4400
+        "y": 520
+      positionAbsolute:
+        x: 4400
+        "y": 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          SEMANTIC_SCHEMA={'type':'object','required':['execution_plan','needs_chart','chart_request','answer_mode'],'properties':{'execution_plan':{'type':'object'},'needs_chart':{'type':'boolean'},'chart_request':{'type':'object'},'answer_mode':{'type':'string'}},'additionalProperties':True}
+          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, patch_reason: str, changed_fields_json: str, refine_schema_context: str, refine_schema_warning: str, normalized_turn_intent_json: str, replan_input_valid=True, replan_input_error: str=''):
+              system='你是 refine_query full replan 语义计划重规划器。只输出符合 semantic_plan JSON Schema 的 JSON 对象；不得输出 markdown、解释文字或代码块。当前任务不是从零新查询，而是在上一轮 normalized semantic plan 基础上按用户本轮修改要求生成完整 semantic plan。'
+              parts=['当前用户问题：\n'+str(question or ''),'上一轮 normalized semantic plan（old_plan，必须作为基准）：\n'+str(old_normalized_semantic_plan_json or ''),'query_refinement_json：\n'+str(query_refinement_json or ''),'normalized_turn_intent_json：\n'+str(normalized_turn_intent_json or ''),'确定性 patch 失败原因：\n'+str(patch_reason or ''),'changed_fields_json：\n'+str(changed_fields_json or ''),'当前 refine 分支合法获得的 schema_context_for_replan：\n'+str(refine_schema_context or ''),'schema warning：\n'+str(refine_schema_warning or ''),'硬性规则：\n1. 输出完整 semantic plan，必须包含 execution_plan、execution_plan.stages、needs_chart、chart_request、answer_mode。\n2. 保留用户没有明确修改的 primary_collection、related_collections、group_fields、metric_function、metric_field、metric_alias、filters、time_range、sort、limit、chart_request、answer_mode。\n3. 只有当前用户问题或 query_refinement_json 明确要求修改某字段时，才允许修改该字段。\n4. 不允许使用 schema_context 中不存在、且上一轮 plan 中也不存在的字段。\n5. 如果 schema_context 为空或不充分，只允许基于上一轮 plan 已有字段做保守重规划。\n6. 如果无法可靠重规划，请输出包含 replan_error 和 clarify_suggestion 的 JSON，不能编造计划。\n7. 不得输出 markdown、解释文字或代码块。']
+              user='\n\n'.join(parts)
+              valid=str(replan_input_valid).lower() not in {'false','0','no'} and bool(str(old_normalized_semantic_plan_json or '').strip())
+              if not valid: user+='\n\n注意：replan_input_valid=false，错误：'+str(replan_input_error or '')+'。请输出结构化错误，不要编造计划。'
+              return {'replan_system_prompt':system,'replan_user_prompt':user,'replan_prompt':system+'\n\n'+user,'old_normalized_semantic_plan_json':old_normalized_semantic_plan_json,'query_refinement_json':query_refinement_json,'patch_reason':patch_reason,'changed_fields_json':changed_fields_json,'schema_context_for_replan':refine_schema_context,'replan_json_schema':json.dumps(SEMANTIC_SCHEMA,ensure_ascii=False),'replan_input_valid':valid,'replan_input_error':str(replan_input_error or ''),'replan_prompt_debug_json':json.dumps({'schema_warning':refine_schema_warning},ensure_ascii=False)}
+        code_language: python3
+        desc: 合并 refine schema 上下文并生成单一 replan prompt，供 LLM 节点引用。
+        outputs:
+          replan_system_prompt:
+            children:
+            type: string
+          replan_user_prompt:
+            children:
+            type: string
+          replan_prompt:
+            children:
+            type: string
+          old_normalized_semantic_plan_json:
+            children:
+            type: string
+          query_refinement_json:
+            children:
+            type: string
+          schema_context_for_replan:
+            children:
+            type: string
+          replan_json_schema:
+            children:
+            type: string
+          replan_input_valid:
+            children:
+            type: boolean
+          replan_input_error:
+            children:
+            type: string
+          patch_reason:
+            children:
+            type: string
+          changed_fields_json:
+            children:
+            type: string
+          replan_prompt_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并Refine Schema上下文并准备重规划提示词
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000025'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000025'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000025'
+          - patch_reason
+          value_type: string
+          variable: patch_reason
+        - value_selector:
+          - '1776000000025'
+          - changed_fields_json
+          value_type: string
+          variable: changed_fields_json
+        - value_selector:
+          - '1776000000026'
+          - refine_schema_context
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000026'
+          - refine_schema_warning
+          value_type: string
+          variable: refine_schema_warning
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000025'
+          - replan_input_valid
+          value_type: boolean
+          variable: replan_input_valid
+        - value_selector:
+          - '1776000000025'
+          - replan_input_error
+          value_type: string
+          variable: replan_input_error
+      height: 80
+      id: '1776000000027'
+      position:
+        x: 4800
+        "y": 520
+      positionAbsolute:
+        x: 4800
+        "y": 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\\s*(.*?)\\s*```$',s,flags=re.S|re.I)
+              return m.group(1).strip() if m else s
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(_strip(v)); return x if isinstance(x,dict) else {}
+                  except Exception: return {}
+              return {}
+          def _normalize(plan):
+              if not isinstance(plan,dict): return {}
+              if 'execution_plan' not in plan and 'stages' in plan: plan={'execution_plan':{'stages':plan.get('stages')},**{k:v for k,v in plan.items() if k!='stages'}}
+              plan.setdefault('needs_chart',bool(plan.get('chart_request'))); plan.setdefault('chart_request',{}); plan.setdefault('answer_mode','query')
+              return plan
+          def main(structured_output=None, text: str=''):
+              raw=structured_output if isinstance(structured_output,dict) and structured_output else _loads(text)
+              plan=_normalize(raw); missing=[k for k in ['execution_plan','needs_chart','chart_request','answer_mode'] if k not in plan]
+              stages=((plan.get('execution_plan') or {}).get('stages') or []) if isinstance(plan.get('execution_plan'),dict) else []
+              if not stages: missing.append('execution_plan.stages')
+              valid=not missing and not plan.get('replan_error')
+              err=('缺失字段: '+','.join(missing)) if missing else str(plan.get('replan_error') or '')
+              js=json.dumps(plan,ensure_ascii=False) if plan else ''
+              return {'replanned_semantic_plan_json':js,'replanned_normalized_semantic_plan_json':js if valid else '','replan_valid':bool(valid),'replan_error':err,'replan_warning':'','replan_debug_json':json.dumps({'used_structured_output':isinstance(structured_output,dict) and bool(structured_output),'missing':missing},ensure_ascii=False)}
+        code_language: python3
+        desc: 提取 LLM structured output，fallback text，剥离代码块并规范化重规划 semantic plan。
+        outputs:
+          replanned_semantic_plan_json:
+            children:
+            type: string
+          replanned_normalized_semantic_plan_json:
+            children:
+            type: string
+          replan_valid:
+            children:
+            type: boolean
+          replan_error:
+            children:
+            type: string
+          replan_warning:
+            children:
+            type: string
+          replan_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_提取并规范化重规划语义计划结果
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000020'
+          - structured_output
+          value_type: object
+          variable: structured_output
+        - value_selector:
+          - '1776000000020'
+          - text
+          value_type: string
+          variable: text
+      height: 80
+      id: '1776000000028'
+      position:
+        x: 5600
+        "y": 520
+      positionAbsolute:
+        x: 5600
+        "y": 520
       selected: false
       sourcePosition: right
       targetPosition: left

@@ -32,6 +32,14 @@ workflow:
     - last_normalized_execution_plan
     value: {}
     value_type: object
+  - description: 上一轮归一化语义计划 JSON（用于 refine_query old semantic plan，不等同于 Mongo execution plan）
+    id: 0a4fcdb4-6ba6-4a0e-95fe-1d8d32f12c63
+    name: last_normalized_semantic_plan_json
+    selector:
+    - conversation
+    - last_normalized_semantic_plan_json
+    value: ''
+    value_type: string
   - description: 上一轮主stage validated_ast
     id: 4264ea89-7d37-4a32-87f8-e27a67ff8d98
     name: last_validated_ast
@@ -658,11 +666,11 @@ workflow:
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: llm
-      id: 1776000000023-false-1776000000020-target
+        targetType: code
+      id: 1776000000023-false-1776000000025-target
       source: '1776000000023'
       sourceHandle: 'false'
-      target: '1776000000020'
+      target: '1776000000025'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -670,8 +678,52 @@ workflow:
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776000000020-source-1776000000021-target
+      id: 1776000000020-source-1776000000028-target
       source: '1776000000020'
+      sourceHandle: source
+      target: '1776000000028'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000025-source-1776000000026-target
+      source: '1776000000025'
+      sourceHandle: source
+      target: '1776000000026'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000026-source-1776000000027-target
+      source: '1776000000026'
+      sourceHandle: source
+      target: '1776000000027'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: llm
+      id: 1776000000027-source-1776000000020-target
+      source: '1776000000027'
+      sourceHandle: source
+      target: '1776000000020'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000028-source-1776000000021-target
+      source: '1776000000028'
       sourceHandle: source
       target: '1776000000021'
       targetHandle: target
