@@ -345,10 +345,10 @@ workflow:
         isInIteration: false
         sourceType: if-else
         targetType: code
-      id: 1775000000020-true-1775000000007-target
+      id: 1775000000020-true-1776000000024-target
       source: '1775000000020'
       sourceHandle: 'true'
-      target: '1775000000007'
+      target: '1776000000024'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -603,22 +603,99 @@ workflow:
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: code
-      id: 1776000000005-query-1776000000019-target
+        targetType: if-else
+      id: 1776000000005-query-1776000000022-target
       source: '1776000000005'
       sourceHandle: query
+      target: '1776000000022'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776000000022-refine_query-1776000000019-target
+      source: '1776000000022'
+      sourceHandle: refine_query
       target: '1776000000019'
       targetHandle: target
       type: custom
       zIndex: 0
     - data:
         isInLoop: false
-        sourceType: code
+        sourceType: if-else
         targetType: llm
-      id: 1776000000019-source-1773975766025-target
+      id: 1776000000022-false-1773975766025-target
+      source: '1776000000022'
+      sourceHandle: 'false'
+      target: '1773975766025'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1776000000019-source-1776000000023-target
       source: '1776000000019'
       sourceHandle: source
-      target: '1773975766025'
+      target: '1776000000023'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776000000023-true-1776000000024-target
+      source: '1776000000023'
+      sourceHandle: 'true'
+      target: '1776000000024'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776000000023-false-1776000000020-target
+      source: '1776000000023'
+      sourceHandle: 'false'
+      target: '1776000000020'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1776000000020-source-1776000000021-target
+      source: '1776000000020'
+      sourceHandle: source
+      target: '1776000000021'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000021-source-1776000000024-target
+      source: '1776000000021'
+      sourceHandle: source
+      target: '1776000000024'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000024-source-1775000000007-target
+      source: '1776000000024'
+      sourceHandle: source
+      target: '1775000000007'
       targetHandle: target
       type: custom
       zIndex: 0
