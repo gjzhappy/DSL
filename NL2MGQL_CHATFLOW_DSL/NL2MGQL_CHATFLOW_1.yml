@@ -1,67 +1,3 @@
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        desc: ''
-        error_handle_mode: terminated
-        height: 360
-        is_parallel: false
-        iterator_selector:
-        - '1774083951307'
-        - collection_tasks
-        output_selector:
-        - '1775000000004'
-        - output
-        output_type: array[string]
-        parallel_nums: 10
-        selected: false
-        start_node_id: 1775000000001start
-        title: 遍历Collections检索Schema
-        type: iteration
-        width: 980
-      height: 360
-      id: '1775000000001'
-      position:
-        x: 4000
-        "y": -300
-      positionAbsolute:
-        x: 4000
-        "y": -300
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 980
-    - data:
-        desc: ''
-        isInIteration: true
-        selected: false
-        title: ''
-        type: iteration-start
-      draggable: false
-      height: 48
-      id: 1775000000001start
-      parentId: '1775000000001'
-      position:
-        x: 24
-        "y": 80
-      positionAbsolute:
-        x: 4024
-        "y": -220
-      selectable: false
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom-iteration-start
-      width: 44
-      zIndex: 1002
-    - data:
-        code: |
-          import json
-
-          def main(item):
-              data = item
-              if isinstance(data, str):
                   data = json.loads(data)
 
               collection_name = str((data or {}).get("collection_name") or "").strip()
@@ -1018,3 +954,319 @@
                       'rank_n': rank_n,
                       'rank_order_field': str(raw.get('rank_order_field') or '').strip(),
                       'rank_direction': str(raw.get('rank_direction') or '').strip() or 'desc',
+                      'sort': raw.get('sort') or [],
+                      'limit': limit,
+                      'projection_mode': str(raw.get('projection_mode') or 'none').strip() or 'none',
+                      'projection_fields': _ensure_string_list(raw.get('projection_fields') or [], f'stages[{idx}].projection_fields'),
+                      'join_source_field': str(raw.get('join_source_field') or '').strip(),
+                      'apply_global_limit': bool(raw.get('apply_global_limit', False)),
+                  }
+                  stage['filters'] = _sanitize_stage_filters(raw.get('filters') or [], stage['time_range'])
+                  if intent_type == 'enrich_related':
+                      stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
+                      stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
+                  if _is_effectively_empty_stage(stage):
+                      continue
+                  normalized_stages.append(stage)
+
+              final_merge = plan.get('final_merge') or {}
+              if not normalized_stages:
+                  raise ValueError('execution_plan has no effective stages')
+              if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
+                  execution_mode = 'single_stage'
+              if execution_mode == 'single_stage':
+                  normalized_stages = normalized_stages[:1]
+              visualization = _normalize_visualization(plan.get('visualization'))
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              chart_request_title = str(chart_request.get('title') or '').strip()
+              if chart_request_title:
+                  visualization['title'] = chart_request_title
+              intent = _detect_visualization_intent(question)
+              if intent.get('enabled'):
+                  if not visualization.get('enabled'):
+                      visualization['enabled'] = True
+                      print('VISUALIZATION_FALLBACK_ENABLED')
+                  if not str(visualization.get('chart_type') or '').strip() and intent.get('chart_type'):
+                      visualization['chart_type'] = intent['chart_type']
+
+              merge_mode = str(final_merge.get('merge_mode') or 'none').strip() or 'none'
+              if len(normalized_stages) <= 1 or merge_mode == 'none':
+                  execution_mode = 'single_stage'
+                  merge_mode = 'none'
+              return {
+                  'execution_mode': execution_mode,
+                  'primary_collection': primary_collection,
+                  'collections': collections,
+                  'reasoning': str(plan.get('reasoning') or '').strip(),
+                  'visualization': visualization,
+                  'stages': normalized_stages,
+                  'final_merge': {
+                      'merge_mode': merge_mode,
+                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
+                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
+                      'left_field': str(final_merge.get('left_field') or '').strip(),
+                      'right_field': str(final_merge.get('right_field') or '').strip(),
+                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
+                  },
+              }
+
+
+          def _build_stage_match(stage):
+              parts = []
+              time_expr = _apply_time_range(stage.get('time_range'))
+              if time_expr:
+                  parts.append(time_expr)
+              for idx, f in enumerate(stage.get('filters') or []):
+                  if not isinstance(f, dict):
+                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
+                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
+                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
+                  value = f.get('value')
+                  parts.append(_build_match_expr(field, operator, value))
+              return _merge_match(parts)
+
+
+          def _append_projection(pipeline, fields):
+              unique_fields = []
+              seen = set()
+              for field in fields or []:
+                  text = str(field or '').strip()
+                  if text and text not in seen:
+                      seen.add(text)
+                      unique_fields.append(text)
+              if not unique_fields:
+                  return
+              proj = {'_id': 0}
+              for field in unique_fields:
+                  proj[field] = f'${field}'
+              pipeline.append({'$project': proj})
+
+
+          def _compile_detail_query(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              _append_projection(pipeline, stage.get('projection_fields'))
+              sort_stage = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  sort_stage[field] = direction
+              if sort_stage:
+                  pipeline.append({'$sort': sort_stage})
+              if int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [],
+                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
+                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
+              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
+              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
+              if metric_function == 'count':
+                  agg_expr = {'$sum': 1}
+              else:
+                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
+                  if metric_function not in op_map:
+                      raise ValueError(f'unsupported metric_function: {metric_function}')
+                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
+              group_id = {field: f'${field}' for field in group_fields} if group_fields else None
+              group_stage = {'_id': group_id, metric_alias: agg_expr}
+              pipeline.append({'$group': group_stage})
+              project_stage = {'_id': 0}
+              for field in group_fields:
+                  project_stage[field] = f'$_id.{field}'
+              project_stage[metric_alias] = f'${metric_alias}'
+              pipeline.append({'$project': project_stage})
+              sort_stage = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  sort_stage[field] = direction
+              if sort_stage:
+                  pipeline.append({'$sort': sort_stage})
+              if int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
+                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
+                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_group_top_entity(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              entity_field = _ensure_non_empty_string(stage.get('entity_field'), f"{stage['stage_name']}.entity_field")
+              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
+              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
+              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
+              rank_n = int(stage.get('rank_n') or 0)
+              if rank_n <= 0:
+                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_entity")
+              if metric_function == 'count':
+                  agg_expr = {'$sum': 1}
+              else:
+                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
+                  if metric_function not in op_map:
+                      raise ValueError(f'unsupported metric_function: {metric_function}')
+                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
+              first_group_id = {field: f'${field}' for field in group_fields}
+              first_group_id['__entity'] = f'${entity_field}'
+              pipeline.append({'$group': {'_id': first_group_id, metric_alias: agg_expr}})
+              sort_before_rank = {f'_id.{field}': 1 for field in group_fields}
+              sort_before_rank[metric_alias] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
+              pipeline.append({'$sort': sort_before_rank})
+              push_payload = {'entity': '$_id.__entity', metric_alias: f'${metric_alias}'}
+              pipeline.append({'$group': {'_id': {field: f'$_id.{field}' for field in group_fields}, 'items': {'$push': push_payload}}})
+              project_group = {'_id': 0, 'items': '$items'}
+              for field in group_fields:
+                  project_group[field] = f'$_id.{field}'
+              pipeline.append({'$project': project_group})
+              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
+              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
+              project_after_rank = {'_id': 0, entity_field: '$items.entity', metric_alias: f'$items.{metric_alias}'}
+              for field in group_fields:
+                  project_after_rank[field] = f'${field}'
+              pipeline.append({'$project': project_after_rank})
+              final_sort = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  final_sort[field] = direction
+              if final_sort and stage.get('apply_global_limit'):
+                  pipeline.append({'$sort': final_sort})
+              # group_top_entity: rank_n controls per-group topN. Do not apply global sort/limit by default.
+              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              projection_fields = stage.get('projection_fields') or (list(group_fields) + [entity_field, metric_alias])
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in list(group_fields) + [entity_field]],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+          def _compile_group_top_record(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              rank_order_field = _ensure_non_empty_string(stage.get('rank_order_field'), f"{stage['stage_name']}.rank_order_field")
+              rank_n = int(stage.get('rank_n') or 0)
+              if rank_n <= 0:
+                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_record")
+              projection_fields = stage.get('projection_fields') or list(dict.fromkeys(list(group_fields) + [rank_order_field]))
+              sort_before_rank = {field: 1 for field in group_fields}
+              sort_before_rank[rank_order_field] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
+              pipeline.append({'$sort': sort_before_rank})
+              item_payload = {field: f'${field}' for field in projection_fields}
+              pipeline.append({'$group': {'_id': {field: f'${field}' for field in group_fields}, 'items': {'$push': item_payload}}})
+              project_group = {'_id': 0, 'items': '$items'}
+              for field in group_fields:
+                  project_group[field] = f'$_id.{field}'
+              pipeline.append({'$project': project_group})
+              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
+              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
+              project_after_rank = {'_id': 0}
+              for field in projection_fields:
+                  project_after_rank[field] = f'$items.{field}'
+              for field in group_fields:
+                  project_after_rank[field] = f'${field}' if field not in projection_fields else project_after_rank[field]
+              pipeline.append({'$project': project_after_rank})
+              final_sort = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  final_sort[field] = direction
+              if final_sort and stage.get('apply_global_limit'):
+                  pipeline.append({'$sort': final_sort})
+              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+          def _compile_enrich_related(stage, schema_context, stage_outputs):
+              depends_on = _ensure_non_empty_string(stage.get('depends_on'), f"{stage['stage_name']}.depends_on")
+              prev = stage_outputs.get(depends_on) or {}
+              prev_rows = prev.get('rows') or []
+              join_source_field = _ensure_non_empty_string(stage.get('join_source_field'), f"{stage['stage_name']}.join_source_field")
+              join_target_field = _ensure_non_empty_string(stage.get('join_target_field'), f"{stage['stage_name']}.join_target_field")
+              join_values = _unique_values(prev_rows, join_source_field)
+              projection_mode = str(stage.get('projection_mode') or 'none').strip() or 'none'
+              if projection_mode == 'all_returnable':
+                  projection_fields = _extract_returnable_fields(schema_context, stage['collection'])
+              else:
+                  projection_fields = list(stage.get('projection_fields') or [])
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': f"enrich {stage['collection']} by {join_target_field}",
+              }
+              if not join_values:
+                  return validated_ast, [], True

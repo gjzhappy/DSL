@@ -1,545 +1,3 @@
-        authorization:
-          config:
-          type: no-auth
-        body:
-          data:
-          - id: token-body-1
-            key: ''
-            type: text
-            value: "{{#1775000000005.token_request_body_json#}}"
-          type: json
-        desc: 使用静态token换取动态token
-        headers: Content-Type:application/json
-        method: post
-        params: ''
-        retry_config:
-          max_retries: 3
-          retry_enabled: false
-          retry_interval: 100
-        selected: false
-        ssl_verify: false
-        timeout:
-          max_connect_timeout: 600000
-          max_read_timeout: 600000
-          max_write_timeout: 600000
-        title: HTTP请求_获取动态Token
-        type: http-request
-        url: "{{#1775000000005.token_url#}}"
-        variables: []
-      height: 123
-      id: '1775000000010'
-      position:
-        x: 6000
-        "y": -520
-      positionAbsolute:
-        x: 6000
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-
-          UNSUPPORTED_JSON_SCHEMA_KEYS = {
-              'uniqueItems',
-          }
-
-
-          def _truncate_text(text, limit=2000):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def _read_json_text(text):
-              if text is None:
-                  return None
-              if isinstance(text, (dict, list)):
-                  return text
-              raw = str(text).strip()
-              if not raw:
-                  return None
-              return json.loads(raw)
-
-
-          def _first_non_empty_string(*values):
-              for value in values:
-                  if isinstance(value, str) and value.strip():
-                      return value.strip()
-              return ''
-
-
-          def _sanitize_json_schema(value):
-              if isinstance(value, dict):
-                  cleaned = {}
-                  for key, item in value.items():
-                      if key in UNSUPPORTED_JSON_SCHEMA_KEYS:
-                          continue
-                      cleaned[key] = _sanitize_json_schema(item)
-                  return cleaned
-              if isinstance(value, list):
-                  return [_sanitize_json_schema(item) for item in value]
-              return value
-
-
-          def _to_bool(value):
-              if isinstance(value, bool):
-                  return value
-              return str(value or '').strip().lower() in {'1','true','yes','y','on'}
-
-
-          def main(status_code, body, semantic_plan_system_prompt: str, semantic_plan_user_prompt: str, semantic_plan_json_schema: str,
-                   chat_url: str, llm_config_json: str, request_id: str, full_llm_response_format_enabled: str):
-              try:
-                  code = int(status_code or 0)
-                  if code < 200 or code >= 300:
-                      raise ValueError(f"动态token获取失败, status={code}, body={_truncate_text(body, 2000)}")
-                  resp_json = _read_json_text(body)
-                  if not resp_json or not isinstance(resp_json, dict):
-                      raise ValueError(f"动态token响应不是合法JSON: {_truncate_text(body, 1200)}")
-                  token_result = resp_json.get('result')
-                  if token_result is None:
-                      raise ValueError('TOKEN_RESULT_EMPTY')
-                  if not isinstance(token_result, str):
-                      raise ValueError('TOKEN_RESULT_INVALID_TYPE')
-                  authorization_value = token_result.strip()
-                  if not authorization_value:
-                      raise ValueError('TOKEN_RESULT_EMPTY')
-                  if not authorization_value.startswith('Basic '):
-                      print('WARN:TOKEN_RESULT_UNEXPECTED_PREFIX')
-                  llm_config = _read_json_text(llm_config_json)
-                  if not llm_config or not isinstance(llm_config, dict):
-                      raise ValueError('llm_config_json 不是合法JSON对象')
-                  schema = _read_json_text(semantic_plan_json_schema)
-                  if not schema or not isinstance(schema, dict):
-                      raise ValueError('semantic_plan_json_schema 不是合法JSON对象')
-                  sanitized_schema = _sanitize_json_schema(schema)
-                  if not sanitized_schema or not isinstance(sanitized_schema, dict):
-                      raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
-                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
-                  prompt = semantic_plan_user_prompt
-                  request_body = {
-                      'model': model,
-                      'messages': [
-                          {'role': 'system', 'content': semantic_plan_system_prompt},
-                          {'role': 'user', 'content': prompt},
-                      ],
-                      'stream': False,
-                  }
-                  rf_enabled = _to_bool(full_llm_response_format_enabled)
-                  if rf_enabled:
-                      request_body['response_format'] = {
-                          'type': 'json_schema',
-                          'json_schema': {
-                              'name': 'semantic_execution_plan',
-                              'strict': False,
-                              'schema': sanitized_schema,
-                          }
-                      }
-                  return {
-                      'request_enabled': 'true',
-                      'debug_summary': json.dumps({
-                          'request_url': str(chat_url or '').strip(),
-                          'model': model,
-                          'prompt_length': len(prompt or ''),
-                          'auth_present': bool(authorization_value),
-                          'auth_from': 'token_response.result',
-                          'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
-                          'auth_len': len(authorization_value or ''),
-                          'body_keys': list(request_body.keys()),
-                          'response_format_enabled': rf_enabled,
-                          'response_format_type': 'json_schema' if rf_enabled else '',
-                          'schema_name': 'semantic_execution_plan' if rf_enabled else '',
-                          'schema_required': ['execution_plan'],
-                          'prompt_preview': _truncate_text(prompt, 1000),
-                      }, ensure_ascii=False),
-                      'chat_url': chat_url,
-                      'authorization_value': authorization_value,
-                      'llm_request_body_json': json.dumps(request_body, ensure_ascii=False),
-                      'request_id': request_id,
-                  }
-              except Exception as e:
-                  return {
-                      'request_enabled': 'false',
-                      'debug_summary': _truncate_text(str(e), 2000),
-                      'chat_url': str(chat_url or '').strip(),
-                      'authorization_value': '',
-                      'llm_request_body_json': '',
-                      'request_id': str(request_id or '').strip(),
-                  }
-        code_language: python3
-        desc: 解析动态token并构造满血版LLM请求体�失败时转本地LLM
-        outputs:
-          authorization_value:
-            children:
-            type: string
-          chat_url:
-            children:
-            type: string
-          debug_summary:
-            children:
-            type: string
-          llm_request_body_json:
-            children:
-            type: string
-          request_enabled:
-            children:
-            type: string
-          request_id:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_构造满血LLM语义计划请求
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000010'
-          - status_code
-          value_type: number
-          variable: status_code
-        - value_selector:
-          - '1775000000010'
-          - body
-          value_type: string
-          variable: body
-        - value_selector:
-          - '1775000000005'
-          - semantic_plan_system_prompt
-          value_type: string
-          variable: semantic_plan_system_prompt
-        - value_selector:
-          - '1775000000005'
-          - semantic_plan_user_prompt
-          value_type: string
-          variable: semantic_plan_user_prompt
-        - value_selector:
-          - '1775000000005'
-          - semantic_plan_json_schema
-          value_type: string
-          variable: semantic_plan_json_schema
-        - value_selector:
-          - '1775000000005'
-          - chat_url
-          value_type: string
-          variable: chat_url
-        - value_selector:
-          - '1775000000005'
-          - llm_config_json
-          value_type: string
-          variable: llm_config_json
-        - value_selector:
-          - '1775000000005'
-          - request_id
-          value_type: string
-          variable: request_id
-        - value_selector:
-          - env
-          - FULL_LLM_RESPONSE_FORMAT_ENABLED
-          value_type: string
-          variable: full_llm_response_format_enabled
-      height: 96
-      id: '1775000000011'
-      position:
-        x: 6400
-        "y": -520
-      positionAbsolute:
-        x: 6400
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import traceback
-          import urllib.error
-          import urllib.request
-
-
-          def _to_text(value):
-              return '' if value is None else str(value)
-
-
-          def _safe_json_loads(value):
-              if isinstance(value, dict):
-                  return value
-              if isinstance(value, str):
-                  return json.loads(value)
-              raise ValueError('llm_request_body_json must be object or JSON object string')
-
-
-          def _extract_prompt_length(messages):
-              if not isinstance(messages, list):
-                  return 0
-              text_parts = []
-              for item in messages:
-                  if not isinstance(item, dict):
-                      continue
-                  content = item.get('content')
-                  if isinstance(content, str):
-                      text_parts.append(content)
-                  elif isinstance(content, list):
-                      for part in content:
-                          if isinstance(part, dict):
-                              t = part.get('text')
-                              if isinstance(t, str):
-                                  text_parts.append(t)
-              return len(''.join(text_parts))
-
-
-          def main(chat_url: str, authorization_value: str, llm_request_body_json: str) -> dict:
-              timeout_sec = 70
-              result = {
-                  'status_code': 0,
-                  'ok': False,
-                  'body': '',
-                  'body_preview': '',
-                  'headers_json': '{}',
-                  'error_message': '',
-                  'request_debug': {}
-              }
-
-              try:
-                  body_obj = _safe_json_loads(llm_request_body_json)
-              except Exception as e:
-                  result['error_message'] = 'REQUEST_BUILD_FAILED: ' + str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-
-              messages = body_obj.get('messages') or []
-              response_format = body_obj.get('response_format') if isinstance(body_obj.get('response_format'), dict) else {}
-              json_schema = response_format.get('json_schema') if isinstance(response_format.get('json_schema'), dict) else {}
-              auth = _to_text(authorization_value)
-              auth_scheme = auth.split(' ', 1)[0] if ' ' in auth else ('unknown' if auth else '')
-
-              result['request_debug'] = {
-                  'url': _to_text(chat_url),
-                  'auth_present': bool(auth),
-                  'auth_scheme': auth_scheme,
-                  'auth_len': len(auth),
-                  'model': body_obj.get('model'),
-                  'body_keys': list(body_obj.keys()),
-                  'messages_count': len(messages) if isinstance(messages, list) else 0,
-                  'prompt_length': _extract_prompt_length(messages),
-                  'response_format_enabled': 'response_format' in body_obj,
-                  'response_format_type': response_format.get('type') if isinstance(response_format, dict) else None,
-                  'schema_name': _to_text(json_schema.get('name')) if isinstance(json_schema, dict) else '',
-                  'timeout_sec': timeout_sec
-              }
-
-              data = json.dumps(body_obj, ensure_ascii=False).encode('utf-8')
-              req = urllib.request.Request(
-                  _to_text(chat_url),
-                  data=data,
-                  headers={
-                      'Content-Type': 'application/json',
-                      'Authorization': auth
-                  },
-                  method='POST'
-              )
-
-              try:
-                  with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                      text = resp.read().decode('utf-8', errors='replace')
-                      result['status_code'] = int(getattr(resp, 'status', 0) or 0)
-                      result['ok'] = 200 <= result['status_code'] < 300
-                      result['body'] = text
-                      result['body_preview'] = text[:4000]
-                      result['headers_json'] = json.dumps(dict(resp.headers.items()), ensure_ascii=False)
-                      return result
-              except urllib.error.HTTPError as e:
-                  text = e.read().decode('utf-8', errors='replace')
-                  result['status_code'] = int(getattr(e, 'code', 0) or 0)
-                  result['ok'] = False
-                  result['body'] = text
-                  result['body_preview'] = text[:4000]
-                  result['headers_json'] = json.dumps(dict(e.headers.items()), ensure_ascii=False) if getattr(e, 'headers', None) else '{}'
-                  result['error_message'] = 'HTTP_ERROR status=%s' % result['status_code']
-                  return result
-              except Exception as e:
-                  result['status_code'] = 0
-                  result['ok'] = False
-                  result['error_message'] = str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-        code_language: python3
-        desc: 调用内部满血版LLM并保留非2xx响应体用于诊断
-        outputs:
-          status_code:
-            type: number
-          ok:
-            type: boolean
-          body:
-            type: string
-          body_preview:
-            type: string
-          headers_json:
-            type: string
-          error_message:
-            type: string
-          request_debug:
-            type: object
-        selected: false
-        title: 代码执行_调用满血LLM并保留错误响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000011'
-          - chat_url
-          value_type: string
-          variable: chat_url
-        - value_selector:
-          - '1775000000011'
-          - authorization_value
-          value_type: string
-          variable: authorization_value
-        - value_selector:
-          - '1775000000011'
-          - llm_request_body_json
-          value_type: string
-          variable: llm_request_body_json
-      height: 139
-      id: '1775000000012'
-      position:
-        x: 7200
-        "y": -520
-      positionAbsolute:
-        x: 7200
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import re
-
-
-          def _truncate_text(text, limit=2000):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def _read_json_text(text):
-              if text is None:
-                  return None
-              if isinstance(text, (dict, list)):
-                  return text
-              raw = str(text).strip()
-              if not raw:
-                  return None
-              return json.loads(raw)
-
-
-          def _content_to_text(content):
-              if isinstance(content, str):
-                  return content.strip()
-              if isinstance(content, list):
-                  parts = []
-                  for item in content:
-                      if isinstance(item, str) and item.strip():
-                          parts.append(item.strip())
-                      elif isinstance(item, dict):
-                          text = str(item.get('text') or item.get('content') or '').strip()
-                          if text:
-                              parts.append(text)
-                  return '\n'.join(parts).strip()
-              return ''
-
-
-          def _extract_chat_text(resp_json):
-              if not isinstance(resp_json, dict):
-                  return ''
-              choices = resp_json.get('choices')
-              if isinstance(choices, list) and choices:
-                  first = choices[0] or {}
-                  if isinstance(first, dict):
-                      msg = first.get('message') or {}
-                      if isinstance(msg, dict):
-                          text = _content_to_text(msg.get('content'))
-                          if text:
-                              return text
-                      text = _content_to_text(first.get('text'))
-                      if text:
-                          return text
-              output = resp_json.get('output')
-              text = _content_to_text(output)
-              if text:
-                  return text
-              if isinstance(output, list):
-                  for item in output:
-                      if isinstance(item, dict):
-                          text = _content_to_text(item.get('content'))
-                          if text:
-                              return text
-              for key in ('result', 'text', 'content', 'answer'):
-                  text = _content_to_text(resp_json.get(key))
-                  if text:
-                      return text
-              data = resp_json.get('data')
-              if isinstance(data, dict):
-                  for key in ('result', 'text', 'content', 'answer'):
-                      text = _content_to_text(data.get(key))
-                      if text:
-                          return text
-              return ''
-
-
-          def _strip_code_fence(text):
-              raw = str(text or '').strip()
-              full_match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)
-              if full_match:
-                  return full_match.group(1).strip()
-              return raw
-
-
-          def _remove_think_blocks(text):
-              raw = str(text or '')
-              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
-              return raw.strip()
-
-
-          def _ast_candidate_score(obj):
-              if not isinstance(obj, dict):
-                  return -1
-              score = 0
-              keys = set(obj.keys())
-              if 'execution_plan' in keys:
-                  score += 10
-              stages = (obj.get('execution_plan') or {}).get('stages') if isinstance(obj.get('execution_plan'), dict) else None
-              if isinstance(stages, list) and stages:
-                  score += 10
-              if keys:
-                  score += 1
-              return score
-
-
-          def _try_decode_object(raw):
-              try:
-                  decoder = json.JSONDecoder()
-                  obj, end = decoder.raw_decode(raw)
-                  if isinstance(obj, dict):
-                      return obj, raw[:end], raw[end:].strip()
-              except Exception:
-                  return None
-              return None
-
-
-          def _extract_json_object_text(text):
-              raw = _remove_think_blocks(_strip_code_fence(text))
-              if not raw:
-                  raise ValueError('LLM返�内容为空')
-              direct = _try_decode_object(raw)
-              if direct and not direct[2]:
-                  return direct[1]
-              candidates = []
-              for block in re.findall(r'```(?:json)?\s*(.*?)```', raw, flags=re.IGNORECASE | re.DOTALL):
                   parsed = _try_decode_object(block.strip())
                   if parsed:
                       obj, obj_text, tail = parsed
@@ -1018,3 +476,796 @@
                 required:
                 - stages
                 properties:
+                  stages:
+                    type: array
+                    minItems: 1
+                    items:
+                      type: object
+                      required:
+                      - stage_id
+                      - stage_type
+                      - primary_collection
+                      - intent_type
+                      properties:
+                        stage_id:
+                          type: string
+                        stage_type:
+                          type: string
+                        primary_collection:
+                          type: string
+                        intent_type:
+                          type: string
+                        time_range:
+                          type: object
+                        filters:
+                          type: array
+                          items:
+                            type: object
+                        group_fields:
+                          type: array
+                          items:
+                            type: string
+                        metric_function:
+                          type: string
+                        metric_field:
+                          type: string
+                        metric_alias:
+                          type: string
+                        sort:
+                          type: array
+                          items:
+                            type: object
+                        limit:
+                          type: integer
+                      additionalProperties: true
+                additionalProperties: true
+              needs_chart:
+                type: boolean
+              chart_request:
+                type: object
+              answer_mode:
+                type: string
+            additionalProperties: true
+        structured_output_enabled: true
+        title: LLM_本地兜底生成语义计划
+        type: llm
+        vision:
+          enabled: false
+      height: 132
+      id: '1775000000018'
+      position:
+        x: 7200
+        "y": -120
+      positionAbsolute:
+        x: 7200
+        "y": -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+
+          def main(text: str):
+              raw = str(text or '').strip()
+              if not raw:
+                  raise ValueError('本地LLM返�为空')
+              body = {
+                  'choices': [
+                      {
+                          'message': {
+                              'content': raw,
+                          }
+                      }
+                  ]
+              }
+              return {
+                  'status_code': 200,
+                  'body': json.dumps(body, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
+        outputs:
+          body:
+            children:
+            type: string
+          status_code:
+            children:
+            type: number
+        selected: false
+        title: 代码执行_包装本地LLM响应
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000018'
+          - text
+          value_type: string
+          variable: text
+      height: 96
+      id: '1775000000019'
+      position:
+        x: 8000
+        "y": -120
+      positionAbsolute:
+        x: 8000
+        "y": -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+
+          INTENT_WORDS = ('描述', '分析', '总结', '说明', '对比')
+          GROUP_FIELD_CANDIDATES = (
+              'vendor', 'vendor_name', 'manufacturer', 'manufacturer_name',
+              'supplier', 'supplier_name', 'brand', 'brand_name', 'factory',
+              '厂商', '厂商名称', '供应商', '供应商名称', '品牌',
+              '_id', 'name', 'category'
+          )
+          METRIC_FIELD_HINTS = ('count', 'total', 'sum', 'amount', 'qty', 'quantity', 'orders', '订单数', '数量', '金额', '销售额', '合计')
+
+
+          def _loads_obj(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+
+          def _rows(value):
+              if isinstance(value, list):
+                  return [row for row in value if isinstance(row, dict)]
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      if isinstance(parsed, list):
+                          return [row for row in parsed if isinstance(row, dict)]
+                  except Exception:
+                      return []
+              return []
+
+
+          def _answer_mode(explicit_mode, normalized_plan, semantic_plan):
+              return (
+                  str(explicit_mode or '').strip()
+                  or str(normalized_plan.get('answer_mode') or '').strip()
+                  or str(semantic_plan.get('answer_mode') or '').strip()
+              )
+
+
+          def _needs_analysis(question, answer_mode):
+              q = str(question or '')
+              return answer_mode == 'data_with_analysis' or any(word in q for word in INTENT_WORDS)
+
+
+          def _pick_group_field(rows):
+              if not rows:
+                  return ''
+              keys = list(rows[0].keys())
+              for candidate in GROUP_FIELD_CANDIDATES:
+                  if candidate in keys:
+                      return candidate
+              for key in keys:
+                  if not isinstance(rows[0].get(key), (int, float)):
+                      return key
+              return keys[0] if keys else ''
+
+
+          def _pick_metric_field(rows, group_field):
+              if not rows:
+                  return ''
+              keys = [key for key in rows[0].keys() if key != group_field]
+              numeric_keys = [key for key in keys if isinstance(rows[0].get(key), (int, float))]
+              for key in numeric_keys:
+                  low = str(key).lower()
+                  if any(hint in low or hint in str(key) for hint in METRIC_FIELD_HINTS):
+                      return key
+              return numeric_keys[0] if numeric_keys else (keys[0] if keys else '')
+
+
+          def _fmt(value):
+              if isinstance(value, float):
+                  if value.is_integer():
+                      return str(int(value))
+                  return ('%.2f' % value).rstrip('0').rstrip('.')
+              return str(value)
+
+
+          def _summary(question, rows):
+              row_count = len(rows)
+              group_field = _pick_group_field(rows)
+              metric_field = _pick_metric_field(rows, group_field)
+              title = '结果摘要'
+              if not rows:
+                  return title + '：\n- 过去一个月未查询到符合条件的订单数据。'
+
+              bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
+              if group_field and metric_field:
+                  sorted_rows = sorted(rows, key=lambda row: row.get(metric_field) if isinstance(row.get(metric_field), (int, float)) else 0, reverse=True)
+                  top = sorted_rows[0]
+                  top_name = top.get(group_field, '未知')
+                  top_value = top.get(metric_field, '')
+                  bullets.append(f'- 按 {group_field} 分组后，{top_name} 的 {metric_field} 最高，为 {_fmt(top_value)}。')
+                  if row_count > 1:
+                      tail = sorted_rows[-1]
+                      bullets.append(f'- 最低的是 {tail.get(group_field, "未知")}，{metric_field} 为 {_fmt(tail.get(metric_field, ""))}。')
+                  preview = '、'.join([f'{row.get(group_field, "未知")}({_fmt(row.get(metric_field, ""))})' for row in sorted_rows[:5]])
+                  if preview:
+                      bullets.append(f'- 主要分组数据：{preview}。')
+              return title + '：\n' + '\n'.join(bullets)
+
+
+          def _analysis(rows):
+              if not rows:
+                  return '简单分析：\n- 当前筛选条件下没有可用于对比的订单数据，建议放宽时间范围或检查厂商字段与订单状态筛选条件。'
+              group_field = _pick_group_field(rows)
+              metric_field = _pick_metric_field(rows, group_field)
+              if not group_field or not metric_field:
+                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合图表查看整体分布。'
+              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float))]
+              if len(numeric) < 2:
+                  return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
+              sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
+              top, second = sorted_rows[0], sorted_rows[1]
+              gap = top.get(metric_field) - second.get(metric_field)
+              return (
+                  '简单分析：\n'
+                  f'- 从柱状图看，{top.get(group_field, "未知")} 领先，其 {metric_field} 比第二名 '
+                  f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
+                  '- 可优先关注排名靠前厂商的订单贡献，同时排查低值厂商是否存在订单不足或筛选条件影响。'
+              )
+
+
+          def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, answer_mode: str):
+              semantic_plan = _loads_obj(semantic_plan_json)
+              normalized_plan = _loads_obj(normalized_semantic_plan_json)
+              mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
+              result_rows = _rows(rows)
+              chart = str(chart_echarts_markdown or '').strip()
+              needs_text = _needs_analysis(question, mode)
+
+              parts = []
+              if chart:
+                  parts.append(chart)
+              if chart or needs_text or not chart or not result_rows:
+                  parts.append(_summary(question, result_rows))
+                  parts.append(_analysis(result_rows))
+              if not parts:
+                  parts.append('过去一个月未查询到符合条件的订单数据。')
+
+              return {
+                  'final_answer_markdown': '\n\n'.join(part for part in parts if part),
+                  'answer_mode': mode,
+                  'final_answer_summary': ('\n\n'.join(part for part in parts if part and part != chart))[:4000],
+              }
+        code_language: python3
+        desc: 统一合并图表、查询摘要、分析、澄清或降级说明，输出 final_answer_markdown；debug 不进入最终回答。
+        outputs:
+          final_answer_markdown:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+          final_answer_summary:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并最终回答
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: semantic_plan_json
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: normalized_semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows
+          value_type: array[object]
+          variable: rows
+        - value_selector:
+          - '1775000000007'
+          - chart_echarts_markdown
+          value_type: string
+          variable: chart_echarts_markdown
+        - value_selector:
+          - '1776000000024'
+          - answer_mode
+          value_type: string
+          variable: answer_mode
+      height: 96
+      id: '1775000000022'
+      position:
+        x: 10000
+        "y": -300
+      positionAbsolute:
+        x: 10000
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1775000000007'
+          - question
+          value_type: string
+          variable: last_question
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan
+          value_type: object
+          variable: last_normalized_execution_plan
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: last_normalized_semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - last_validated_ast
+          value_type: object
+          variable: last_validated_ast
+        - value_selector:
+          - '1775000000007'
+          - last_pipeline_json
+          value_type: string
+          variable: last_pipeline_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows
+          value_type: array[object]
+          variable: last_merged_rows
+        - value_selector:
+          - '1775000000007'
+          - chart
+          value_type: object
+          variable: last_chart
+        - value_selector:
+          - '1775000000022'
+          - final_answer_summary
+          value_type: string
+          variable: last_result_summary
+        - value_selector:
+          - '1775000000007'
+          - last_error
+          value_type: string
+          variable: last_error
+        - value_selector:
+          - '1775000000007'
+          - chart_echarts_markdown
+          value_type: string
+          variable: last_chart_echarts_markdown
+        - value_selector:
+          - '1775000000007'
+          - merged_rows_json
+          value_type: string
+          variable: last_query_result_json
+        - value_selector:
+          - '1775000000007'
+          - chart_request_json
+          value_type: string
+          variable: last_chart_request_json
+        selected: false
+        answer: "{{#1775000000022.final_answer_markdown#}}\n"
+        title: Answer
+        type: answer
+      height: 270
+      id: '1773910028939'
+      position:
+        x: 10400
+        "y": -300
+      positionAbsolute:
+        x: 10400
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+
+          def _safe_json(value):
+              if value is None or value == '':
+                  return ''
+              try:
+                  return json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+              except Exception:
+                  return str(value)
+
+
+          def _rows(value):
+              if isinstance(value, list):
+                  return [x for x in value if isinstance(x, dict)]
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return [x for x in parsed if isinstance(x, dict)] if isinstance(parsed, list) else []
+                  except Exception:
+                      return []
+              return []
+
+
+          def main(last_question: str, last_normalized_semantic_plan_json: str, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state: str, last_chart, last_chart_request_json_state: str, last_chart_echarts_markdown: str, last_result_summary: str):
+              rows = _rows(last_query_result_json_state) or _rows(last_merged_rows)
+              result_fields = []
+              if rows:
+                  seen = []
+                  for row in rows[:10]:
+                      for key in row.keys():
+                          if key not in seen:
+                              seen.append(key)
+                  result_fields = seen
+              old_semantic_plan_json = _safe_json(last_normalized_semantic_plan_json)
+              last_rows_json = json.dumps(rows, ensure_ascii=False)
+              last_chart_json = str(last_chart_request_json_state or '').strip() or _safe_json(last_chart)
+              has_last_context = bool(str(old_semantic_plan_json or '').strip() or rows)
+              payload = {
+                  'has_last_context': has_last_context,
+                  'last_question': str(last_question or ''),
+                  'last_normalized_semantic_plan_json': old_semantic_plan_json,
+                  'last_normalized_execution_plan_debug_json': _safe_json(last_normalized_execution_plan),
+                  'last_query_result_json': last_rows_json,
+                  'last_chart_request_json': last_chart_json,
+                  'last_chart_echarts_markdown': str(last_chart_echarts_markdown or ''),
+                  'last_final_answer_summary': str(last_result_summary or ''),
+                  'result_rows_count': len(rows),
+                  'result_fields': result_fields,
+                  'result_preview': rows[:5],
+              }
+              return {
+                  'has_last_context': has_last_context,
+                  'last_context_json': json.dumps(payload, ensure_ascii=False),
+                  'old_normalized_semantic_plan_json': old_semantic_plan_json,
+                  'last_query_result_json': last_rows_json,
+                  'last_chart_request_json': last_chart_json,
+              }
+        code_language: python3
+        desc: ''
+        outputs:
+          has_last_context:
+            children:
+            type: boolean
+          last_context_json:
+            children:
+            type: string
+          old_normalized_semantic_plan_json:
+            children:
+            type: string
+          last_query_result_json:
+            children:
+            type: string
+          last_chart_request_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_读取并规范化会话状态
+        type: code
+        variables:
+        - value_selector:
+          - conversation
+          - last_question
+          value_type: string
+          variable: last_question
+        - value_selector:
+          - conversation
+          - last_normalized_semantic_plan_json
+          value_type: string
+          variable: last_normalized_semantic_plan_json
+        - value_selector:
+          - conversation
+          - last_normalized_execution_plan
+          value_type: object
+          variable: last_normalized_execution_plan
+        - value_selector:
+          - conversation
+          - last_merged_rows
+          value_type: array[object]
+          variable: last_merged_rows
+        - value_selector:
+          - conversation
+          - last_query_result_json
+          value_type: string
+          variable: last_query_result_json_state
+        - value_selector:
+          - conversation
+          - last_chart
+          value_type: object
+          variable: last_chart
+        - value_selector:
+          - conversation
+          - last_chart_request_json
+          value_type: string
+          variable: last_chart_request_json_state
+        - value_selector:
+          - conversation
+          - last_chart_echarts_markdown
+          value_type: string
+          variable: last_chart_echarts_markdown
+        - value_selector:
+          - conversation
+          - last_result_summary
+          value_type: string
+          variable: last_result_summary
+      height: 80
+      id: '1776000000001'
+      position:
+        x: 400
+        "y": 0
+      positionAbsolute:
+        x: 400
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+
+          def _loads(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+
+          def main(question: str, last_context_json: str):
+              ctx = _loads(last_context_json)
+              slim = {
+                  'has_last_context': bool(ctx.get('has_last_context')),
+                  'last_question': str(ctx.get('last_question') or ''),
+                  'last_normalized_semantic_plan_json': str(ctx.get('last_normalized_semantic_plan_json') or '')[:6000],
+                  'last_chart_request_json': str(ctx.get('last_chart_request_json') or '')[:3000],
+                  'last_final_answer_summary': str(ctx.get('last_final_answer_summary') or '')[:2000],
+                  'result_rows_count': int(ctx.get('result_rows_count') or 0),
+                  'result_fields': ctx.get('result_fields') if isinstance(ctx.get('result_fields'), list) else [],
+                  'result_preview': (ctx.get('result_preview') if isinstance(ctx.get('result_preview'), list) else [])[:5],
+              }
+              prompt = (
+                  '你是多轮数据查询 Chatflow 的意图识别器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n'
+                  '允许的 turn_intent：new_query, modify_chart, refine_query, explain_result, reanalyze_result, fix_result, continue_previous, clarify。\n'
+                  '输出字段必须完整：turn_intent, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, reason, missing_info, chart_modification, query_refinement, analysis_focus。\n'
+                  '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；纠错 fix_result 必须根据用户修改内容设置 need_requery/need_rechart/need_analysis；continue_previous 也必须根据 flags 动态判断；没有上下文却要求改图/继续/解释 => clarify。\n\n'
+                  f'当前用户问题：{question}\n\n上一轮上下文（已裁剪，不含原始大文档）：\n{json.dumps(slim, ensure_ascii=False)}'
+              )
+              return {'intent_prompt': prompt, 'last_context_slim_json': json.dumps(slim, ensure_ascii=False)}
+        code_language: python3
+        desc: ''
+        outputs:
+          intent_prompt:
+            children:
+            type: string
+          last_context_slim_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并多轮上下文并准备意图识别提示词
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+      height: 80
+      id: '1776000000002'
+      position:
+        x: 800
+        "y": 0
+      positionAbsolute:
+        x: 800
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            temperature: 0.0
+          mode: chat
+          name: qwen3:32b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: intent-system
+          role: system
+          text: 你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出
+            schema 之外的字段。
+        - id: intent-user
+          role: user
+          text: "{{#1776000000002.intent_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - turn_intent
+            - need_previous_context
+            - need_requery
+            - need_rechart
+            - need_analysis
+            - can_answer_directly
+            - reason
+            - missing_info
+            - chart_modification
+            - query_refinement
+            - analysis_focus
+            properties:
+              turn_intent:
+                type: string
+                enum:
+                - new_query
+                - modify_chart
+                - refine_query
+                - explain_result
+                - reanalyze_result
+                - fix_result
+                - continue_previous
+                - clarify
+              need_previous_context:
+                type: boolean
+              need_requery:
+                type: boolean
+              need_rechart:
+                type: boolean
+              need_analysis:
+                type: boolean
+              can_answer_directly:
+                type: boolean
+              reason:
+                type: string
+              missing_info:
+                type: array
+                items:
+                  type: string
+              chart_modification:
+                type: object
+                additionalProperties: true
+              query_refinement:
+                type: object
+                additionalProperties: true
+              analysis_focus:
+                type: string
+        structured_output_enabled: true
+        title: LLM_多轮意图识别
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776000000003'
+      position:
+        x: 1200
+        "y": 0
+      positionAbsolute:
+        x: 1200
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import re
+
+          ALLOWED = {'new_query','modify_chart','refine_query','explain_result','reanalyze_result','fix_result','continue_previous','clarify'}
+          SCHEMA_KEYS = {'turn_intent','need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly','reason','missing_info','chart_modification','query_refinement','analysis_focus'}
+
+
+          def _strip_code_block(text):
+              text = str(text or '').strip()
+              m = re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I | re.S)
+              return m.group(1).strip() if m else text
+
+
+          def _extract_json(text):
+              text = _strip_code_block(text)
+              start, end = text.find('{'), text.rfind('}')
+              return text[start:end + 1] if start >= 0 and end >= start else text
+
+
+          def _loads_obj(value):
+              if isinstance(value, dict):
+                  return dict(value)
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(_extract_json(value))
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+
+          def _bool(value, default=False):
+              if isinstance(value, bool):
+                  return value
+              if value is None or value == '':
+                  return default
+              return str(value).strip().lower() in {'1','true','yes','y','on'}
+
+
+          def _defaults(intent):
+              base = {'need_previous_context': False, 'need_requery': True, 'need_rechart': False, 'need_analysis': True, 'can_answer_directly': False}
+              if intent == 'modify_chart':
+                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': True, 'need_analysis': True})
+              elif intent in {'explain_result','reanalyze_result'}:
+                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': False, 'need_analysis': True})
+              elif intent == 'continue_previous':
+                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': False, 'need_analysis': True})
+              elif intent == 'clarify':
+                  base.update({'need_previous_context': False, 'need_requery': False, 'need_rechart': False, 'need_analysis': False, 'can_answer_directly': True})
+              elif intent == 'refine_query':
+                  base.update({'need_previous_context': True, 'need_requery': True, 'need_rechart': True, 'need_analysis': True})
+              elif intent == 'fix_result':
+                  base.update({'need_previous_context': True, 'need_requery': True, 'need_rechart': True, 'need_analysis': True})
+              return base
+
+
+          def main(intent_structured, intent_text: str, last_context_json: str, question: str):
+              ctx = _loads_obj(last_context_json)
+              obj = _loads_obj(intent_structured)
+              source = 'structured_output' if obj else 'text'
+              if not obj:
+                  obj = _loads_obj(intent_text)
+              valid = bool(obj)
+              err = '' if valid else 'intent json parse failed; fallback to new_query'
+              obj = {k: obj.get(k) for k in SCHEMA_KEYS}
+              intent = str(obj.get('turn_intent') or 'new_query').strip()
+              if intent not in ALLOWED:
+                  intent = 'new_query'; valid = False; err = (err + '; invalid intent').strip('; ')
+              d = _defaults(intent)
+              for k in ['need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly']:
+                  obj[k] = _bool(obj.get(k), d[k])
+              obj['turn_intent'] = intent
+              obj['missing_info'] = obj.get('missing_info') if isinstance(obj.get('missing_info'), list) else []
+              obj['chart_modification'] = obj.get('chart_modification') if isinstance(obj.get('chart_modification'), dict) else {}
+              obj['query_refinement'] = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
+              obj['analysis_focus'] = str(obj.get('analysis_focus') or '')
+              obj['reason'] = str(obj.get('reason') or '')

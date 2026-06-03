@@ -32,7 +32,8 @@ workflow:
     - last_normalized_execution_plan
     value: {}
     value_type: object
-  - description: 上一轮归一化语义计划 JSON（用于 refine_query old semantic plan，不等同于 Mongo execution plan）
+  - description: 上一轮归一化语义计划 JSON（用于 refine_query old semantic plan，不等同于 Mongo execution
+      plan）
     id: 0a4fcdb4-6ba6-4a0e-95fe-1d8d32f12c63
     name: last_normalized_semantic_plan_json
     selector:
@@ -94,6 +95,22 @@ workflow:
     selector:
     - conversation
     - last_chart_echarts_markdown
+    value: ''
+    value_type: string
+  - description: 上一轮查询结果 JSON（由 merged_rows 序列化，用于多轮 refine/analysis 上下文）
+    id: bc95f31c-9955-468c-ad06-14d600f798c1
+    name: last_query_result_json
+    selector:
+    - conversation
+    - last_query_result_json
+    value: ''
+    value_type: string
+  - description: 上一轮图表请求/图表对象 JSON（用于多轮 refine/chart 上下文）
+    id: 883546c3-c879-42e1-8f87-d4016b8c1642
+    name: last_chart_request_json
+    selector:
+    - conversation
+    - last_chart_request_json
     value: ''
     value_type: string
   environment_variables:
@@ -623,9 +640,10 @@ workflow:
         isInLoop: false
         sourceType: if-else
         targetType: code
-      id: 1776000000022-refine_query-1776000000019-target
+        sourceHandle: refine_like_requery
+      id: 1776000000022-refine_like_requery-1776000000019-target
       source: '1776000000022'
-      sourceHandle: refine_query
+      sourceHandle: refine_like_requery
       target: '1776000000019'
       targetHandle: target
       type: custom
@@ -665,34 +683,12 @@ workflow:
       zIndex: 0
     - data:
         isInLoop: false
-        sourceType: if-else
-        targetType: code
-      id: 1776000000023-false-1776000000025-target
-      source: '1776000000023'
-      sourceHandle: 'false'
-      target: '1776000000025'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
         sourceType: llm
         targetType: code
       id: 1776000000020-source-1776000000028-target
       source: '1776000000020'
       sourceHandle: source
       target: '1776000000028'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: code
-      id: 1776000000025-source-1776000000026-target
-      source: '1776000000025'
-      sourceHandle: source
-      target: '1776000000026'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -872,6 +868,69 @@ workflow:
       targetHandle: target
       type: custom
       zIndex: 0
+    - id: 1776000000032start-source-1776000000033-target
+      source: 1776000000032start
+      sourceHandle: source
+      target: '1776000000033'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: iteration-start
+        targetType: code
+    - id: 1776000000033-source-1776000000034-target
+      source: '1776000000033'
+      sourceHandle: source
+      target: '1776000000034'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: code
+        targetType: knowledge-retrieval
+    - id: 1776000000034-source-1776000000035-target
+      source: '1776000000034'
+      sourceHandle: source
+      target: '1776000000035'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: knowledge-retrieval
+        targetType: code
+    - id: 1776000000023-false-1776000000030-target
+      source: '1776000000023'
+      sourceHandle: 'false'
+      target: '1776000000030'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: if-else
+        targetType: llm
+    - id: 1776000000030-source-1776000000025-target
+      source: '1776000000030'
+      sourceHandle: source
+      target: '1776000000025'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: llm
+        targetType: code
+    - id: 1776000000025-source-1776000000032-target
+      source: '1776000000025'
+      sourceHandle: source
+      target: '1776000000032'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: code
+        targetType: iteration
+    - id: 1776000000032-source-1776000000026-target
+      source: '1776000000032'
+      sourceHandle: source
+      target: '1776000000026'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: iteration
+        targetType: code
     nodes:
     - data:
         selected: false
@@ -1147,3 +1206,67 @@ workflow:
         "y": -300
       selected: false
       sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: ''
+        error_handle_mode: terminated
+        height: 360
+        is_parallel: false
+        iterator_selector:
+        - '1774083951307'
+        - collection_tasks
+        output_selector:
+        - '1775000000004'
+        - output
+        output_type: array[string]
+        parallel_nums: 10
+        selected: false
+        start_node_id: 1775000000001start
+        title: 遍历Collections检索Schema
+        type: iteration
+        width: 980
+      height: 360
+      id: '1775000000001'
+      position:
+        x: 4000
+        "y": -300
+      positionAbsolute:
+        x: 4000
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 980
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1775000000001start
+      parentId: '1775000000001'
+      position:
+        x: 24
+        "y": 80
+      positionAbsolute:
+        x: 4024
+        "y": -220
+      selectable: false
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+
+          def main(item):
+              data = item
+              if isinstance(data, str):
