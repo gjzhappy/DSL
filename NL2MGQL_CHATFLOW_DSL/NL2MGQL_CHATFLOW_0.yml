@@ -24,14 +24,14 @@ workflow:
     - last_question
     value: ''
     value_type: string
-  - description: 上一轮归一化执行计划
+  - description: 上一轮归一化执行计划 JSON
     id: 2e147ce2-aa8f-49fa-b119-8bfaf2f57f96
     name: last_normalized_execution_plan
     selector:
     - conversation
     - last_normalized_execution_plan
-    value: {}
-    value_type: object
+    value: ''
+    value_type: string
   - description: 上一轮归一化语义计划 JSON（用于 refine_query old semantic plan，不等同于 Mongo execution
       plan）
     id: 0a4fcdb4-6ba6-4a0e-95fe-1d8d32f12c63
@@ -41,14 +41,14 @@ workflow:
     - last_normalized_semantic_plan_json
     value: ''
     value_type: string
-  - description: 上一轮主stage validated_ast
+  - description: 上一轮主stage validated_ast JSON
     id: 4264ea89-7d37-4a32-87f8-e27a67ff8d98
     name: last_validated_ast
     selector:
     - conversation
     - last_validated_ast
-    value: {}
-    value_type: object
+    value: ''
+    value_type: string
   - description: 上一轮主stage pipeline json
     id: 13215a96-c590-47ff-bf6f-560f1bb4c924
     name: last_pipeline_json
@@ -57,22 +57,22 @@ workflow:
     - last_pipeline_json
     value: ''
     value_type: string
-  - description: 上一轮结果行
+  - description: 上一轮结果行 JSON
     id: 72ea2f1a-dfc8-47b9-9606-36f6793364e7
     name: last_merged_rows
     selector:
     - conversation
     - last_merged_rows
-    value: []
-    value_type: array[object]
-  - description: 上一轮图表
+    value: ''
+    value_type: string
+  - description: 上一轮图表 JSON
     id: fe6345ad-4573-4f38-8cb8-f80d4f3536ec
     name: last_chart
     selector:
     - conversation
     - last_chart
-    value: {}
-    value_type: object
+    value: ''
+    value_type: string
   - description: 上一轮结果摘要
     id: 7f4ec3db-d31f-4652-a2ac-65e48dd3f507
     name: last_result_summary

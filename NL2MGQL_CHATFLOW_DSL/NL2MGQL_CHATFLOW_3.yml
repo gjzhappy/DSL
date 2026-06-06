@@ -783,8 +783,8 @@
           variable: normalized_semantic_plan_json
         - value_selector:
           - '1775000000007'
-          - merged_rows
-          value_type: array[object]
+          - merged_rows_json
+          value_type: string
           variable: rows
         - value_selector:
           - '1775000000007'
@@ -818,8 +818,8 @@
           variable: last_question
         - value_selector:
           - '1775000000007'
-          - normalized_execution_plan
-          value_type: object
+          - normalized_execution_plan_json
+          value_type: string
           variable: last_normalized_execution_plan
         - value_selector:
           - '1776000000024'
@@ -828,8 +828,8 @@
           variable: last_normalized_semantic_plan_json
         - value_selector:
           - '1775000000007'
-          - last_validated_ast
-          value_type: object
+          - last_validated_ast_json
+          value_type: string
           variable: last_validated_ast
         - value_selector:
           - '1775000000007'
@@ -838,13 +838,13 @@
           variable: last_pipeline_json
         - value_selector:
           - '1775000000007'
-          - merged_rows
-          value_type: array[object]
+          - merged_rows_json
+          value_type: string
           variable: last_merged_rows
         - value_selector:
           - '1775000000007'
-          - chart
-          value_type: object
+          - chart_request_json
+          value_type: string
           variable: last_chart
         - value_selector:
           - '1775000000022'
@@ -983,12 +983,12 @@
         - value_selector:
           - conversation
           - last_normalized_execution_plan
-          value_type: object
+          value_type: string
           variable: last_normalized_execution_plan
         - value_selector:
           - conversation
           - last_merged_rows
-          value_type: array[object]
+          value_type: string
           variable: last_merged_rows
         - value_selector:
           - conversation
@@ -998,7 +998,7 @@
         - value_selector:
           - conversation
           - last_chart
-          value_type: object
+          value_type: string
           variable: last_chart
         - value_selector:
           - conversation
