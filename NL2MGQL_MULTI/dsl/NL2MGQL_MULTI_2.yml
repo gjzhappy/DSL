@@ -496,63 +496,72 @@
               else:
                   answer_text = '查询成功，但结果为空。'
 
+              last_validated_ast = ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {}
+
               return {
                   'answer_text': answer_text,
                   'question': str(question or '').strip(),
-                  'normalized_execution_plan': normalized_execution_plan,
-                  'last_validated_ast': ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {},
                   'last_pipeline_json': str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or ''),
-                  'merged_rows': merged_rows[:MAX_RETURN_ROWS],
-                  'merged_rows_json': json.dumps(merged_rows[:MAX_RETURN_ROWS], ensure_ascii=False),
-                  'chart': chart_payload,
-                  'chart_request_json': json.dumps(chart_payload, ensure_ascii=False),
+                  'last_validated_ast_json': _safe_json_dumps(last_validated_ast),
+                  'merged_rows_json': _safe_json_dumps(merged_rows[:MAX_RETURN_ROWS]),
+                  'chart_request_json': _safe_json_dumps(chart_payload),
                   'chart_echarts_markdown': chart_markdown,
                   'result_summary': summary_text,
                   'message': message_text,
                   'last_error': error_text,
-                  'final_response_summary': final_response_summary,
-                  'normalized_execution_plan_json': json.dumps(normalized_execution_plan, ensure_ascii=False),
-                  'stage_execution_trace_json': json.dumps(stage_execution_trace, ensure_ascii=False),
-                  'final_response_body': json.dumps(final_payload, ensure_ascii=False),
+                  'normalized_execution_plan_json': _safe_json_dumps(normalized_execution_plan),
+                  'stage_execution_trace_json': _safe_json_dumps(stage_execution_trace),
+                  'final_response_body': _safe_json_dumps(final_payload),
+                  'final_response_summary_json': _safe_json_dumps(final_response_summary),
                   'chart_enabled': 'true' if bool(chart_option) else 'false',
                   'chart_type': str(chart_decision.get('chart_type') or '') if bool(chart_option) else '',
-                  'chart_data': json.dumps(chart_option, ensure_ascii=False) if bool(chart_option) else '',
-                  'chart_title': str((visualization or {}).get('title') or ''),
+                  'chart_data': _safe_json_dumps(chart_option) if bool(chart_option) else '',
+                  'chart_title': option_title,
                   'chart_axis_x_title': str(chart_x_field or ''),
                   'chart_axis_y_title': str(chart_y_field or ''),
               }
         code_language: python3
         desc: 校验语义计划并编译第一阶段 Pipeline
         outputs:
-          final_response_body:
-            children:
+          answer_text:
             type: string
-          final_response_summary:
-            children:
-            type: object
+          question:
+            type: string
+          last_pipeline_json:
+            type: string
+          last_validated_ast_json:
+            type: string
+          merged_rows_json:
+            type: string
+          chart_request_json:
+            type: string
+          chart_echarts_markdown:
+            type: string
+          result_summary:
+            type: string
+          message:
+            type: string
+          last_error:
+            type: string
           normalized_execution_plan_json:
-            children:
             type: string
           stage_execution_trace_json:
-            children:
+            type: string
+          final_response_body:
+            type: string
+          final_response_summary_json:
             type: string
           chart_enabled:
-            children:
             type: string
           chart_type:
-            children:
             type: string
           chart_data:
-            children:
             type: string
           chart_title:
-            children:
             type: string
           chart_axis_x_title:
-            children:
             type: string
           chart_axis_y_title:
-            children:
             type: string
         selected: false
         title: 代码执行_遍历语义计划并统一编译执行

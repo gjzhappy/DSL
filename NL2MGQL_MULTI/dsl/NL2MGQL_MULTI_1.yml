@@ -175,6 +175,17 @@
 
           SGT = timezone(timedelta(hours=8))
           DEFAULT_TIMEOUT_SECONDS = 600
+          MAX_RETURN_ROWS = 200
+
+
+          def _safe_json_dumps(value, max_chars=75000):
+              try:
+                  text = json.dumps(value, ensure_ascii=False)
+              except Exception as e:
+                  text = json.dumps({'error': str(e)}, ensure_ascii=False)
+              if len(text) > max_chars:
+                  return text[:max_chars] + '...TRUNCATED'
+              return text
 
 
           def _read_json_text(value):
