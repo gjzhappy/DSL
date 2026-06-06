@@ -442,8 +442,10 @@
                   'question': str(question or '').strip(),
                   'normalized_execution_plan': normalized_execution_plan,
                   'stage_execution_trace': stage_execution_trace,
-                  'merged_rows': merged_rows,
+                  'merged_rows': merged_rows[:MAX_RETURN_ROWS],
+                  'merged_rows_json': json.dumps(merged_rows[:MAX_RETURN_ROWS], ensure_ascii=False),
                   'chart': chart_payload,
+                  'chart_request_json': json.dumps(chart_payload, ensure_ascii=False),
                   'message': no_data_message,
               }
               final_response_summary = {
@@ -455,11 +457,63 @@
                   'chart_type': str(chart_decision.get('chart_type') or ''),
                   'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
               }
+              nl = chr(10)
+              message_text = str(no_data_message or '').strip()
+              error_text = ''
+              if isinstance(stage_execution_trace, list):
+                  for trace_item in reversed(stage_execution_trace):
+                      if isinstance(trace_item, dict):
+                          stage_error = str(trace_item.get('error') or '').strip()
+                          if stage_error:
+                              error_text = stage_error
+                              break
+              summary_text = str(final_response_summary.get('summary') or '').strip()
+              if not summary_text and (merged_rows or []):
+                  summary_text = '查询完成，共返回 ' + str(len(merged_rows or [])) + ' 条结果。'
+              chart_markdown = ''
+              if isinstance(chart_payload, dict):
+                  chart_markdown = str(chart_payload.get('echarts_markdown') or '').strip()
+              chart_enabled = isinstance(chart_payload, dict) and bool(chart_payload.get('enabled'))
+
+              if error_text or message_text:
+                  answer_text = '执行失败：' + (error_text or message_text)
+              elif chart_enabled and chart_markdown:
+                  answer_text = (
+                      '查询结果如下：'
+                      + nl
+                      + nl
+                      + chart_markdown
+                      + nl
+                      + nl
+                      + '结果摘要：'
+                      + nl
+                      + (summary_text or '已生成图表。')
+                  )
+              elif summary_text:
+                  answer_text = summary_text
+              elif merged_rows:
+                  answer_text = '查询完成，共返回 ' + str(len(merged_rows)) + ' 条结果。'
+              else:
+                  answer_text = '查询成功，但结果为空。'
+
               return {
+                  'answer_text': answer_text,
+                  'question': str(question or '').strip(),
+                  'normalized_execution_plan': normalized_execution_plan,
+                  'last_validated_ast': ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {},
+                  'last_pipeline_json': str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or ''),
+                  'merged_rows': merged_rows[:MAX_RETURN_ROWS],
+                  'merged_rows_json': json.dumps(merged_rows[:MAX_RETURN_ROWS], ensure_ascii=False),
+                  'chart': chart_payload,
+                  'chart_request_json': json.dumps(chart_payload, ensure_ascii=False),
+                  'chart_echarts_markdown': chart_markdown,
+                  'result_summary': summary_text,
+                  'message': message_text,
+                  'last_error': error_text,
+                  'final_response_summary': final_response_summary,
                   'normalized_execution_plan_json': json.dumps(normalized_execution_plan, ensure_ascii=False),
                   'stage_execution_trace_json': json.dumps(stage_execution_trace, ensure_ascii=False),
                   'final_response_body': json.dumps(final_payload, ensure_ascii=False),
-                  'final_response_summary': final_response_summary,
                   'chart_enabled': 'true' if bool(chart_option) else 'false',
                   'chart_type': str(chart_decision.get('chart_type') or '') if bool(chart_option) else '',
                   'chart_data': json.dumps(chart_option, ensure_ascii=False) if bool(chart_option) else '',
