@@ -600,6 +600,7 @@
     - data:
         code: |
           import json
+          from datetime import datetime, timezone
 
 
           INTENT_WORDS = ('描述', '分析', '总结', '说明', '对比')
@@ -728,6 +729,15 @@
               )
 
 
+          def _result_fields_json(rows):
+              seen = []
+              for row in rows[:10]:
+                  for key in row.keys():
+                      if key not in seen:
+                          seen.append(key)
+              return json.dumps(seen, ensure_ascii=False)
+
+
           def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, answer_mode: str):
               semantic_plan = _loads_obj(semantic_plan_json)
               normalized_plan = _loads_obj(normalized_semantic_plan_json)
@@ -749,6 +759,9 @@
                   'final_answer_markdown': '\n\n'.join(part for part in parts if part),
                   'answer_mode': mode,
                   'final_answer_summary': ('\n\n'.join(part for part in parts if part and part != chart))[:4000],
+                  'last_result_fields_json': _result_fields_json(result_rows),
+                  'last_updated_at': datetime.now(timezone.utc).isoformat(),
+                  'has_last_context_state': 'true' if (result_rows or chart or parts) else 'false',
               }
         code_language: python3
         desc: 统一合并图表、查询摘要、分析、澄清或降级说明，输出 final_answer_markdown；debug 不进入最终回答。
@@ -760,6 +773,15 @@
             children:
             type: string
           final_answer_summary:
+            children:
+            type: string
+          last_result_fields_json:
+            children:
+            type: string
+          last_updated_at:
+            children:
+            type: string
+          has_last_context_state:
             children:
             type: string
         selected: false
@@ -868,6 +890,31 @@
           variable: last_query_result_json
         - value_selector:
           - '1775000000007'
+          - merged_rows_json
+          value_type: string
+          variable: last_result_rows_json
+        - value_selector:
+          - '1775000000022'
+          - final_answer_summary
+          value_type: string
+          variable: last_final_answer_summary
+        - value_selector:
+          - '1775000000022'
+          - last_result_fields_json
+          value_type: string
+          variable: last_result_fields_json
+        - value_selector:
+          - '1775000000022'
+          - last_updated_at
+          value_type: string
+          variable: last_updated_at
+        - value_selector:
+          - '1775000000022'
+          - has_last_context_state
+          value_type: string
+          variable: has_last_context_state
+        - value_selector:
+          - '1775000000007'
           - chart_request_json
           value_type: string
           variable: last_chart_request_json
@@ -914,8 +961,9 @@
               return []
 
 
-          def main(last_question: str, last_normalized_semantic_plan_json: str, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state: str, last_chart, last_chart_request_json_state: str, last_chart_echarts_markdown: str, last_result_summary: str):
-              rows = _rows(last_query_result_json_state) or _rows(last_merged_rows)
+          def main(last_question: str, last_normalized_semantic_plan_json: str, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state: str, last_result_rows_json: str, last_final_answer_summary: str, last_chart, last_chart_request_json_state: str, last_chart_echarts_markdown: str, last_result_summary: str):
+              rows = _rows(last_result_rows_json) or _rows(last_query_result_json_state) or _rows(last_merged_rows)
+              summary = str(last_final_answer_summary or last_result_summary or '')
               result_fields = []
               if rows:
                   seen = []
@@ -936,7 +984,7 @@
                   'last_query_result_json': last_rows_json,
                   'last_chart_request_json': last_chart_json,
                   'last_chart_echarts_markdown': str(last_chart_echarts_markdown or ''),
-                  'last_final_answer_summary': str(last_result_summary or ''),
+                  'last_final_answer_summary': summary,
                   'result_rows_count': len(rows),
                   'result_fields': result_fields,
                   'result_preview': rows[:5],
@@ -995,6 +1043,16 @@
           - last_query_result_json
           value_type: string
           variable: last_query_result_json_state
+        - value_selector:
+          - conversation
+          - last_result_rows_json
+          value_type: string
+          variable: last_result_rows_json
+        - value_selector:
+          - conversation
+          - last_final_answer_summary
+          value_type: string
+          variable: last_final_answer_summary
         - value_selector:
           - conversation
           - last_chart

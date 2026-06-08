@@ -105,6 +105,46 @@ workflow:
     - last_query_result_json
     value: ''
     value_type: string
+  - description: 上一轮结果行 JSON
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0001
+    name: last_result_rows_json
+    selector:
+    - conversation
+    - last_result_rows_json
+    value: ''
+    value_type: string
+  - description: 上一轮结果字段 JSON
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0002
+    name: last_result_fields_json
+    selector:
+    - conversation
+    - last_result_fields_json
+    value: ''
+    value_type: string
+  - description: 上一轮最终回答摘要
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0003
+    name: last_final_answer_summary
+    selector:
+    - conversation
+    - last_final_answer_summary
+    value: ''
+    value_type: string
+  - description: 上一轮上下文更新时间
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0004
+    name: last_updated_at
+    selector:
+    - conversation
+    - last_updated_at
+    value: ''
+    value_type: string
+  - description: 调试持久化状态：是否存在上一轮上下文
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0005
+    name: has_last_context_state
+    selector:
+    - conversation
+    - has_last_context_state
+    value: ''
+    value_type: string
   - description: 上一轮图表请求/图表对象 JSON（用于多轮 refine/chart 上下文）
     id: 883546c3-c879-42e1-8f87-d4016b8c1642
     name: last_chart_request_json
