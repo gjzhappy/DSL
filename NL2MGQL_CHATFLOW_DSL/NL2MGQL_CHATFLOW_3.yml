@@ -1182,7 +1182,8 @@
                   '你是多轮数据查询 Chatflow 的意图识别器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n'
                   '允许的 turn_intent：new_query, modify_chart, refine_query, explain_result, reanalyze_result, fix_result, continue_previous, clarify。\n'
                   '输出字段必须完整：turn_intent, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, reason, missing_info, chart_modification, query_refinement, analysis_focus。\n'
-                  '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；纠错 fix_result 必须根据用户修改内容设置 need_requery/need_rechart/need_analysis；continue_previous 也必须根据 flags 动态判断；没有上下文却要求改图/继续/解释 => clarify。\n\n'
+                  '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；纠错 fix_result 必须根据用户修改内容设置 need_requery/need_rechart/need_analysis；continue_previous 也必须根据 flags 动态判断；没有上下文却要求改图/继续/解释 => clarify。\n'
+                  '重要规则：如果上一轮上下文 has_last_context=true，且当前用户只表达图表展示偏好，例如“饼图/柱状图/折线图/换成/改成/标题/标签/TopN/排序”，必须判定为 modify_chart，need_previous_context=true，need_requery=false，need_rechart=true。不得因为用户本轮未重复查询主题、指标、维度而进入 clarify。\n\n'
                   f'当前用户问题：{question}\n\n上一轮上下文（已裁剪，不含原始大文档）：\n{json.dumps(slim, ensure_ascii=False)}'
               )
               return {'intent_prompt': prompt, 'last_context_slim_json': json.dumps(slim, ensure_ascii=False)}
