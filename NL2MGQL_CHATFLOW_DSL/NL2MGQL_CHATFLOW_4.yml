@@ -216,6 +216,10 @@
               fence=chr(96)*3
               return fence+'echarts\n'+json.dumps(option,ensure_ascii=False,indent=2)+'\n'+fence
 
+          def clean_chart_request_for_context(req):
+              allowed_keys=['enabled','renderer','chart_type','x_field','y_field','title','series_name','top_n','sort','label','warning']
+              return {k:req.get(k) for k in allowed_keys if k in req}
+
           def _apply_sort_top(rows, req):
               data=list(rows)
               sort=req.get('sort') if isinstance(req.get('sort'),dict) else {}
@@ -231,7 +235,7 @@
               rows=_rows(last_merged_rows); req=_loads(normalized_chart_request_json,{}) if isinstance(_loads(normalized_chart_request_json,{}),dict) else {}
               if not chart_valid or not rows:
                   text=(chart_error or '当前结果不适合生成图表。') + ('\n\n'+chart_warning if chart_warning else '')
-                  return {'final_answer_markdown': text, 'chart_request': req, 'chart_echarts_markdown': '', 'final_answer_summary': text, 'updated_at': _now_iso()}
+                  return {'final_answer_markdown': text, 'chart_request': req, 'chart_request_for_context': clean_chart_request_for_context(req), 'chart_echarts_markdown': '', 'final_answer_summary': text, 'updated_at': _now_iso()}
               x=str(req.get('x_field') or '').strip(); y=str(req.get('y_field') or '').strip(); chart_type=str(req.get('chart_type') or 'bar').strip().lower(); title=str(req.get('title') or '上一轮结果图表').strip()
               data_rows=_apply_sort_top(rows[:200], req)
               categories=[]; values=[]; pie_data=[]; scatter_data=[]
@@ -253,7 +257,7 @@
               note='已基于上一轮查询结果复用数据并更新图表展示。'
               if chart_warning: note+='\n\n提示：'+chart_warning
               md=_markdown(option); final=md+'\n\n'+note
-              return {'final_answer_markdown': final, 'chart_request': req, 'chart_echarts_markdown': md, 'final_answer_summary': note, 'updated_at': _now_iso()}
+              return {'final_answer_markdown': final, 'chart_request': req, 'chart_request_for_context': clean_chart_request_for_context(req), 'chart_echarts_markdown': md, 'final_answer_summary': note, 'updated_at': _now_iso()}
         code_language: python3
         desc: ''
         outputs:
@@ -261,6 +265,9 @@
             children:
             type: string
           chart_request:
+            children:
+            type: object
+          chart_request_for_context:
             children:
             type: object
           chart_echarts_markdown:
@@ -365,12 +372,12 @@
         outputs:
         - value_selector:
           - '1776000000006'
-          - chart_request
+          - chart_request_for_context
           value_type: object
           variable: last_chart_request_json
         - value_selector:
           - '1776000000006'
-          - chart_request
+          - chart_request_for_context
           value_type: object
           variable: last_chart
         - value_selector:
@@ -756,10 +763,16 @@
               ctype=_norm_type(q)
               return {'chart_type': ctype} if ctype else {}
 
+          def _truthy(v):
+              if isinstance(v, bool): return v
+              if isinstance(v, str): return v.strip().lower() in {'true','1','yes','y'}
+              return bool(v)
+
           def main(chart_structured, chart_text: str, question: str, last_merged_rows, last_chart_request_json: str, chart_modification_json: str):
               obj=_loads(chart_structured,{}) or _loads(chart_text,{})
               base=_loads(last_chart_request_json,{})
               if not isinstance(base,dict): base={}
+              old_chart_type=_norm_type(base.get('chart_type'))
               mod=_loads(chart_modification_json,{})
               if not isinstance(mod,dict): mod={}
               req=obj.get('chart_request') if isinstance(obj,dict) and isinstance(obj.get('chart_request'),dict) else {}
@@ -770,13 +783,19 @@
               merged=_merge_non_empty(DEFAULTS, base)
               merged=_merge_non_empty(merged, patch)
               ctype=_norm_type(merged.get('chart_type')) or 'bar'
+              old_chart_type=old_chart_type or _norm_type(merged.get('old_chart_type'))
               merged['chart_type']=ctype
               merged['enabled']=bool(merged.get('enabled', True))
               merged['renderer']=str(merged.get('renderer') or 'echarts')
               merged['x_field']=str(merged.get('x_field') or '').strip()
               merged['y_field']=str(merged.get('y_field') or '').strip()
               merged['title']=str(merged.get('title') or '上一轮结果图表').strip()[:60]
-              merged['series_name']=str(merged.get('series_name') or merged.get('y_field') or 'value').strip() or 'value'
+              if old_chart_type=='bar' and ctype=='pie' and not _truthy(merged.get('title_update')) and '对比' in merged['title']:
+                  merged['title']=merged['title'].replace('对比','占比')
+              series_name=str(merged.get('series_name') or '').strip()
+              if (not series_name or series_name=='value') and merged.get('y_field'):
+                  series_name=merged['y_field']
+              merged['series_name']=series_name or 'value'
               try: merged['top_n']=int(merged.get('top_n') or 0)
               except Exception: merged['top_n']=0
               if not isinstance(merged.get('sort'),dict): merged['sort']={}
