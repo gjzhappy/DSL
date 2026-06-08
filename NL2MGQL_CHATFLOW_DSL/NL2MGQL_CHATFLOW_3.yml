@@ -810,6 +810,123 @@
       type: custom
       width: 242
     - data:
+        assigned_variable_selector:
+        - conversation
+        - last_question
+        desc: ''
+        input_variable_selector:
+        - '1775000000007'
+        - question
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - question
+          variable_selector:
+          - conversation
+          - last_question
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          variable_selector:
+          - conversation
+          - last_normalized_semantic_plan_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          variable_selector:
+          - conversation
+          - last_normalized_execution_plan
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - merged_rows_json
+          variable_selector:
+          - conversation
+          - last_merged_rows
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - merged_rows_json
+          variable_selector:
+          - conversation
+          - last_query_result_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_request_json
+          variable_selector:
+          - conversation
+          - last_chart_request_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_request_json
+          variable_selector:
+          - conversation
+          - last_chart
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_echarts_markdown
+          variable_selector:
+          - conversation
+          - last_chart_echarts_markdown
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - final_answer_summary
+          variable_selector:
+          - conversation
+          - last_result_summary
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - last_error
+          variable_selector:
+          - conversation
+          - last_error
+          write_mode: over-write
+        selected: false
+        title: 变量赋值_保存多轮上下文
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1775000000023'
+      position:
+        x: 10400
+        "y": -300
+      positionAbsolute:
+        x: 10400
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
         outputs:
         - value_selector:
           - '1775000000007'
@@ -878,10 +995,10 @@
       height: 270
       id: '1773910028939'
       position:
-        x: 10400
+        x: 10800
         "y": -300
       positionAbsolute:
-        x: 10400
+        x: 10800
         "y": -300
       selected: false
       sourcePosition: right
