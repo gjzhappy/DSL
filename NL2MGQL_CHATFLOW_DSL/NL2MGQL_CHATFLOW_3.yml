@@ -927,7 +927,11 @@
               old_semantic_plan_json = _safe_json(last_normalized_semantic_plan_json)
               last_rows_json = json.dumps(rows, ensure_ascii=False)
               last_chart_json = str(last_chart_request_json_state or '').strip() or _safe_json(last_chart)
-              has_last_context = bool(str(old_semantic_plan_json or '').strip() or rows)
+              last_question_text = str(last_question or '').strip()
+              has_plan = bool(str(old_semantic_plan_json or '').strip())
+              has_rows = bool(rows)
+              has_chart = bool(str(last_chart_json or '').strip())
+              has_last_context = bool(last_question_text and (has_plan or has_rows or has_chart))
               payload = {
                   'has_last_context': has_last_context,
                   'last_question': str(last_question or ''),
