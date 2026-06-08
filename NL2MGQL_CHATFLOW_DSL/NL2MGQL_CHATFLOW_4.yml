@@ -189,6 +189,10 @@
     - data:
         code: |
           import json
+          from datetime import datetime, timezone
+
+          def _now_iso():
+              return datetime.now(timezone.utc).isoformat()
 
           def _loads(value, fallback):
               if isinstance(value, (dict, list)): return value
@@ -213,7 +217,7 @@
               rows=_rows(last_merged_rows); req=_loads(normalized_chart_request_json,{}) if isinstance(_loads(normalized_chart_request_json,{}),dict) else {}
               if not chart_valid or not rows:
                   text=(chart_error or '当前结果不适合生成图表。') + ('\n\n'+chart_warning if chart_warning else '')
-                  return {'final_answer_markdown': text, 'chart_request': req, 'chart_echarts_markdown': '', 'final_answer_summary': text}
+                  return {'final_answer_markdown': text, 'chart_request': req, 'chart_echarts_markdown': '', 'final_answer_summary': text, 'updated_at': _now_iso()}
               x=str(req.get('x_field') or '').strip(); y=str(req.get('y_field') or '').strip(); chart_type=str(req.get('chart_type') or 'bar').strip().lower(); title=str(req.get('title') or '上一轮结果图表').strip()
               categories=[]; values=[]; pie_data=[]
               for row in rows[:200]:
@@ -227,7 +231,7 @@
               note='已基于上一轮查询结果复用数据并更新图表展示。'
               if chart_warning: note+='\n\n提示：'+chart_warning
               md=_markdown(option); final=md+'\n\n'+note
-              return {'final_answer_markdown': final, 'chart_request': req, 'chart_echarts_markdown': md, 'final_answer_summary': note}
+              return {'final_answer_markdown': final, 'chart_request': req, 'chart_echarts_markdown': md, 'final_answer_summary': note, 'updated_at': _now_iso()}
         code_language: python3
         desc: ''
         outputs:
@@ -241,6 +245,9 @@
             children:
             type: string
           final_answer_summary:
+            children:
+            type: string
+          updated_at:
             children:
             type: string
         selected: false
@@ -338,6 +345,11 @@
           - '1776000000006'
           - chart_request
           value_type: object
+          variable: last_chart_request_json
+        - value_selector:
+          - '1776000000006'
+          - chart_request
+          value_type: object
           variable: last_chart
         - value_selector:
           - '1776000000006'
@@ -349,6 +361,16 @@
           - final_answer_summary
           value_type: string
           variable: last_result_summary
+        - value_selector:
+          - '1776000000006'
+          - final_answer_summary
+          value_type: string
+          variable: last_final_answer_summary
+        - value_selector:
+          - '1776000000006'
+          - updated_at
+          value_type: string
+          variable: last_updated_at
         selected: false
         answer: "{{#1776000000006.final_answer_markdown#}}"
         title: Answer_改图复用结果
