@@ -206,12 +206,26 @@
               return [x for x in parsed if isinstance(x,dict)] if isinstance(parsed,list) else []
 
           def _num(v):
-              try: return float(v)
+              if v is None or isinstance(v,bool): return None
+              try:
+                  if isinstance(v,str) and not v.strip(): return None
+                  return float(v)
               except Exception: return None
 
           def _markdown(option):
               fence=chr(96)*3
               return fence+'echarts\n'+json.dumps(option,ensure_ascii=False,indent=2)+'\n'+fence
+
+          def _apply_sort_top(rows, req):
+              data=list(rows)
+              sort=req.get('sort') if isinstance(req.get('sort'),dict) else {}
+              field=str(sort.get('field') or req.get('y_field') or '').strip()
+              direction=str(sort.get('direction') or '').lower().strip()
+              if field and direction in {'asc','desc'}:
+                  data=sorted(data, key=lambda r: (_num(r.get(field)) if _num(r.get(field)) is not None else str(r.get(field) or '')), reverse=(direction=='desc'))
+              try: top_n=int(req.get('top_n') or 0)
+              except Exception: top_n=0
+              return data[:top_n] if top_n>0 else data
 
           def main(last_merged_rows, normalized_chart_request_json: str, chart_valid, chart_warning: str, chart_error: str):
               rows=_rows(last_merged_rows); req=_loads(normalized_chart_request_json,{}) if isinstance(_loads(normalized_chart_request_json,{}),dict) else {}
@@ -219,15 +233,23 @@
                   text=(chart_error or '当前结果不适合生成图表。') + ('\n\n'+chart_warning if chart_warning else '')
                   return {'final_answer_markdown': text, 'chart_request': req, 'chart_echarts_markdown': '', 'final_answer_summary': text, 'updated_at': _now_iso()}
               x=str(req.get('x_field') or '').strip(); y=str(req.get('y_field') or '').strip(); chart_type=str(req.get('chart_type') or 'bar').strip().lower(); title=str(req.get('title') or '上一轮结果图表').strip()
-              categories=[]; values=[]; pie_data=[]
-              for row in rows[:200]:
-                  name=str(row.get(x) if row.get(x) is not None else '未分类'); val=_num(row.get(y)) or 0
+              data_rows=_apply_sort_top(rows[:200], req)
+              categories=[]; values=[]; pie_data=[]; scatter_data=[]
+              for row in data_rows:
+                  name=str(row.get(x) if row.get(x) is not None else '未分类')
+                  val=_num(row.get(y)) or 0
                   categories.append(name); values.append(val); pie_data.append({'name':name,'value':val})
+                  if chart_type=='scatter':
+                      xv=_num(row.get(x)); yv=_num(row.get(y))
+                      if xv is not None and yv is not None: scatter_data.append([xv,yv])
               if chart_type=='pie':
                   option={'title':{'text':title},'tooltip':{'trigger':'item'},'series':[{'name':y,'type':'pie','data':pie_data}]}
+              elif chart_type=='scatter':
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x},'yAxis':{'type':'value','name':y},'series':[{'name':req.get('series_name') or y,'type':'scatter','data':scatter_data}]}
               else:
-                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','data':categories},'yAxis':{'type':'value'},'series':[{'name':y,'type':'line' if chart_type=='line' else 'bar','data':values}]}
-              req['option']=option
+                  series={'name':req.get('series_name') or y,'type':'line' if chart_type in {'line','area'} else 'bar','data':values}
+                  if chart_type=='area': series['areaStyle']={}
+                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','data':categories},'yAxis':{'type':'value'},'series':[series]}
               note='已基于上一轮查询结果复用数据并更新图表展示。'
               if chart_warning: note+='\n\n提示：'+chart_warning
               md=_markdown(option); final=md+'\n\n'+note
@@ -614,21 +636,24 @@
           variable_selector: []
         model:
           completion_params:
+            num_predict: 512
             temperature: 0.0
+            think: false
           mode: chat
           name: qwen3.5:35b
           provider: langgenius/ollama/ollama
         prompt_template:
         - id: chart-system
           role: system
-          text: 你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。只能基于上一轮查询结果规划图表，不执行
-            Mongo，不修改查询结果或查询计划。用户只说换成饼图时，仅修改 chart_type=pie，保留原 x/y 字段和数据语义。
+          text: |-
+            你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。用户通常是在上一轮查询结果基础上修改图表展示方式。只修改图表类型、标题、排序、TopN、标签、百分比等展示属性时，不要修改查询条件，不要触发重新查询。
+            如果用户没有明确指定 x_field/y_field，请输出空字符串，表示沿用上一轮字段；空字符串表示“不修改”，不是“清空”。不得编造字段。支持 chart_type: bar, pie, line, area, scatter。bar/pie/line/area 通常需要一个类别或时间字段 + 一个数值字段；scatter 需要两个数值字段。
         - id: chart-user
           role: user
           text: |-
             当前用户问题：{{#sys.query#}}
             上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
-            上一轮图表请求：{{#conversation.last_chart#}}
+            上一轮图表请求（标准扁平 chart_request）：{{#conversation.last_chart_request_json#}}
             图表修改意图：{{#1776000000004.chart_modification_json#}}
             上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
         selected: false
@@ -672,7 +697,15 @@
     - data:
         code: |
           import json, re
-          SUPPORTED={'bar','line','pie'}
+          SUPPORTED={'bar','line','pie','area','scatter'}
+          ALIASES={
+              'column':'bar','bar':'bar','柱状图':'bar','柱状':'bar','条形图':'bar','条形':'bar',
+              'pie':'pie','饼图':'pie',
+              'line':'line','折线图':'line','折线':'line','趋势图':'line','趋势':'line',
+              'area':'area','面积图':'area','面积':'area',
+              'scatter':'scatter','散点图':'scatter','散点':'scatter',
+          }
+          DEFAULTS={'enabled': True, 'renderer':'echarts', 'chart_type':'bar', 'x_field':'', 'y_field':'', 'title':'上一轮结果图表', 'series_name':'', 'top_n':0, 'sort':{}, 'label':{}, 'warning':''}
 
           def _extract(text):
               text=str(text or '').strip()
@@ -688,42 +721,69 @@
                   except Exception: return fb
               return fb
 
-          def _rows(v):
-              x=_loads(v,v)
-              return [r for r in x if isinstance(r,dict)] if isinstance(x,list) else []
+          def _norm_type(v):
+              raw=str(v or '').lower().strip()
+              if raw in ALIASES: return ALIASES[raw]
+              for k,val in ALIASES.items():
+                  if k in raw: return val
+              return raw if raw in SUPPORTED else ''
 
-          def _num(v):
-              try: return float(v)
-              except Exception: return None
+          def _non_empty(v, key=''):
+              if v is None: return False
+              if isinstance(v, str): return bool(v.strip())
+              if isinstance(v, (dict, list)): return bool(v)
+              if key == 'top_n':
+                  try: return int(v) > 0
+                  except Exception: return False
+              return True
 
-          def _pick(rows, old):
-              x=str(old.get('x_field') or old.get('axis_x_title') or '').strip(); y=str(old.get('y_field') or old.get('series_name') or old.get('axis_y_title') or '').strip()
-              if rows:
-                  first=rows[0]
-                  if not x:
-                      x=next((k for k,v in first.items() if _num(v) is None), '')
-                  if not y:
-                      y=next((k for k,v in first.items() if k!=x and _num(v) is not None), '')
-              return x,y
+          def _merge_non_empty(base, patch):
+              result=dict(base or {})
+              for k,v in (patch or {}).items():
+                  if k == 'chart_type':
+                      nt=_norm_type(v)
+                      if nt: result[k]=nt
+                      continue
+                  if not _non_empty(v, k):
+                      continue
+                  if isinstance(v, str):
+                      v=v.strip()
+                  result[k]=v
+              return result
 
-          def main(chart_structured, chart_text: str, question: str, last_merged_rows, last_chart, chart_modification_json: str):
+          def _question_patch(question):
+              q=str(question or '')
+              ctype=_norm_type(q)
+              return {'chart_type': ctype} if ctype else {}
+
+          def main(chart_structured, chart_text: str, question: str, last_merged_rows, last_chart_request_json: str, chart_modification_json: str):
               obj=_loads(chart_structured,{}) or _loads(chart_text,{})
-              rows=_rows(last_merged_rows); old=_loads(last_chart,{}) if isinstance(_loads(last_chart,{}),dict) else {}
-              mod=_loads(chart_modification_json,{}) if isinstance(_loads(chart_modification_json,{}),dict) else {}
+              base=_loads(last_chart_request_json,{})
+              if not isinstance(base,dict): base={}
+              mod=_loads(chart_modification_json,{})
+              if not isinstance(mod,dict): mod={}
               req=obj.get('chart_request') if isinstance(obj,dict) and isinstance(obj.get('chart_request'),dict) else {}
-              chart_type=str(req.get('chart_type') or mod.get('chart_type') or old.get('chart_type') or '').lower().strip()
-              q=str(question or '').lower()
-              if '饼图' in q or 'pie' in q: chart_type='pie'
-              elif '折线' in q or 'line' in q: chart_type='line'
-              elif '柱状' in q or 'bar' in q: chart_type='bar'
-              if chart_type not in SUPPORTED: chart_type='bar'
-              x=str(req.get('x_field') or '').strip(); y=str(req.get('y_field') or '').strip()
-              ox,oy=_pick(rows, old)
-              x=x or ox; y=y or oy
-              title=str(req.get('title') or old.get('title') or '上一轮结果图表').strip()[:40]
-              normalized={'enabled': True, 'renderer':'echarts','chart_type':chart_type,'x_field':x,'y_field':y,'title':title}
-              warning=str((obj or {}).get('warning') or '') if isinstance(obj,dict) else ''
-              return {'chart_request_json': json.dumps(normalized, ensure_ascii=False), 'chart_plan_warning': warning, 'chart_plan_valid': bool(rows and x and y)}
+              patch={}
+              patch=_merge_non_empty(patch, mod)
+              patch=_merge_non_empty(patch, req)
+              patch=_merge_non_empty(patch, _question_patch(question))
+              merged=_merge_non_empty(DEFAULTS, base)
+              merged=_merge_non_empty(merged, patch)
+              ctype=_norm_type(merged.get('chart_type')) or 'bar'
+              merged['chart_type']=ctype
+              merged['enabled']=bool(merged.get('enabled', True))
+              merged['renderer']=str(merged.get('renderer') or 'echarts')
+              merged['x_field']=str(merged.get('x_field') or '').strip()
+              merged['y_field']=str(merged.get('y_field') or '').strip()
+              merged['title']=str(merged.get('title') or '上一轮结果图表').strip()[:60]
+              merged['series_name']=str(merged.get('series_name') or merged.get('y_field') or 'value').strip() or 'value'
+              try: merged['top_n']=int(merged.get('top_n') or 0)
+              except Exception: merged['top_n']=0
+              if not isinstance(merged.get('sort'),dict): merged['sort']={}
+              if not isinstance(merged.get('label'),dict): merged['label']={}
+              warning=str((obj or {}).get('warning') or merged.get('warning') or '') if isinstance(obj,dict) else str(merged.get('warning') or '')
+              merged['warning']=warning
+              return {'chart_request_json': json.dumps(merged, ensure_ascii=False), 'chart_plan_warning': warning, 'chart_plan_valid': bool(merged.get('chart_type'))}
         code_language: python3
         desc: 解析/规范化图表修改规划，校验 chart_type/x_field/y_field。
         outputs:
@@ -762,9 +822,9 @@
           variable: last_merged_rows
         - value_selector:
           - conversation
-          - last_chart
-          value_type: object
-          variable: last_chart
+          - last_chart_request_json
+          value_type: string
+          variable: last_chart_request_json
         - value_selector:
           - '1776000000004'
           - chart_modification_json
@@ -785,8 +845,10 @@
       width: 242
     - data:
         code: |
-          import json
-          SUPPORTED={'bar','line','pie'}
+          import json, re
+          from datetime import datetime
+          SUPPORTED={'bar','line','pie','area','scatter'}
+          TIME_NAMES=('date','time','day','month','year','created','updated','日期','时间','日','月','年')
 
           def _loads(v,fb):
               if isinstance(v,(dict,list)): return v
@@ -800,27 +862,114 @@
               return [r for r in x if isinstance(r,dict)] if isinstance(x,list) else []
 
           def _num(v):
-              try: return float(v)
+              if v is None or isinstance(v,bool): return None
+              try:
+                  if isinstance(v,str) and not v.strip(): return None
+                  return float(v)
               except Exception: return None
 
+          def _is_time_value(v):
+              if v is None: return False
+              s=str(v).strip()
+              if not s: return False
+              if re.match(r'^\d{4}[-/]\d{1,2}[-/]\d{1,2}', s): return True
+              if re.match(r'^\d{4}[-/]\d{1,2}$', s): return True
+              try:
+                  datetime.fromisoformat(s.replace('Z','+00:00'))
+                  return True
+              except Exception:
+                  return False
+
+          def _profile(rows):
+              fields=[]
+              for row in rows[:20]:
+                  for k in row.keys():
+                      if k not in fields: fields.append(k)
+              numeric=[]; time=[]; category=[]; ordered=[]
+              for f in fields:
+                  vals=[r.get(f) for r in rows[:50] if r.get(f) is not None]
+                  simple=[v for v in vals if not isinstance(v,(dict,list))]
+                  if not simple: continue
+                  nums=sum(1 for v in simple if _num(v) is not None)
+                  times=sum(1 for v in simple if _is_time_value(v))
+                  lname=str(f).lower()
+                  is_num=nums>0 and nums>=max(1, int(len(simple)*0.7))
+                  is_time=any(t in lname for t in TIME_NAMES) or (times>0 and times>=max(1, int(len(simple)*0.7)))
+                  if is_num: numeric.append(f)
+                  if is_time: time.append(f)
+                  if not is_num: category.append(f)
+                  if is_time or is_num: ordered.append(f)
+              return fields,numeric,category,time,ordered
+
+          def _exists(f, fields): return bool(f and f in fields)
+
+          def _field_numeric(rows, f):
+              vals=[r.get(f) for r in rows[:50] if r.get(f) is not None]
+              return bool(vals) and sum(1 for v in vals if _num(v) is not None)>=max(1,int(len(vals)*0.7))
+
+          def _apply_sort_top(rows, req):
+              data=list(rows)
+              sort=req.get('sort') if isinstance(req.get('sort'),dict) else {}
+              field=str(sort.get('field') or req.get('y_field') or '').strip()
+              direction=str(sort.get('direction') or '').lower().strip()
+              if field and direction in {'asc','desc'}:
+                  data=sorted(data, key=lambda r: (_num(r.get(field)) if _num(r.get(field)) is not None else str(r.get(field) or '')), reverse=(direction=='desc'))
+              try: top_n=int(req.get('top_n') or 0)
+              except Exception: top_n=0
+              return data[:top_n] if top_n>0 else data
+
           def main(chart_request_json: str, last_merged_rows, chart_plan_warning: str):
-              req=_loads(chart_request_json,{}) if isinstance(_loads(chart_request_json,{}),dict) else {}
+              req=_loads(chart_request_json,{})
+              if not isinstance(req,dict): req={}
               rows=_rows(last_merged_rows); warnings=[]; error=''; rec=''
+              req.setdefault('enabled', True); req.setdefault('renderer','echarts')
+              req.setdefault('series_name', str(req.get('y_field') or 'value') or 'value')
+              req.setdefault('top_n',0); req.setdefault('sort',{}); req.setdefault('label',{}); req.setdefault('warning','')
               ctype=str(req.get('chart_type') or 'bar').lower().strip()
-              if ctype not in SUPPORTED: warnings.append('不支持的图表类型，已推荐柱状图'); rec='bar'; ctype='bar'; req['chart_type']='bar'
+              if ctype not in SUPPORTED:
+                  warnings.append('不支持的图表类型，已推荐柱状图'); rec='bar'; ctype='bar'; req['chart_type']='bar'
               x=str(req.get('x_field') or '').strip(); y=str(req.get('y_field') or '').strip()
-              if not rows: error='查询结果为空，不生成空图。'
-              elif not x or x not in rows[0]: error='图表横轴字段不存在。'
-              elif not y or y not in rows[0]: error='图表纵轴字段不存在。'
-              elif _num(rows[0].get(y)) is None: error='图表纵轴字段不是数字。'
-              if rows and x:
-                  cats=len({str(r.get(x)) for r in rows})
-                  if cats>20: warnings.append('分类数量较多，图表可读性可能下降。')
-                  if ctype=='pie' and cats>12: warnings.append('饼图分类过多，建议使用柱状图。'); rec=rec or 'bar'
-              if ctype=='line' and x and not any(t in x.lower() for t in ['date','time','day','month','year','created','updated']): warnings.append('折线图横轴不是明显时间/有序字段，请确认含义。')
-              if len(str(req.get('title') or ''))>40: req['title']=str(req.get('title'))[:40]
+              if not rows:
+                  error='查询结果为空，不生成空图。'
+              else:
+                  fields,numeric,category,time_fields,ordered=_profile(rows)
+                  if ctype in {'bar','pie'}:
+                      if not x: x=(category[0] if category else (time_fields[0] if time_fields else ''))
+                      if not y: y=(numeric[0] if numeric else '')
+                  elif ctype in {'line','area'}:
+                      used_category_fallback=False
+                      if not x:
+                          x=(time_fields[0] if time_fields else (category[0] if category else (ordered[0] if ordered else '')))
+                          used_category_fallback=bool(x and x in category and x not in time_fields)
+                      if not y: y=(next((f for f in numeric if f!=x), '') or (numeric[0] if numeric else ''))
+                      if used_category_fallback or (x and x not in time_fields and x not in ordered):
+                          warnings.append('折线/面积图横轴不是明显时间或有序字段，可能不如柱状图适合。')
+                  elif ctype=='scatter':
+                      if not x or not _field_numeric(rows,x):
+                          x=numeric[0] if numeric else x
+                      if not y or y==x or not _field_numeric(rows,y):
+                          y=next((f for f in numeric if f!=x), '')
+                  req['x_field']=x; req['y_field']=y
+                  if ctype=='scatter':
+                      if not x or not y or x==y or not _exists(x,fields) or not _exists(y,fields) or not _field_numeric(rows,x) or not _field_numeric(rows,y):
+                          error='散点图需要两个数值字段。'
+                          rec='bar'
+                  else:
+                      if not x or not _exists(x,fields): error='图表横轴字段不存在。'
+                      elif not y or not _exists(y,fields): error='图表纵轴字段不存在。'
+                      elif not _field_numeric(rows,y): error='图表纵轴字段不是数字。'
+                  if not error and ctype=='pie':
+                      cats=len({str(r.get(x)) for r in rows}) if x else 0
+                      if cats>10:
+                          warnings.append('饼图分类较多，建议使用柱状图。'); rec=rec or 'bar'
+                  if not error and ctype in {'line','area'} and x and x not in time_fields and x not in ordered:
+                      msg='折线/面积图横轴不是明显时间或有序字段，可能不如柱状图适合。'
+                      if msg not in warnings: warnings.append(msg)
+              if len(str(req.get('title') or ''))>60: req['title']=str(req.get('title'))[:60]
+              if not str(req.get('series_name') or '').strip(): req['series_name']=str(req.get('y_field') or 'value') or 'value'
               valid=not bool(error)
-              warn='；'.join([w for w in [chart_plan_warning]+warnings if w])
+              warn='；'.join([w for w in [chart_plan_warning, req.get('warning')]+warnings if w])
+              req['warning']=warn
               return {'chart_valid':valid,'chart_warning':warn,'chart_error':error,'normalized_chart_request_json':json.dumps(req,ensure_ascii=False),'recommended_chart_type':rec,'should_generate_chart':valid}
         code_language: python3
         desc: 查询链路和改图链路共用的图表可视化可行性校验。
