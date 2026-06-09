@@ -186,6 +186,15 @@
           import json
 
           REFINE_LIKE = {'refine_query', 'fix_result', 'continue_previous'}
+          FIELD_LABELS = {
+              'brand': '品牌',
+              'status': '订单状态',
+              'payment_status': '支付状态',
+              'province': '省份',
+              'category': '类目',
+              'product_name': '商品',
+          }
+          OLD_DIM_TOKENS = ('品牌', '厂商', 'brand')
 
 
           def _loads(v):
@@ -210,6 +219,137 @@
                   return {}
               stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or [])
               return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
+
+
+          def _set_first_stage(plan, stage):
+              if not isinstance(plan, dict) or not isinstance(stage, dict):
+                  return
+              if isinstance(plan.get('execution_plan'), dict):
+                  stages = plan['execution_plan'].get('stages')
+                  if isinstance(stages, list) and stages:
+                      stages[0] = stage
+                      plan['execution_plan']['stages'] = stages
+                      return
+              stages = plan.get('stages')
+              if isinstance(stages, list) and stages:
+                  stages[0] = stage
+                  plan['stages'] = stages
+
+
+          def _metric_alias(stage, visualization):
+              metric = str((stage or {}).get('metric_alias') or '').strip()
+              if metric:
+                  return metric
+              y_field = str((visualization or {}).get('y_field') or '').strip()
+              return y_field
+
+
+          def _time_label(stage):
+              tr = (stage or {}).get('time_range') if isinstance((stage or {}).get('time_range'), dict) else {}
+              if str(tr.get('mode') or '') == 'relative_days':
+                  days = int(tr.get('relative_days') or 0)
+                  if days in (58, 59, 60, 61, 62):
+                      return '过去两个月'
+                  if days in (28, 29, 30, 31):
+                      return '过去一个月'
+                  if days == 7:
+                      return '最近7天'
+                  if days > 0:
+                      return '最近' + str(days) + '天'
+              if str(tr.get('mode') or '') == 'absolute':
+                  start = str(tr.get('start') or '').strip()[:10]
+                  end = str(tr.get('end') or '').strip()[:10]
+                  return (start + '至' + end) if start and end else (start or end)
+              return ''
+
+
+          def _metric_label(stage, y_field):
+              metric_alias = str((stage or {}).get('metric_alias') or y_field or '').strip()
+              metric_function = str((stage or {}).get('metric_function') or '').strip().lower()
+              metric_field = str((stage or {}).get('metric_field') or '').strip().lower()
+              low = metric_alias.lower()
+              if 'order_count' in low or '订单数' in metric_alias or (metric_function == 'count' and ('order' in metric_field or metric_alias)):
+                  return '订单数'
+              if any(k in low for k in ('amount', 'gmv', 'sales')) or any(k in metric_alias for k in ('金额', '销售额')):
+                  return '销售额'
+              if metric_function == 'count':
+                  return '数量'
+              return metric_alias or '指标'
+
+
+          def _build_title(stage, group_field, y_field):
+              time = _time_label(stage)
+              dim = FIELD_LABELS.get(str(group_field or '').strip(), str(group_field or '').strip())
+              metric = _metric_label(stage, y_field)
+              return (time + ('各' + dim if dim else '') + metric + '对比')[:32]
+
+
+          def _sync_chart_with_group(plan):
+              if not isinstance(plan, dict):
+                  return {}
+              stage = _first_stage(plan)
+              group_fields = stage.get('group_fields') if isinstance(stage.get('group_fields'), list) else []
+              primary_group_field = str(group_fields[0] or '').strip() if group_fields else ''
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              visualization = plan.get('visualization') if isinstance(plan.get('visualization'), dict) else {}
+              if not visualization and chart_request:
+                  visualization = {
+                      'enabled': _bool(plan.get('needs_chart')) or bool(chart_request),
+                      'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or 'bar').strip() or 'bar',
+                      'x_field': str(chart_request.get('x_field') or chart_request.get('x_axis') or '').strip(),
+                      'y_field': str(chart_request.get('y_field') or chart_request.get('y_axis') or '').strip(),
+                      'series_name': str(chart_request.get('series_name') or '').strip(),
+                      'title': str(chart_request.get('title') or '').strip(),
+                  }
+              enabled = _bool(plan.get('needs_chart')) or _bool(visualization.get('enabled')) or _bool(chart_request.get('enabled'))
+              chart_type = str(visualization.get('chart_type') or chart_request.get('chart_type') or chart_request.get('type') or 'bar').strip().lower() or 'bar'
+              if chart_type == 'column':
+                  chart_type = 'bar'
+              if chart_type not in {'bar', 'line', 'pie', 'area', 'boxplot'}:
+                  chart_type = 'bar'
+              if enabled:
+                  visualization['enabled'] = True
+                  visualization['chart_type'] = chart_type
+                  plan['needs_chart'] = True
+              y_field = str(visualization.get('y_field') or chart_request.get('y_field') or chart_request.get('y_axis') or _metric_alias(stage, visualization) or '').strip()
+              if y_field:
+                  visualization['y_field'] = y_field
+              before = str(visualization.get('x_field') or chart_request.get('x_field') or chart_request.get('x_axis') or '').strip()
+              after = before
+              compatible_fields = set(str(x or '').strip() for x in group_fields if str(x or '').strip())
+              chart_sync_applied = False
+              reason = ''
+              if enabled and chart_type in {'bar', 'line', 'pie', 'area'} and primary_group_field and (not before or before not in compatible_fields):
+                  after = primary_group_field
+                  visualization['x_field'] = after
+                  chart_sync_applied = True
+                  reason = 'x_field ' + (before or '<empty>') + ' not compatible with group_fields ' + repr(group_fields) + '; changed to ' + after
+              elif before:
+                  visualization['x_field'] = before
+              series = str(visualization.get('series_name') or chart_request.get('series_name') or '').strip()
+              if not series or series == 'value':
+                  series = y_field or _metric_alias(stage, visualization)
+              if series:
+                  visualization['series_name'] = series
+              title = str(visualization.get('title') or chart_request.get('title') or '').strip()
+              if enabled and primary_group_field:
+                  current_label = FIELD_LABELS.get(primary_group_field, primary_group_field)
+                  old_title_mismatch = any(tok in title for tok in OLD_DIM_TOKENS) and current_label not in title
+                  if chart_sync_applied or not title or old_title_mismatch:
+                      visualization['title'] = _build_title(stage, primary_group_field, y_field)
+              if visualization:
+                  plan['visualization'] = visualization
+                  plan['chart_request'] = dict(chart_request, **visualization)
+              debug = plan.get('debug') if isinstance(plan.get('debug'), dict) else {}
+              debug.update({
+                  'chart_sync_applied': bool(chart_sync_applied),
+                  'chart_sync_reason': reason,
+                  'chart_x_field_before': before,
+                  'chart_x_field_after': after,
+              })
+              plan['debug'] = debug
+              _set_first_stage(plan, stage)
+              return debug
 
 
           def _derive_planner(plan, original_planner):
@@ -247,6 +387,8 @@
                   execution_input_error = execution_input_error or str(guard_error or 'refine_query 重规划差异保护未通过')
               if not plan:
                   execution_input_error = execution_input_error or '缺少可用于 Mongo 编译的 normalized_semantic_plan_json'
+              if plan:
+                  _sync_chart_with_group(plan)
               normalized_json = json.dumps(plan, ensure_ascii=False) if plan else ''
               planner = _derive_planner(plan, _loads(original_planner)) if plan else _loads(original_planner)
               return {'normalized_semantic_plan_json': normalized_json, 'planner': planner, 'semantic_plan_source': source, 'schema_context': schema_context, 'execution_input_valid': bool(plan) and not execution_input_error, 'execution_input_error': execution_input_error, 'answer_mode': str(plan.get('answer_mode') or '') if isinstance(plan, dict) else ''}
@@ -1089,12 +1231,15 @@
               system = '你是 refine_query full replan 语义计划重规划器。只输出符合 semantic_plan JSON Schema 的 JSON 对象；不得输出 markdown、解释文字或代码块。必须在上一轮 normalized semantic plan 基础上按本轮修改要求生成完整 semantic plan。'
               hard_rules = '\n'.join([
                   '1. 用户未明确要求修改的字段必须保持上一轮不变。',
-                  '2. 输出 semantic plan 时必须使用 schema 真实字段名，不得使用 alias、中文口语字段或不存在字段，例如订单状态/order_status 应归一为 status。',
+                  '2. 输出 semantic plan 时必须使用 schema 真实字段名，不得使用 alias、中文口语字段或不存在字段，例如订单状态/order_status/履约状态 应归一为 status。',
                   '3. 只有当前用户问题或 normalized query_refinement_json 明确要求修改，或 schema_context 证明原字段不适合时，才允许变更字段。',
                   '4. 不允许随意修改 primary_collection、metric_function、metric_field、metric_alias、filters、sort、limit、answer_mode。',
                   '5. schema_context 为空时，只能基于 old plan 进行保守重规划。',
-                  '6. 输出完整 JSON，必须包含 execution_plan、execution_plan.stages、needs_chart(boolean)、chart_request、answer_mode。',
-                  '7. 不输出 Mongo pipeline、markdown、解释文字或代码块。'
+                  '6. 输出完整 JSON，必须包含 execution_plan、execution_plan.stages、needs_chart(boolean)、chart_request、answer_mode；needs_chart 必须是 JSON boolean true/false，不得输出字符串 "true"/"false"。',
+                  '7. 如果当前用户问题包含“图、柱状图、折线图、饼图、生成新的图表、做图、可视化”等图表需求，则 needs_chart 必须为 boolean true。',
+                  '8. 如果 query_refinement_json 明确修改 group_fields，或当前用户问题明确“不再按 X，改为按 Y 统计”，则 execution_plan.stages[0].group_fields 必须使用新的真实 schema 字段，chart_request.x_field 必须同步改为新的 group_fields[0]，chart_request.title 必须同步使用新的业务维度名称，不允许 chart_request.x_field 继续保留上一轮旧字段。',
+                  '9. 示例：用户说“不再按品牌统计，改为按订单状态统计”，schema 中“订单状态/order_status/履约状态”对应真实字段 status，则必须输出 group_fields=["status"], chart_request.x_field="status", chart_request.y_field="order_count", chart_request.chart_type="bar", chart_request.title="过去两个月各订单状态订单数对比"；不得输出 group_fields=["brand"]、chart_request.x_field="brand" 或 “过去两个月各品牌订单数对比”。',
+                  '10. 不输出 Mongo pipeline、markdown、解释文字或代码块。'
               ])
               parts = [
                   '当前用户问题：\n' + str(question or ''),

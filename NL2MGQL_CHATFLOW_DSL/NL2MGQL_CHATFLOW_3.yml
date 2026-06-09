@@ -606,12 +606,21 @@
 
           INTENT_WORDS = ('描述', '分析', '总结', '说明', '对比')
           GROUP_FIELD_CANDIDATES = (
+              'status', 'payment_status',
               'vendor', 'vendor_name', 'manufacturer', 'manufacturer_name',
               'supplier', 'supplier_name', 'brand', 'brand_name', 'factory',
               '厂商', '厂商名称', '供应商', '供应商名称', '品牌',
               '_id', 'name', 'category'
           )
           METRIC_FIELD_HINTS = ('count', 'total', 'sum', 'amount', 'qty', 'quantity', 'orders', '订单数', '数量', '金额', '销售额', '合计')
+          FIELD_LABELS = {
+              'brand': '品牌',
+              'status': '订单状态',
+              'payment_status': '支付状态',
+              'province': '省份',
+              'category': '类目',
+              'product_name': '商品',
+          }
 
 
           def _loads_obj(value):
@@ -652,7 +661,26 @@
               return answer_mode == 'data_with_analysis' or any(word in q for word in INTENT_WORDS)
 
 
-          def _pick_group_field(rows):
+          def _first_stage(plan):
+              stages = []
+              if isinstance(plan, dict):
+                  stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or [])
+              return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
+
+
+          def _plan_group_field(normalized_plan, rows):
+              stage = _first_stage(normalized_plan)
+              group_fields = stage.get('group_fields') or []
+              group = str(group_fields[0] or '').strip() if group_fields else ''
+              if group and rows and group in rows[0]:
+                  return group
+              return ''
+
+
+          def _pick_group_field(rows, normalized_plan=None):
+              plan_group = _plan_group_field(normalized_plan or {}, rows)
+              if plan_group:
+                  return plan_group
               if not rows:
                   return ''
               keys = list(rows[0].keys())
@@ -665,9 +693,13 @@
               return keys[0] if keys else ''
 
 
-          def _pick_metric_field(rows, group_field):
+          def _pick_metric_field(rows, group_field, normalized_plan=None):
               if not rows:
                   return ''
+              stage = _first_stage(normalized_plan or {})
+              metric_alias = str(stage.get('metric_alias') or '').strip()
+              if metric_alias and metric_alias in rows[0]:
+                  return metric_alias
               keys = [key for key in rows[0].keys() if key != group_field]
               numeric_keys = [key for key in keys if isinstance(rows[0].get(key), (int, float))]
               for key in numeric_keys:
@@ -675,6 +707,20 @@
                   if any(hint in low or hint in str(key) for hint in METRIC_FIELD_HINTS):
                       return key
               return numeric_keys[0] if numeric_keys else (keys[0] if keys else '')
+
+
+          def _field_label(field):
+              field = str(field or '').strip()
+              if field in FIELD_LABELS:
+                  return FIELD_LABELS[field]
+              low = field.lower()
+              if any(k in low or k in field for k in ['manufacturer', 'vendor', 'factory', 'supplier', 'merchant', '厂商', '厂家', '供应商']):
+                  return '厂商'
+              if 'brand' in low or '品牌' in field:
+                  return '品牌'
+              if any(k in low or k in field for k in ['product', 'sku', 'spu', '商品', '产品']):
+                  return '商品'
+              return field or '分组维度'
 
 
           def _fmt(value):
@@ -685,13 +731,14 @@
               return str(value)
 
 
-          def _summary(question, rows):
+          def _summary(question, rows, normalized_plan=None):
               row_count = len(rows)
-              group_field = _pick_group_field(rows)
-              metric_field = _pick_metric_field(rows, group_field)
+              group_field = _pick_group_field(rows, normalized_plan)
+              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
+              group_label = _field_label(group_field)
               title = '结果摘要'
               if not rows:
-                  return title + '：\n- 过去一个月未查询到符合条件的订单数据。'
+                  return title + '：\n- 当前筛选条件下未查询到符合条件的订单数据。'
 
               bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
               if group_field and metric_field:
@@ -699,7 +746,7 @@
                   top = sorted_rows[0]
                   top_name = top.get(group_field, '未知')
                   top_value = top.get(metric_field, '')
-                  bullets.append(f'- 按 {group_field} 分组后，{top_name} 的 {metric_field} 最高，为 {_fmt(top_value)}。')
+                  bullets.append(f'- 按{group_label}分组后，{top_name} 的 {metric_field} 最高，为 {_fmt(top_value)}。')
                   if row_count > 1:
                       tail = sorted_rows[-1]
                       bullets.append(f'- 最低的是 {tail.get(group_field, "未知")}，{metric_field} 为 {_fmt(tail.get(metric_field, ""))}。')
@@ -709,24 +756,27 @@
               return title + '：\n' + '\n'.join(bullets)
 
 
-          def _analysis(rows):
+          def _analysis(rows, normalized_plan=None, chart_available=False):
               if not rows:
-                  return '简单分析：\n- 当前筛选条件下没有可用于对比的订单数据，建议放宽时间范围或检查厂商字段与订单状态筛选条件。'
-              group_field = _pick_group_field(rows)
-              metric_field = _pick_metric_field(rows, group_field)
+                  return '简单分析：\n- 当前筛选条件下没有可用于对比的订单数据，建议放宽时间范围或检查筛选条件。'
+              group_field = _pick_group_field(rows, normalized_plan)
+              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
+              group_label = _field_label(group_field)
               if not group_field or not metric_field:
-                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合图表查看整体分布。'
+                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合统计结果查看整体分布。'
               numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float))]
               if len(numeric) < 2:
                   return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
               sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
               top, second = sorted_rows[0], sorted_rows[1]
               gap = top.get(metric_field) - second.get(metric_field)
+              prefix = '从柱状图看' if chart_available else '从统计结果看'
+              dim_suffix = '状态' if group_field in {'status', 'payment_status'} else group_label
               return (
                   '简单分析：\n'
-                  f'- 从柱状图看，{top.get(group_field, "未知")} 领先，其 {metric_field} 比第二名 '
+                  f'- {prefix}，{top.get(group_field, "未知")} {dim_suffix}的 {metric_field} 最高，比第二名 '
                   f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
-                  '- 可优先关注排名靠前厂商的订单贡献，同时排查低值厂商是否存在订单不足或筛选条件影响。'
+                  f'- 可优先关注 {top.get(group_field, "未知")}、{second.get(group_field, "未知")} 等{group_label}的分布，进一步分析不同{group_label}的订单流转情况。'
               )
 
 
@@ -739,25 +789,41 @@
               return json.dumps(seen, ensure_ascii=False)
 
 
+          def _plan_needs_chart(normalized_plan, semantic_plan, question):
+              viz = normalized_plan.get('visualization') if isinstance(normalized_plan.get('visualization'), dict) else {}
+              chart_request = normalized_plan.get('chart_request') if isinstance(normalized_plan.get('chart_request'), dict) else {}
+              text = str(question or '')
+              asked = any(k in text for k in ['图', '柱状图', '折线图', '饼图', '图表', '做图', '可视化'])
+              return bool(normalized_plan.get('needs_chart') or semantic_plan.get('needs_chart') or viz.get('enabled') or chart_request.get('enabled') or asked)
+
+
           def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, answer_mode: str):
               semantic_plan = _loads_obj(semantic_plan_json)
               normalized_plan = _loads_obj(normalized_semantic_plan_json)
               mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
               result_rows = _rows(rows)
               chart = str(chart_echarts_markdown or '').strip()
+              chart_available = bool(chart)
               needs_text = _needs_analysis(question, mode)
 
               parts = []
-              if chart:
+              if chart_available:
                   parts.append(chart)
-              if chart or needs_text or not chart or not result_rows:
-                  parts.append(_summary(question, result_rows))
-                  parts.append(_analysis(result_rows))
+              if chart_available or needs_text or not chart_available or not result_rows:
+                  parts.append(_summary(question, result_rows, normalized_plan))
+                  parts.append(_analysis(result_rows, normalized_plan, chart_available))
+              if _plan_needs_chart(normalized_plan, semantic_plan, question) and not chart_available and result_rows:
+                  warning = (((normalized_plan.get('visualization') or {}).get('warning')) if isinstance(normalized_plan.get('visualization'), dict) else '') or '图表字段未匹配或图表配置不可用'
+                  parts.append('图表说明：\n- 本次查询已返回可统计数据，但图表未生成，原因：' + str(warning))
               if not parts:
-                  parts.append('过去一个月未查询到符合条件的订单数据。')
+                  parts.append('当前筛选条件下未查询到符合条件的订单数据。')
 
+              answer = '\n\n'.join(part for part in parts if part)
+              if not chart_available:
+                  for phrase in ['从柱状图看', '从图表看', '如图所示']:
+                      answer = answer.replace(phrase, '从统计结果看')
               return {
-                  'final_answer_markdown': '\n\n'.join(part for part in parts if part),
+                  'final_answer_markdown': answer,
                   'answer_mode': mode,
                   'final_answer_summary': ('\n\n'.join(part for part in parts if part and part != chart))[:4000],
                   'last_result_fields_json': _result_fields_json(result_rows),
