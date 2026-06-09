@@ -860,16 +860,18 @@
               chart_enabled, chart_option, chart_markdown, chart_x_field, chart_y_field, chart_type_final, chart_warning = _build_chart_payload(visualization, merged_rows, {'bar', 'line', 'pie'}, normalized_execution_plan, question)
               if chart_enabled and chart_option:
                   viz_out = normalized_execution_plan.setdefault('visualization', {})
+                  chart_stage0 = ((normalized_execution_plan.get('stages') or [{}])[0] or {})
+                  metric_alias_for_chart = str(chart_stage0.get('metric_alias') or '').strip()
+                  chart_metric_name = metric_alias_for_chart or str(chart_y_field or '').strip()
                   viz_out['enabled'] = True
                   viz_out['chart_type'] = str(chart_type_final or chart_decision.get('chart_type') or 'bar')
                   viz_out['x_field'] = str(chart_x_field or '')
                   viz_out['y_field'] = str(chart_y_field or '')
                   if not str(viz_out.get('series_name') or '').strip() or str(viz_out.get('series_name') or '').strip() == 'value':
-                      metric_alias = str((((normalized_execution_plan.get('stages') or [{}])[0] or {}).get('metric_alias')) or '').strip()
-                      viz_out['series_name'] = _field_label_from_plan(normalized_execution_plan, metric_alias or str(chart_y_field or ''), 'metric') or metric_alias or str(chart_y_field or '')
+                      viz_out['series_name'] = _field_label_from_plan(normalized_execution_plan, chart_metric_name, 'metric') or chart_metric_name
                   viz_out['x_label'] = _field_label_from_plan(normalized_execution_plan, chart_x_field, 'field')
-                  viz_out['y_label'] = _field_label_from_plan(normalized_execution_plan, metric_alias or chart_y_field, 'metric')
-                  viz_out['title'] = build_short_chart_title(normalized_execution_plan, viz_out, viz_out['chart_type'], chart_x_field, chart_y_field, question)
+                  viz_out['y_label'] = _field_label_from_plan(normalized_execution_plan, chart_metric_name, 'metric')
+                  viz_out['title'] = build_short_chart_title(normalized_execution_plan, viz_out, viz_out['chart_type'], chart_x_field, chart_metric_name, question)
               option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip()
               option_series_name = ''
               if isinstance((chart_option or {}).get('series'), list) and (chart_option or {}).get('series'):
