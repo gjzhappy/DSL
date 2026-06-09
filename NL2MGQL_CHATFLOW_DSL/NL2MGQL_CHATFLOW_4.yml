@@ -663,6 +663,8 @@
             上一轮图表请求（标准扁平 chart_request）：{{#conversation.last_chart_request_json#}}
             图表修改意图：{{#1776000000004.chart_modification_json#}}
             上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
+            final_validation_repair_hint：{{#1777000000003.repair_hint#}}
+            如果 final_validation_repair_hint 非空，说明上一轮图表规划或生成未满足用户图表需求。请结合该提示重新生成 chart_request。不要重新查询，除非用户需求明确改变数据范围、筛选、分组或指标。
         selected: false
         structured_output:
           schema:
