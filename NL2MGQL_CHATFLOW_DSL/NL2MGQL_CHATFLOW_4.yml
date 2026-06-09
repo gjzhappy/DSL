@@ -1049,15 +1049,40 @@
           variable_selector: []
         model:
           completion_params:
-            temperature: 0.1
+            num_predict: 512
+            temperature: 0.0
+            think: false
           mode: chat
           name: qwen3.5:35b
           provider: langgenius/ollama/ollama
         prompt_template:
         - id: analysis-system
           role: system
-          text: 你是数据分析助手。只输出 JSON 对象，不要 markdown 代码块，不要输出 schema 之外字段。只能基于已有查询结果和摘要分析，不得编造数据库中没有的事实；不执行
-            Mongo；默认不重新画图。
+          text: |-
+            你是一个基于上一轮查询结果的分析助手。
+            必须基于已给出的结果行、字段、图表请求、用户本轮问题进行分析。
+            必须输出 JSON，不要 markdown 代码块，不要解释 JSON 之外的内容，不要输出 schema 之外字段。
+            不执行 Mongo；默认不重新画图。
+
+            analysis_markdown 必须非空，作为最终给用户看的自然语言分析。
+            analysis_debug_json 用于结构化调试，可包含 observations / insights / suggestions。
+            不能只填 analysis_debug_json 而让 analysis_markdown 为空。
+
+            如果结果行较少，需要明确说明样本量有限，不要过度解读。
+            不要基于当前结果中不存在的字段做确定性归因。
+            促销、库存、渠道、地区、价格等如果不在结果字段中，只能作为“后续可验证方向”，不能作为已发生原因。
+            涉及占比时必须计算准确：例如 Huawei=4, Apple=3, Xiaomi=3，总计=10，则 Huawei=40%，Apple=30%，Xiaomi=30%。
+            不要写出 “30% vs 40%” 这种方向混乱的表达。
+
+            输出结构：
+            {
+              "analysis_markdown": "非空 markdown 分析正文，建议包含：### 看到的现象、### 初步判断、### 建议下一步",
+              "analysis_debug_json": {
+                "observations": [],
+                "insights": [],
+                "suggestions": []
+              }
+            }
         - id: analysis-user
           role: user
           text: |-
@@ -1100,32 +1125,95 @@
       width: 242
     - data:
         code: |
-          import json,re
+          import json, re
 
           def _extract(text):
-              text=str(text or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I|re.S)
-              if m: text=m.group(1).strip()
-              s,e=text.find('{'),text.rfind('}')
-              return text[s:e+1] if s>=0 and e>=s else text
+              text = str(text or '').strip()
+              m = re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I | re.S)
+              if m:
+                  text = m.group(1).strip()
+              s, e = text.find('{'), text.rfind('}')
+              return text[s:e + 1] if s >= 0 and e >= s else text
 
           def _loads(v):
-              if isinstance(v,dict): return v
-              if isinstance(v,str) and v.strip():
-                  try: return json.loads(_extract(v))
-                  except Exception: return {}
+              if isinstance(v, dict):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      return json.loads(_extract(v))
+                  except Exception:
+                      return {}
               return {}
 
+          def _as_list(v):
+              if isinstance(v, list):
+                  return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip():
+                  return [v.strip()]
+              return []
+
+          def _build_markdown_from_debug(debug):
+              if not isinstance(debug, dict):
+                  return ''
+
+              observations = _as_list(debug.get('observations'))
+              insights = _as_list(debug.get('insights'))
+              suggestions = _as_list(debug.get('suggestions'))
+
+              parts = []
+
+              if observations:
+                  parts.append('### 看到的现象')
+                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(observations)])
+
+              if insights:
+                  if parts:
+                      parts.append('')
+                  parts.append('### 初步判断')
+                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(insights)])
+
+              if suggestions:
+                  if parts:
+                      parts.append('')
+                  parts.append('### 建议下一步')
+                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(suggestions)])
+
+              return '\n'.join(parts).strip()
+
           def main(analysis_structured, analysis_text: str, last_context_json: str):
-              obj=_loads(analysis_structured) or _loads(analysis_text)
-              text=str(obj.get('analysis_markdown') or '').strip()
+              obj = _loads(analysis_structured) or _loads(analysis_text)
+
+              debug = obj.get('analysis_debug_json') if isinstance(obj.get('analysis_debug_json'), dict) else {}
+              text = str(obj.get('analysis_markdown') or '').strip()
+
               if not text:
+                  text = _build_markdown_from_debug(debug)
+
+              fallback_used = False
+              if not text:
+                  fallback_used = True
                   try:
-                      ctx=json.loads(last_context_json or '{}'); count=int(ctx.get('result_rows_count') or 0); fields=', '.join(ctx.get('result_fields') or [])
+                      ctx = json.loads(last_context_json or '{}')
+                      count = int(ctx.get('result_rows_count') or 0)
+                      fields = ', '.join(ctx.get('result_fields') or [])
                   except Exception:
-                      count=0; fields=''
-                  text='从当前统计结果看，已返回 %s 行结果%s。LLM 分析暂不可用，建议结合图表和结果摘要判断差异；如需验证原因，需要进一步补充筛选条件或重新查询。' % (count, ('，字段包括：'+fields) if fields else '')
-              debug=obj.get('analysis_debug_json') if isinstance(obj.get('analysis_debug_json'),dict) else {'fallback': not bool(obj)}
-              return {'analysis_markdown': text, 'analysis_debug_json': json.dumps(debug, ensure_ascii=False), 'final_answer_markdown': text, 'final_answer_summary': text[:4000]}
+                      count = 0
+                      fields = ''
+
+                  text = '从当前统计结果看，已返回 %s 行结果%s。LLM 分析暂不可用，建议结合图表和结果摘要判断差异；如需验证原因，需要进一步补充筛选条件或重新查询。' % (
+                      count,
+                      ('，字段包括：' + fields) if fields else ''
+                  )
+
+              if fallback_used and not debug:
+                  debug = {'fallback': True}
+
+              return {
+                  'analysis_markdown': text,
+                  'analysis_debug_json': json.dumps(debug, ensure_ascii=False),
+                  'final_answer_markdown': text,
+                  'final_answer_summary': text[:4000]
+              }
         code_language: python3
         desc: 解析 LLM 继续分析输出；失败时生成可读降级分析。
         outputs:
