@@ -1269,6 +1269,16 @@
 
           COMPLEX_TERMS = ('真实厂商', '供应商', '高价值客户', '异常订单', '有效订单', '退款订单', '产品线', '业务归属', '客户等级', '真实口径', '厂商口径')
           CHART_ONLY_TERMS = ('换成饼图', '换为饼图', '改成饼图', '换成折线图', '换为折线图', '改成折线图', '换成柱状图', '换为柱状图', '改成柱状图')
+          CN_NUMBERS = {
+              '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6,
+              '七': 7, '八': 8, '九': 9, '十': 10, '十一': 11, '十二': 12, '半': 0.5
+          }
+          OLD_TITLE_TIME_PATTERNS = (
+              '过去一个月', '过去1个月', '过去30天', '近一个月', '近1个月', '近30天',
+              '最近一个月', '最近1个月', '最近30天', '过去二个月', '过去两个月',
+              '过去2个月', '近两个月', '最近两个月', '近三个月', '最近3个月',
+              '过去60天', '最近60天', '近90天', '过去半年', '最近半年', '过去一年', '最近一年'
+          )
 
 
           def _loads(v):
@@ -1295,6 +1305,72 @@
               return stages if isinstance(stages, list) else []
 
 
+          def _cn_number_to_float(raw):
+              s = str(raw or '').strip()
+              if not s:
+                  return None
+              if re.fullmatch(r'\d+', s):
+                  return float(int(s))
+              if s in CN_NUMBERS:
+                  return float(CN_NUMBERS[s])
+              if s.startswith('十') and len(s) > 1 and s[1:] in CN_NUMBERS:
+                  return float(10 + int(CN_NUMBERS[s[1:]]))
+              if s.endswith('十') and s[:-1] in CN_NUMBERS:
+                  return float(int(CN_NUMBERS[s[:-1]]) * 10)
+              if '十' in s:
+                  left, right = s.split('十', 1)
+                  if (not left or left in CN_NUMBERS) and (not right or right in CN_NUMBERS):
+                      return float((int(CN_NUMBERS.get(left, 1)) * 10) + int(CN_NUMBERS.get(right, 0)))
+              return None
+
+
+          def _parse_relative_time(q):
+              text = str(q or '')
+              prefix = r'(?:过去|最近|近)'
+
+              m = re.search(prefix + r'\s*(半年|一年)', text)
+              if m:
+                  source = m.group(0).replace(' ', '')
+                  days = 180 if m.group(1) == '半年' else 365
+                  return {'mode': 'relative_days', 'relative_days': days, 'source': source}
+
+              m = re.search(prefix + r'\s*([0-9]+|一|二|两|三|四|五|六|七|八|九|十|十一|十二|半)\s*(天|日|周|星期|个月|月|季度|季|年)', text)
+              if not m:
+                  return None
+              n = _cn_number_to_float(m.group(1))
+              if n is None or n <= 0:
+                  return None
+              unit = m.group(2)
+              if unit in ('天', '日'):
+                  days = int(n)
+              elif unit in ('周', '星期'):
+                  days = int(n * 7)
+              elif unit in ('个月', '月'):
+                  days = int(n * 30)
+              elif unit in ('季度', '季'):
+                  days = int(n * 90)
+              elif unit == '年':
+                  days = int(n * 365)
+              else:
+                  return None
+              source = m.group(0).replace(' ', '')
+              return {'mode': 'relative_days', 'relative_days': days, 'source': source}
+
+
+          def _safe_time_only_refine(refine, turn_intent, need_requery):
+              return (
+                  str(turn_intent or '') == 'refine_query'
+                  and _bool(need_requery)
+                  and _bool(refine.get('time_range_change'))
+                  and _bool(refine.get('group_fields_unchanged'))
+                  and _bool(refine.get('metric_unchanged'))
+              )
+
+
+          def _refine_has_time_guard(refine):
+              return any(k in refine for k in ('time_range_change', 'group_fields_unchanged', 'metric_unchanged'))
+
+
           def _set_all_stage_time(plan, days=None, mode=None):
               changed = False
               for st in _stages(plan):
@@ -1308,6 +1384,31 @@
                   st['time_range'] = tr
                   changed = True
               return changed
+
+
+          def _patch_title_time(plan, new_source, debug):
+              cr = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else None
+              if not cr or not isinstance(cr.get('title'), str) or not cr.get('title'):
+                  debug['title_patch'] = 'no_chart_title'
+                  return False
+              title = cr['title']
+              for old_text in OLD_TITLE_TIME_PATTERNS:
+                  if old_text in title:
+                      cr['title'] = title.replace(old_text, new_source, 1)
+                      debug['title_patch'] = {'from': old_text, 'to': new_source}
+                      return cr['title'] != title
+              debug['title_patch'] = 'no_safe_old_time_text_found'
+              return False
+
+
+          def _unique_keep_order(values):
+              seen = set()
+              result = []
+              for value in values:
+                  if value not in seen:
+                      seen.add(value)
+                      result.append(value)
+              return result
 
 
           def _patch_limit(plan, n):
@@ -1355,7 +1456,18 @@
           def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, turn_intent: str, need_requery, last_chart_request_json: str):
               q = str(question or '')
               old = _loads(old_normalized_semantic_plan_json)
-              debug = {'turn_intent': str(turn_intent or ''), 'need_requery': _bool(need_requery), 'has_old_plan': bool(old)}
+              refine = _loads(query_refinement_json)
+              parsed_time = _parse_relative_time(q)
+              safe_time_only = _safe_time_only_refine(refine, turn_intent, need_requery)
+              debug = {
+                  'turn_intent': str(turn_intent or ''),
+                  'need_requery': _bool(need_requery),
+                  'has_old_plan': bool(old),
+                  'query_refinement_json': refine,
+                  'safe_time_only_refine': safe_time_only,
+              }
+              if parsed_time:
+                  debug['parsed_time_range'] = parsed_time
               if not old:
                   return {'patch_applied': False, 'requires_full_replan': True, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '缺少上一轮 normalized semantic plan，无法执行确定性 patch', 'patch_error': 'missing_old_plan', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
               if any(term in q for term in CHART_ONLY_TERMS):
@@ -1364,18 +1476,22 @@
                   return {'patch_applied': False, 'requires_full_replan': True, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '用户引入了可能涉及新字段、新 collection 或新业务口径的复杂语义，必须重新检索 schema 并重规划', 'patch_error': '', 'patch_debug_json': json.dumps({**debug, 'complex_terms': [t for t in COMPLEX_TERMS if t in q]}, ensure_ascii=False)}
               plan = deepcopy(old)
               changed = []
-              m = re.search(r'(?:近|最近|过去)\s*(7|30)\s*天', q)
-              if m and _set_all_stage_time(plan, days=m.group(1)):
-                  changed.append('time_range')
-              elif '过去一个月' in q or '最近一个月' in q or '近一个月' in q:
-                  if _set_all_stage_time(plan, days=30):
-                      changed.append('time_range')
+
+              if parsed_time:
+                  if safe_time_only or not _refine_has_time_guard(refine):
+                      if _set_all_stage_time(plan, days=parsed_time['relative_days']):
+                          changed.append('execution_plan.stages[0].time_range.relative_days')
+                          if _patch_title_time(plan, parsed_time['source'], debug):
+                              changed.append('chart_request.title')
+                  else:
+                      debug['time_patch_skipped'] = 'query_refinement_json 未确认 group_fields_unchanged=true 且 metric_unchanged=true，避免覆盖非纯时间修改'
               elif '今年' in q:
                   if _set_all_stage_time(plan, mode='this_year'):
                       changed.append('time_range')
               elif '上个月' in q:
                   if _set_all_stage_time(plan, mode='last_month'):
                       changed.append('time_range')
+
               m = re.search(r'(?:top|前|只看前|限制)\s*(\d+)\s*(?:条|名|个)?', q, flags=re.I)
               if m and _patch_limit(plan, m.group(1)):
                   changed.append('limit')
@@ -1384,10 +1500,14 @@
               if any(x in q for x in ('降序', '从大到小', '从高到低')) and _patch_sort(plan, 'desc'):
                   changed.append('sort')
               changed.extend(_patch_display(plan, q))
-              changed = sorted(set(changed))
+              changed = _unique_keep_order(changed)
               if not changed:
                   return {'patch_applied': False, 'requires_full_replan': True, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '未发现可安全确定性修正的字段，进入 refine full replan', 'patch_error': '', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
-              return {'patch_applied': True, 'requires_full_replan': False, 'patched_normalized_semantic_plan_json': json.dumps(plan, ensure_ascii=False), 'changed_fields': json.dumps(changed, ensure_ascii=False), 'patch_reason': '高确定性规则修正：' + ','.join(changed), 'patch_error': '', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
+              if 'execution_plan.stages[0].time_range.relative_days' in changed:
+                  patch_reason = '检测到仅时间范围变更：%s -> relative_days=%s，保留分组、指标、排序和图表配置' % (parsed_time['source'], parsed_time['relative_days'])
+              else:
+                  patch_reason = '高确定性规则修正：' + ','.join(changed)
+              return {'patch_applied': True, 'requires_full_replan': False, 'patched_normalized_semantic_plan_json': json.dumps(plan, ensure_ascii=False), 'changed_fields': json.dumps(changed, ensure_ascii=False), 'patch_reason': patch_reason, 'patch_error': '', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
         code_language: python3
         desc: refine_query 高确定性 patch：仅处理时间范围、TopN/limit、排序方向等，不硬猜复杂业务语义。
         outputs:
