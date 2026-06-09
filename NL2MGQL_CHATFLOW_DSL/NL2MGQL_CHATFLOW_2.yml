@@ -1,4 +1,3 @@
-              pipeline = []
               parts = [{join_target_field: {'$in': join_values}}]
               time_expr = _apply_time_range(stage.get('time_range'))
               if time_expr:
@@ -85,16 +84,6 @@
                       item[attach_as] = matches
                   merged.append(item)
               return merged
-          FIELD_LABELS = {
-              'brand': '品牌',
-              'status': '订单状态',
-              'payment_status': '支付状态',
-              'province': '省份',
-              'category': '类目',
-              'product_name': '商品',
-          }
-
-
           def _normalize_visualization(value):
               if not isinstance(value, dict):
                   return {'enabled': False}
@@ -164,6 +153,29 @@
               return x_field, y_field
 
 
+          def _prettify_field_name(field):
+              text = str(field or '').strip()
+              return text.replace('_', ' ') if text else ''
+
+
+          def _field_label_from_plan(normalized_plan=None, field=''):
+              field = str(field or '').strip()
+              if not field:
+                  return ''
+              # Stage aliases are accepted only when they are explicitly present in the plan.
+              stages = (normalized_plan or {}).get('stages') or []
+              for stage in stages if isinstance(stages, list) else []:
+                  if not isinstance(stage, dict):
+                      continue
+                  if str(stage.get('metric_alias') or '').strip() == field:
+                      return field
+                  for key in ('group_aliases', 'field_labels', 'labels'):
+                      labels = stage.get(key)
+                      if isinstance(labels, dict) and str(labels.get(field) or '').strip():
+                          return str(labels.get(field)).strip()
+              return _prettify_field_name(field)
+
+
           def build_short_chart_title(normalized_plan=None, visualization=None, chart_type='', x_field='', y_field='', question=''):
               visualization = visualization or {}
               stages = (normalized_plan or {}).get('stages') or []
@@ -172,33 +184,28 @@
               question = str(question or '').strip()
               group_fields = stage0.get('group_fields') or []
               dim_src = str((group_fields[0] if group_fields else '') or x_field or visualization.get('x_field') or '').strip()
-              dim = FIELD_LABELS.get(dim_src, '')
-              if not dim:
-                  dim_lower = dim_src.lower()
-                  dim = '厂商' if any(k in dim_lower or k in dim_src for k in ['manufacturer','vendor','factory','supplier','merchant','厂商','厂家','供应商']) else ('品牌' if 'brand' in dim_lower or '品牌' in dim_src else ('商品' if any(k in dim_lower or k in dim_src for k in ['product','sku','spu','商品','产品']) else ('客户' if any(k in dim_lower or k in dim_src for k in ['customer','user','member','客户','用户','会员']) else (dim_src.replace('_id','').replace('_',' ')[:6] if dim_src else ''))))
-              current_dim_in_title = bool(dim and dim in raw_title)
-              old_dim_mismatch = any(tok in raw_title for tok in ['品牌', '厂商', 'brand']) and not current_dim_in_title
-              cleaned = ''.join(raw_title.split())
-              for word in ['帮我','请帮我','查询','统计','做一个','做个','做图','画图','图表','柱状图','折线图','饼图','描述','简单分析','分析','看一下','进行']:
-                  cleaned = cleaned.replace(word, '')
-              for ch in ['，', ',', '。', '？', '?', '！', '!', '、', ';', '；']:
-                  cleaned = cleaned.replace(ch, '')
-              if cleaned and raw_title != question and not old_dim_mismatch and current_dim_in_title and not (len(raw_title) > 32 and any(w in raw_title for w in ['查询','统计','做图','画图','描述','分析'])):
-                  return cleaned[:24]
-              tr = stage0.get('time_range') if isinstance(stage0.get('time_range'), dict) else {}
-              days = int(tr.get('relative_days') or 0) if str(tr.get('mode') or '') == 'relative_days' else 0
-              time_label = '过去两个月' if days in (58, 59, 60, 61, 62) else ('过去一个月' if days in (28, 29, 30, 31) else ('最近7天' if days == 7 else ('昨日' if days == 1 else ('最近' + str(days) + '天' if days > 0 else ''))))
-              if str(tr.get('mode') or '') == 'absolute':
-                  start = str(tr.get('start') or '').strip()[:10]
-                  end = str(tr.get('end') or '').strip()[:10]
-                  time_label = (start + '至' + end) if start and end else (start or end)
               metric_src = str(stage0.get('metric_alias') or y_field or visualization.get('y_field') or '').strip()
-              metric_lower = metric_src.lower()
-              collection = str(stage0.get('collection') or stage0.get('primary_collection') or '').lower()
-              metric = '订单数' if any(k in metric_lower or k in metric_src for k in ['order_count','orders_count','order_num','订单数']) or (str(stage0.get('metric_function') or '').lower() == 'count' and ('order' in collection or '订单' in collection)) else ('销售额' if any(k in metric_lower or k in metric_src for k in ['amount','gmv','sales','金额','销售额']) else ('数量' if str(stage0.get('metric_function') or '').lower() == 'count' or any(k in metric_lower or k in metric_src for k in ['quantity','qty','数量']) else (metric_src[:8] if metric_src else '指标')))
-              suffix = '趋势' if str(chart_type or visualization.get('chart_type') or '').lower() == 'line' else ('分布' if str(chart_type or visualization.get('chart_type') or '').lower() == 'pie' else '对比')
-              return (time_label + (('各' + dim) if dim else '') + metric + suffix)[:32]
+              dim = _field_label_from_plan(normalized_plan, dim_src)
+              metric = _field_label_from_plan(normalized_plan, metric_src)
 
+              # Preserve an explicit chart_request title when it is not just the full user question.
+              if raw_title and raw_title != question and len(raw_title) <= 48:
+                  return raw_title[:32]
+
+              chart_kind = str(chart_type or visualization.get('chart_type') or '').lower()
+              if chart_kind == 'line':
+                  suffix = '趋势'
+              elif chart_kind == 'pie':
+                  suffix = '分布'
+              else:
+                  suffix = '对比'
+              if dim and metric:
+                  return (dim + ' 与 ' + metric + suffix)[:32]
+              if dim:
+                  return (dim + suffix)[:32]
+              if metric:
+                  return (metric + suffix)[:32]
+              return '统计结果' + suffix
 
           def _build_local_chart(visualization, normalized_execution_plan, rows, chart_decision, question=''):
               chart_type = str((visualization or {}).get('chart_type') or '').strip().lower() or str((chart_decision or {}).get('chart_type') or '').strip().lower() or 'bar'
@@ -340,7 +347,7 @@
               if x_field not in row_fields and primary_group and primary_group in row_fields:
                   old_x = x_field
                   x_field = primary_group
-                  warning = 'chart x_field auto-corrected from ' + (old_x or '<empty>') + ' to ' + x_field
+                  warning = json.dumps({'chart_field_autofix': True, 'x_field_before': old_x, 'x_field_after': x_field, 'reason': 'x_field not found in rows; fallback to group_fields[0]'}, ensure_ascii=False)
               if y_field not in row_fields and metric_alias and metric_alias in row_fields:
                   y_field = metric_alias
               if not x_field or not y_field or x_field not in row_fields or y_field not in row_fields:
@@ -1422,10 +1429,3 @@
 
           def _extract_json_object_text(text):
               raw = _remove_think_blocks(_strip_code_fence(text))
-              if not raw:
-                  raise ValueError('LLM返�内容为空')
-              direct = _try_decode_object(raw)
-              if direct and not direct[2]:
-                  return direct[1]
-              candidates = []
-              for block in re.findall(r'```(?:json)?\s*(.*?)```', raw, flags=re.IGNORECASE | re.DOTALL):
