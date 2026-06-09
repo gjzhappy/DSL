@@ -1,3 +1,273 @@
+                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
+                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
+                      'left_field': str(final_merge.get('left_field') or '').strip(),
+                      'right_field': str(final_merge.get('right_field') or '').strip(),
+                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
+                  },
+              }
+
+
+          def _build_stage_match(stage):
+              parts = []
+              time_expr = _apply_time_range(stage.get('time_range'))
+              if time_expr:
+                  parts.append(time_expr)
+              for idx, f in enumerate(stage.get('filters') or []):
+                  if not isinstance(f, dict):
+                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
+                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
+                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
+                  value = f.get('value')
+                  parts.append(_build_match_expr(field, operator, value))
+              return _merge_match(parts)
+
+
+          def _append_projection(pipeline, fields):
+              unique_fields = []
+              seen = set()
+              for field in fields or []:
+                  text = str(field or '').strip()
+                  if text and text not in seen:
+                      seen.add(text)
+                      unique_fields.append(text)
+              if not unique_fields:
+                  return
+              proj = {'_id': 0}
+              for field in unique_fields:
+                  proj[field] = f'${field}'
+              pipeline.append({'$project': proj})
+
+
+          def _compile_detail_query(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              _append_projection(pipeline, stage.get('projection_fields'))
+              sort_stage = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  sort_stage[field] = direction
+              if sort_stage:
+                  pipeline.append({'$sort': sort_stage})
+              if int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [],
+                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
+                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
+              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
+              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
+              if metric_function == 'count':
+                  agg_expr = {'$sum': 1}
+              else:
+                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
+                  if metric_function not in op_map:
+                      raise ValueError(f'unsupported metric_function: {metric_function}')
+                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
+              group_id = {field: f'${field}' for field in group_fields} if group_fields else None
+              group_stage = {'_id': group_id, metric_alias: agg_expr}
+              pipeline.append({'$group': group_stage})
+              project_stage = {'_id': 0}
+              for field in group_fields:
+                  project_stage[field] = f'$_id.{field}'
+              project_stage[metric_alias] = f'${metric_alias}'
+              pipeline.append({'$project': project_stage})
+              sort_stage = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  sort_stage[field] = direction
+              if sort_stage:
+                  pipeline.append({'$sort': sort_stage})
+              if int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
+                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
+                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_group_top_entity(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              entity_field = _ensure_non_empty_string(stage.get('entity_field'), f"{stage['stage_name']}.entity_field")
+              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
+              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
+              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
+              rank_n = int(stage.get('rank_n') or 0)
+              if rank_n <= 0:
+                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_entity")
+              if metric_function == 'count':
+                  agg_expr = {'$sum': 1}
+              else:
+                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
+                  if metric_function not in op_map:
+                      raise ValueError(f'unsupported metric_function: {metric_function}')
+                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
+              first_group_id = {field: f'${field}' for field in group_fields}
+              first_group_id['__entity'] = f'${entity_field}'
+              pipeline.append({'$group': {'_id': first_group_id, metric_alias: agg_expr}})
+              sort_before_rank = {f'_id.{field}': 1 for field in group_fields}
+              sort_before_rank[metric_alias] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
+              pipeline.append({'$sort': sort_before_rank})
+              push_payload = {'entity': '$_id.__entity', metric_alias: f'${metric_alias}'}
+              pipeline.append({'$group': {'_id': {field: f'$_id.{field}' for field in group_fields}, 'items': {'$push': push_payload}}})
+              project_group = {'_id': 0, 'items': '$items'}
+              for field in group_fields:
+                  project_group[field] = f'$_id.{field}'
+              pipeline.append({'$project': project_group})
+              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
+              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
+              project_after_rank = {'_id': 0, entity_field: '$items.entity', metric_alias: f'$items.{metric_alias}'}
+              for field in group_fields:
+                  project_after_rank[field] = f'${field}'
+              pipeline.append({'$project': project_after_rank})
+              final_sort = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  final_sort[field] = direction
+              if final_sort and stage.get('apply_global_limit'):
+                  pipeline.append({'$sort': final_sort})
+              # group_top_entity: rank_n controls per-group topN. Do not apply global sort/limit by default.
+              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              projection_fields = stage.get('projection_fields') or (list(group_fields) + [entity_field, metric_alias])
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in list(group_fields) + [entity_field]],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+          def _compile_group_top_record(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              rank_order_field = _ensure_non_empty_string(stage.get('rank_order_field'), f"{stage['stage_name']}.rank_order_field")
+              rank_n = int(stage.get('rank_n') or 0)
+              if rank_n <= 0:
+                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_record")
+              projection_fields = stage.get('projection_fields') or list(dict.fromkeys(list(group_fields) + [rank_order_field]))
+              sort_before_rank = {field: 1 for field in group_fields}
+              sort_before_rank[rank_order_field] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
+              pipeline.append({'$sort': sort_before_rank})
+              item_payload = {field: f'${field}' for field in projection_fields}
+              pipeline.append({'$group': {'_id': {field: f'${field}' for field in group_fields}, 'items': {'$push': item_payload}}})
+              project_group = {'_id': 0, 'items': '$items'}
+              for field in group_fields:
+                  project_group[field] = f'$_id.{field}'
+              pipeline.append({'$project': project_group})
+              pipeline.append({'$unwind': {'path': '$items', 'includeArrayIndex': '__rank_index'}})
+              pipeline.append({'$match': {'__rank_index': {'$lt': rank_n}}})
+              project_after_rank = {'_id': 0}
+              for field in projection_fields:
+                  project_after_rank[field] = f'$items.{field}'
+              for field in group_fields:
+                  project_after_rank[field] = f'${field}' if field not in projection_fields else project_after_rank[field]
+              pipeline.append({'$project': project_after_rank})
+              final_sort = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  final_sort[field] = direction
+              if final_sort and stage.get('apply_global_limit'):
+                  pipeline.append({'$sort': final_sort})
+              if stage.get('apply_global_limit') and int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+          def _compile_enrich_related(stage, schema_context, stage_outputs):
+              depends_on = _ensure_non_empty_string(stage.get('depends_on'), f"{stage['stage_name']}.depends_on")
+              prev = stage_outputs.get(depends_on) or {}
+              prev_rows = prev.get('rows') or []
+              join_source_field = _ensure_non_empty_string(stage.get('join_source_field'), f"{stage['stage_name']}.join_source_field")
+              join_target_field = _ensure_non_empty_string(stage.get('join_target_field'), f"{stage['stage_name']}.join_target_field")
+              join_values = _unique_values(prev_rows, join_source_field)
+              projection_mode = str(stage.get('projection_mode') or 'none').strip() or 'none'
+              if projection_mode == 'all_returnable':
+                  projection_fields = _extract_returnable_fields(schema_context, stage['collection'])
+              else:
+                  projection_fields = list(stage.get('projection_fields') or [])
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [],
+                  'sort': stage.get('sort') or [],
+                  'limit': int(stage.get('limit') or 0),
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': f"enrich {stage['collection']} by {join_target_field}",
+              }
+              if not join_values:
+                  return validated_ast, [], True
+              pipeline = []
+
               parts = [{join_target_field: {'$in': join_values}}]
               time_expr = _apply_time_range(stage.get('time_range'))
               if time_expr:
@@ -158,22 +428,36 @@
               return text.replace('_', ' ') if text else ''
 
 
-          def _field_label_from_plan(normalized_plan=None, field=''):
+          def _collection_from_normalized_plan(normalized_plan=None):
+              normalized_plan = normalized_plan or {}
+              stages = normalized_plan.get('stages') or []
+              stage0 = stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
+              return str(normalized_plan.get('primary_collection') or stage0.get('primary_collection') or stage0.get('collection') or '').strip()
+
+
+          def _schema_metadata_from_plan(normalized_plan=None):
+              normalized_plan = normalized_plan or {}
+              meta = normalized_plan.get('schema_metadata') or normalized_plan.get('schema_metadata_json')
+              if isinstance(meta, str) and meta.strip():
+                  try:
+                      meta = json.loads(meta)
+                  except Exception:
+                      meta = None
+              if isinstance(meta, dict) and isinstance(meta.get('collections'), dict):
+                  return meta
+              schema_context = normalized_plan.get('schema_context') if isinstance(normalized_plan.get('schema_context'), str) else ''
+              return extract_schema_metadata(schema_context)
+
+
+          def _field_label_from_plan(normalized_plan=None, field='', role='field'):
               field = str(field or '').strip()
               if not field:
                   return ''
-              # Stage aliases are accepted only when they are explicitly present in the plan.
-              stages = (normalized_plan or {}).get('stages') or []
-              for stage in stages if isinstance(stages, list) else []:
-                  if not isinstance(stage, dict):
-                      continue
-                  if str(stage.get('metric_alias') or '').strip() == field:
-                      return field
-                  for key in ('group_aliases', 'field_labels', 'labels'):
-                      labels = stage.get(key)
-                      if isinstance(labels, dict) and str(labels.get(field) or '').strip():
-                          return str(labels.get(field)).strip()
-              return _prettify_field_name(field)
+              meta = _schema_metadata_from_plan(normalized_plan)
+              collection_name = _collection_from_normalized_plan(normalized_plan)
+              if role == 'metric':
+                  return resolve_metric_label(field, meta, collection_name)
+              return resolve_field_label(field, meta, collection_name)
 
 
           def build_short_chart_title(normalized_plan=None, visualization=None, chart_type='', x_field='', y_field='', question=''):
@@ -186,7 +470,7 @@
               dim_src = str((group_fields[0] if group_fields else '') or x_field or visualization.get('x_field') or '').strip()
               metric_src = str(stage0.get('metric_alias') or y_field or visualization.get('y_field') or '').strip()
               dim = _field_label_from_plan(normalized_plan, dim_src)
-              metric = _field_label_from_plan(normalized_plan, metric_src)
+              metric = _field_label_from_plan(normalized_plan, metric_src, 'metric')
 
               # Preserve an explicit chart_request title when it is not just the full user question.
               if raw_title and raw_title != question and len(raw_title) <= 48:
@@ -200,7 +484,7 @@
               else:
                   suffix = '对比'
               if dim and metric:
-                  return (dim + ' 与 ' + metric + suffix)[:32]
+                  return ('按' + dim + '统计' + metric)[:32]
               if dim:
                   return (dim + suffix)[:32]
               if metric:
@@ -359,13 +643,15 @@
               viz['x_field'] = x_field
               viz['y_field'] = y_field
               if not str(viz.get('series_name') or '').strip() or str(viz.get('series_name') or '').strip() == 'value':
-                  viz['series_name'] = metric_alias or y_field
+                  viz['series_name'] = _field_label_from_plan(normalized_plan, metric_alias or y_field, 'metric') or metric_alias or y_field
+              viz['x_label'] = _field_label_from_plan(normalized_plan, x_field, 'field')
+              viz['y_label'] = _field_label_from_plan(normalized_plan, metric_alias or y_field, 'metric')
               viz['title'] = build_short_chart_title(normalized_plan, viz, chart_type, x_field, y_field, question)
 
               option = _build_echarts_option(viz, rows)
               if not option:
                   option = _build_echarts_option(
-                      {'enabled': True, 'chart_type': chart_type, 'x_field': x_field, 'y_field': y_field, 'series_name': metric_alias or y_field, 'title': build_short_chart_title(normalized_plan, visualization, chart_type, x_field, y_field, question)},
+                      {'enabled': True, 'chart_type': chart_type, 'x_field': x_field, 'y_field': y_field, 'series_name': _field_label_from_plan(normalized_plan, metric_alias or y_field, 'metric') or metric_alias or y_field, 'x_label': _field_label_from_plan(normalized_plan, x_field, 'field'), 'y_label': _field_label_from_plan(normalized_plan, metric_alias or y_field, 'metric'), 'title': build_short_chart_title(normalized_plan, visualization, chart_type, x_field, y_field, question)},
                       rows,
                   )
               if not option:
@@ -492,6 +778,11 @@
                   raise ValueError('SN_MONGODB_QUERY_URLS is empty')
 
               normalized_execution_plan = _normalize_plan(plan, planner, question)
+              schema_metadata = extract_schema_metadata(schema_context)
+              schema_alias_index = build_alias_index(schema_metadata)
+              normalized_execution_plan['schema_context'] = str(schema_context or '')
+              normalized_execution_plan['schema_metadata'] = schema_metadata
+              normalized_execution_plan['schema_alias_index'] = schema_alias_index
               stage_outputs = {}
               stage_execution_trace = []
 
@@ -575,7 +866,9 @@
                   viz_out['y_field'] = str(chart_y_field or '')
                   if not str(viz_out.get('series_name') or '').strip() or str(viz_out.get('series_name') or '').strip() == 'value':
                       metric_alias = str((((normalized_execution_plan.get('stages') or [{}])[0] or {}).get('metric_alias')) or '').strip()
-                      viz_out['series_name'] = metric_alias or str(chart_y_field or '')
+                      viz_out['series_name'] = _field_label_from_plan(normalized_execution_plan, metric_alias or str(chart_y_field or ''), 'metric') or metric_alias or str(chart_y_field or '')
+                  viz_out['x_label'] = _field_label_from_plan(normalized_execution_plan, chart_x_field, 'field')
+                  viz_out['y_label'] = _field_label_from_plan(normalized_execution_plan, metric_alias or chart_y_field, 'metric')
                   viz_out['title'] = build_short_chart_title(normalized_execution_plan, viz_out, viz_out['chart_type'], chart_x_field, chart_y_field, question)
               option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip()
               option_series_name = ''
@@ -597,6 +890,7 @@
                   'option': chart_option,
                   'echarts_markdown': chart_markdown,
                   'decision': chart_decision,
+                  'debug': {'schema_metadata_used': bool(schema_metadata.get('collections')), 'x_label_source': 'schema_field_label' if bool(schema_metadata.get('collections')) else 'field_prettify', 'y_label_source': 'schema_metric_label' if bool(schema_metadata.get('collections')) else 'field_prettify', 'title_source': 'chart_request' if str((visualization or {}).get('title') or '').strip() else ('schema_label' if bool(schema_metadata.get('collections')) else 'field_prettify'), 'schema_warnings': schema_metadata.get('warnings') or []},
               }
               chart_request_flat = {
                   'enabled': bool(chart_enabled and chart_option),
@@ -698,6 +992,9 @@
                   'chart_title': option_title,
                   'chart_axis_x_title': str(chart_x_field or ''),
                   'chart_axis_y_title': str(chart_y_field or ''),
+                  'schema_metadata_json': _safe_json_dumps(schema_metadata),
+                  'schema_alias_index_json': _safe_json_dumps(schema_alias_index),
+                  'chart_debug_json': _safe_json_dumps((chart_payload or {}).get('debug') or {}),
               }
         code_language: python3
         desc: 校验语义计划并编译第一阶段 Pipeline
@@ -743,6 +1040,12 @@
           chart_axis_x_title:
             type: string
           chart_axis_y_title:
+            type: string
+          schema_metadata_json:
+            type: string
+          schema_alias_index_json:
+            type: string
+          chart_debug_json:
             type: string
         selected: false
         title: 代码执行_遍历语义计划并统一编译执行
@@ -1127,306 +1430,3 @@
                   return True
               lower_exception = _to_text(exception_message).lower()
               transient_markers = ['timeout', 'timed out', 'connection reset', 'remote end closed connection', 'connection aborted', 'connection refused']
-              return bool(lower_exception and any(marker in lower_exception for marker in transient_markers))
-
-
-          def _format_error_message(prefix, status_code, body_text, headers, retry_count, exception_message=''):
-              parts = [prefix]
-              if status_code:
-                  parts.append('status=%s' % status_code)
-              message = _extract_error_message(body_text) or _to_text(exception_message)
-              tracer_id = _extract_tracer_id(body_text, headers)
-              if message:
-                  parts.append('message=%s' % message)
-              if tracer_id:
-                  parts.append('tracer_id=%s' % tracer_id)
-              parts.append('retry_count=%s' % retry_count)
-              return ' '.join(parts)
-
-
-          def _post_json_once(url, data, auth, timeout_sec):
-              req = urllib.request.Request(
-                  url,
-                  data=data,
-                  headers={
-                      'Content-Type': 'application/json',
-                      'Authorization': auth
-                  },
-                  method='POST'
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                      text = resp.read().decode('utf-8', errors='replace')
-                      status_code = int(getattr(resp, 'status', 0) or 0)
-                      return status_code, text, dict(resp.headers.items()), ''
-              except urllib.error.HTTPError as e:
-                  text = e.read().decode('utf-8', errors='replace')
-                  headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
-                  return int(getattr(e, 'code', 0) or 0), text, headers, ''
-              except Exception as e:
-                  return 0, '', {}, str(e)
-
-
-          def _post_json_with_retry(url, data, auth, timeout_sec):
-              retry_count = 0
-              last_status_code = 0
-              last_body = ''
-              last_headers = {}
-              last_exception_message = ''
-              for attempt in range(MAX_RETRY + 1):
-                  status_code, body_text, headers, exception_message = _post_json_once(url, data, auth, timeout_sec)
-                  last_status_code = status_code
-                  last_body = body_text
-                  last_headers = headers
-                  last_exception_message = exception_message
-                  if 200 <= status_code < 300:
-                      return status_code, body_text, headers, retry_count, ''
-                  if attempt >= MAX_RETRY or not _is_retryable_error(status_code, body_text, exception_message):
-                      break
-                  time.sleep(RETRY_SLEEP_SECONDS[attempt])
-                  retry_count += 1
-              prefix = 'HTTP_ERROR' if last_status_code else 'NETWORK_ERROR'
-              error_message = _format_error_message(prefix, last_status_code, last_body, last_headers, retry_count, last_exception_message)
-              return last_status_code, last_body, last_headers, retry_count, error_message
-
-
-          def main(chat_url: str, authorization_value: str, llm_request_body_json: str) -> dict:
-              timeout_sec = 70
-              result = {
-                  'status_code': 0,
-                  'ok': False,
-                  'body': '',
-                  'body_preview': '',
-                  'headers_json': '{}',
-                  'error_message': '',
-                  'request_debug': {},
-                  'retry_count': 0,
-                  'tracer_id': '',
-                  'last_status_code': 0,
-                  'last_error_message': ''
-              }
-
-              try:
-                  body_obj = _safe_json_loads(llm_request_body_json)
-              except Exception as e:
-                  result['error_message'] = 'REQUEST_BUILD_FAILED: ' + str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-
-              messages = body_obj.get('messages') or []
-              response_format = body_obj.get('response_format') if isinstance(body_obj.get('response_format'), dict) else {}
-              json_schema = response_format.get('json_schema') if isinstance(response_format.get('json_schema'), dict) else {}
-              auth = _to_text(authorization_value)
-              auth_scheme = auth.split(' ', 1)[0] if ' ' in auth else ('unknown' if auth else '')
-
-              result['request_debug'] = {
-                  'url': _to_text(chat_url),
-                  'auth_present': bool(auth),
-                  'auth_scheme': auth_scheme,
-                  'auth_len': len(auth),
-                  'model': body_obj.get('model'),
-                  'body_keys': list(body_obj.keys()),
-                  'messages_count': len(messages) if isinstance(messages, list) else 0,
-                  'prompt_length': _extract_prompt_length(messages),
-                  'response_format_enabled': 'response_format' in body_obj,
-                  'response_format_type': response_format.get('type') if isinstance(response_format, dict) else None,
-                  'schema_name': _to_text(json_schema.get('name')) if isinstance(json_schema, dict) else '',
-                  'timeout_sec': timeout_sec
-              }
-
-              data = json.dumps(body_obj, ensure_ascii=False).encode('utf-8')
-              try:
-                  status_code, text, headers, retry_count, error_message = _post_json_with_retry(_to_text(chat_url), data, auth, timeout_sec)
-                  result['status_code'] = status_code
-                  result['ok'] = 200 <= status_code < 300
-                  result['body'] = text
-                  result['body_preview'] = text[:4000]
-                  result['headers_json'] = json.dumps(headers, ensure_ascii=False)
-                  result['error_message'] = '' if result['ok'] else error_message
-                  result['retry_count'] = retry_count
-                  result['tracer_id'] = _extract_tracer_id(text, headers)
-                  result['last_status_code'] = status_code
-                  result['last_error_message'] = '' if result['ok'] else error_message
-                  return result
-              except Exception as e:
-                  result['status_code'] = 0
-                  result['ok'] = False
-                  result['error_message'] = str(e)
-                  result['last_error_message'] = str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-        code_language: python3
-        desc: 调用内部满血版LLM并保留非2xx响应体用于诊断
-        outputs:
-          status_code:
-            type: number
-          ok:
-            type: boolean
-          body:
-            type: string
-          body_preview:
-            type: string
-          headers_json:
-            type: string
-          error_message:
-            type: string
-          request_debug:
-            type: object
-          retry_count:
-            type: number
-          tracer_id:
-            type: string
-          last_status_code:
-            type: number
-          last_error_message:
-            type: string
-        selected: false
-        title: 代码执行_调用满血LLM并保留错误响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000011'
-          - chat_url
-          value_type: string
-          variable: chat_url
-        - value_selector:
-          - '1775000000011'
-          - authorization_value
-          value_type: string
-          variable: authorization_value
-        - value_selector:
-          - '1775000000011'
-          - llm_request_body_json
-          value_type: string
-          variable: llm_request_body_json
-      height: 139
-      id: '1775000000012'
-      position:
-        x: 7200
-        "y": -520
-      positionAbsolute:
-        x: 7200
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import re
-
-
-          def _truncate_text(text, limit=2000):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def _read_json_text(text):
-              if text is None:
-                  return None
-              if isinstance(text, (dict, list)):
-                  return text
-              raw = str(text).strip()
-              if not raw:
-                  return None
-              return json.loads(raw)
-
-
-          def _content_to_text(content):
-              if isinstance(content, str):
-                  return content.strip()
-              if isinstance(content, list):
-                  parts = []
-                  for item in content:
-                      if isinstance(item, str) and item.strip():
-                          parts.append(item.strip())
-                      elif isinstance(item, dict):
-                          text = str(item.get('text') or item.get('content') or '').strip()
-                          if text:
-                              parts.append(text)
-                  return '\n'.join(parts).strip()
-              return ''
-
-
-          def _extract_chat_text(resp_json):
-              if not isinstance(resp_json, dict):
-                  return ''
-              choices = resp_json.get('choices')
-              if isinstance(choices, list) and choices:
-                  first = choices[0] or {}
-                  if isinstance(first, dict):
-                      msg = first.get('message') or {}
-                      if isinstance(msg, dict):
-                          text = _content_to_text(msg.get('content'))
-                          if text:
-                              return text
-                      text = _content_to_text(first.get('text'))
-                      if text:
-                          return text
-              output = resp_json.get('output')
-              text = _content_to_text(output)
-              if text:
-                  return text
-              if isinstance(output, list):
-                  for item in output:
-                      if isinstance(item, dict):
-                          text = _content_to_text(item.get('content'))
-                          if text:
-                              return text
-              for key in ('result', 'text', 'content', 'answer'):
-                  text = _content_to_text(resp_json.get(key))
-                  if text:
-                      return text
-              data = resp_json.get('data')
-              if isinstance(data, dict):
-                  for key in ('result', 'text', 'content', 'answer'):
-                      text = _content_to_text(data.get(key))
-                      if text:
-                          return text
-              return ''
-
-
-          def _strip_code_fence(text):
-              raw = str(text or '').strip()
-              full_match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)
-              if full_match:
-                  return full_match.group(1).strip()
-              return raw
-
-
-          def _remove_think_blocks(text):
-              raw = str(text or '')
-              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
-              return raw.strip()
-
-
-          def _ast_candidate_score(obj):
-              if not isinstance(obj, dict):
-                  return -1
-              score = 0
-              keys = set(obj.keys())
-              if 'execution_plan' in keys:
-                  score += 10
-              stages = (obj.get('execution_plan') or {}).get('stages') if isinstance(obj.get('execution_plan'), dict) else None
-              if isinstance(stages, list) and stages:
-                  score += 10
-              if keys:
-                  score += 1
-              return score
-
-
-          def _try_decode_object(raw):
-              try:
-                  decoder = json.JSONDecoder()
-                  obj, end = decoder.raw_decode(raw)
-                  if isinstance(obj, dict):
-                      return obj, raw[:end], raw[end:].strip()
-              except Exception:
-                  return None
-              return None
-
-
-          def _extract_json_object_text(text):
-              raw = _remove_think_blocks(_strip_code_fence(text))
