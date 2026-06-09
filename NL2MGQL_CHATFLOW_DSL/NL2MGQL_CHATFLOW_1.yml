@@ -717,36 +717,135 @@
               raise ValueError(f'unsupported time_range.mode: {mode}')
 
 
-          def _find_best_rows(obj):
+          def _collect_expected_row_fields(stage=None, validated_ast=None, normalized_plan=None):
+              fields = set()
+
+              def add(value):
+                  if isinstance(value, str) and value.strip():
+                      fields.add(value.strip())
+
+              def add_many(values):
+                  if isinstance(values, list):
+                      for value in values:
+                          if isinstance(value, dict):
+                              add(value.get('alias') or value.get('field'))
+                          else:
+                              add(value)
+
+              for src in [stage or {}]:
+                  if not isinstance(src, dict):
+                      continue
+                  add_many(src.get('group_fields'))
+                  add(src.get('metric_alias'))
+                  add(src.get('metric_field'))
+                  add(src.get('x_field'))
+                  add(src.get('y_field'))
+
+              ast = validated_ast if isinstance(validated_ast, dict) else {}
+              add_many(ast.get('group_by'))
+              add_many(ast.get('aggregations'))
+
+              plan = normalized_plan if isinstance(normalized_plan, dict) else {}
+              visualization = plan.get('visualization') if isinstance(plan.get('visualization'), dict) else {}
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              for src in (visualization, chart_request):
+                  add(src.get('x_field') or src.get('x_axis'))
+                  add(src.get('y_field') or src.get('y_axis'))
+
+              return fields
+
+
+          def _is_scalar_value(value):
+              return value is None or isinstance(value, (str, int, float, bool))
+
+
+          def _find_best_rows(obj, expected_fields=None):
+              expected_fields = set(expected_fields or [])
+              preferred_path_keys = {'rows', 'merged_rows', 'records', 'items', 'list', 'docs'}
+              container_path_keys = {'data', 'result', 'payload'}
+              metadata_path_keys = {'debug', 'headers', 'raw_response', 'trace', 'pipeline', 'request', 'metadata'}
               best = []
               best_score = -1
-              def score_rows(rows):
+
+              def score_rows(rows, path):
                   if not isinstance(rows, list) or not rows:
                       return -1
-                  if not all(isinstance(item, dict) for item in rows):
+                  sample = rows[:20]
+                  dict_items = [item for item in sample if isinstance(item, dict)]
+                  if not dict_items:
                       return -1
-                  keys = set()
-                  for item in rows[:5]:
-                      keys.update(item.keys())
-                  score = len(rows)
-                  for key in ('product_name', 'order_id', 'brand', 'amount', 'total_sales', 'product_gmv', 'sku_id', 'price'):
-                      if key in keys:
-                          score += 4
+
+                  score = min(len(rows), 100)
+                  dict_ratio = len(dict_items) / float(len(sample))
+                  if dict_ratio < 0.8:
+                      score -= 30
+                  score += int(dict_ratio * 20)
+
+                  field_counts = {}
+                  numeric_fields = set()
+                  dimension_fields = set()
+                  for item in dict_items:
+                      for key, value in item.items():
+                          field = str(key or '').strip()
+                          if not field:
+                              continue
+                          field_counts[field] = field_counts.get(field, 0) + 1
+                          if isinstance(value, (int, float)) and not isinstance(value, bool):
+                              numeric_fields.add(field)
+                          elif _is_scalar_value(value):
+                              dimension_fields.add(field)
+
+                  if not field_counts:
+                      return -1
+
+                  stable_threshold = max(1, int(len(dict_items) * 0.6))
+                  stable_fields = {field for field, count in field_counts.items() if count >= stable_threshold}
+                  score += min(len(stable_fields), 20) * 2
+
+                  avg_field_count = sum(len(item.keys()) for item in dict_items) / float(len(dict_items))
+                  if 1 <= avg_field_count <= 50:
+                      score += 10
+                  elif avg_field_count > 80:
+                      score -= 20
+
+                  expected_hits = stable_fields & expected_fields
+                  score += len(expected_hits) * 8
+                  if dimension_fields:
+                      score += 12
+                  if numeric_fields:
+                      score += 12
+                  if dimension_fields and numeric_fields:
+                      score += 10
+
+                  path_keys = {str(part or '').lower() for part in path}
+                  if path_keys & preferred_path_keys:
+                      score += 30
+                  if path_keys & container_path_keys:
+                      score += 8
+                  if path_keys & metadata_path_keys:
+                      score -= 40
+
                   return score
-              def visit(node):
+
+              def visit(node, path=()):
                   nonlocal best, best_score
                   if isinstance(node, list):
-                      s = score_rows(node)
+                      s = score_rows(node, path)
                       if s > best_score:
                           best, best_score = node, s
-                      for item in node:
-                          visit(item)
+                      for idx, item in enumerate(node[:20]):
+                          visit(item, path + (str(idx),))
                   elif isinstance(node, dict):
-                      for key in ('rows', 'items', 'list', 'records', 'data', 'result', 'docs'):
+                      ordered_keys = ('rows', 'merged_rows', 'records', 'items', 'list', 'docs', 'data', 'result', 'payload')
+                      visited = set()
+                      for key in ordered_keys:
                           if key in node:
-                              visit(node.get(key))
-                      for value in node.values():
-                          visit(value)
+                              visited.add(key)
+                              visit(node.get(key), path + (key,))
+                      for key, value in node.items():
+                          if key not in visited:
+                              visit(value, path + (str(key),))
+
               visit(obj)
               return best
 
