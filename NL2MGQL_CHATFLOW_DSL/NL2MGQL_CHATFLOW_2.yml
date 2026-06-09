@@ -523,7 +523,8 @@
                       if status_code < 200 or status_code >= 300:
                           raise ValueError(f"stage `{stage['stage_name']}` query failed: status={status_code}, body={response_body[:1200]}")
                       response_json = _read_json_text(response_body)
-                      rows = _find_best_rows(response_json)
+                      expected_row_fields = _collect_expected_row_fields(stage, validated_ast, normalized_execution_plan)
+                      rows = _find_best_rows(response_json, expected_row_fields)
                   else:
                       response_body = json.dumps({'msg': 'skip query', 'code': 200, 'data': {'rows': []}}, ensure_ascii=False)
                       rows = []

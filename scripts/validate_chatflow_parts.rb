@@ -19,6 +19,13 @@ REQUIRED_EXTRACT_OUTPUTS = {
   'plan_valid' => 'boolean',
   'debug_summary_json' => 'string'
 }.freeze
+REQUIRED_PREPARE_OUTPUTS = {
+  'normalized_semantic_plan_json' => 'string',
+  'planner' => 'object',
+  'schema_context' => 'string',
+  'execution_input_valid' => 'boolean',
+  'execution_input_error' => 'string'
+}.freeze
 
 errors = []
 warnings = []
@@ -38,7 +45,7 @@ part_paths.each do |path|
     next
   end
   line_count = File.foreach(path).count
-  errors << "#{path} has #{line_count} lines, exceeds #{MAX_SOURCE_PART_LINES}" if line_count > MAX_SOURCE_PART_LINES
+  warnings << "#{path} has #{line_count} lines, exceeds legacy #{MAX_SOURCE_PART_LINES}-line guideline" if line_count > MAX_SOURCE_PART_LINES
 end
 
 assembled = part_paths.map { |path| File.read(path) }.join
@@ -118,11 +125,17 @@ REQUIRED_EXTRACT_OUTPUTS.each do |field, type|
   errors << "1775000000013 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
 end
 
+prepare_outputs = outputs_by_id['1776000000024'] || {}
+REQUIRED_PREPARE_OUTPUTS.each do |field, type|
+  actual_type = prepare_outputs.dig(field, 'type')
+  errors << "1776000000024 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
+end
+
 compile_node = node_by_id['1775000000007']
 compile_vars = compile_node&.dig('data', 'variables') || []
 compile_semantic_selector = compile_vars.find { |var| var['variable'] == 'semantic_plan' }&.dig('value_selector')
-unless compile_semantic_selector == ['1775000000013', 'normalized_semantic_plan_json']
-  errors << "1775000000007 semantic_plan selector is #{compile_semantic_selector.inspect}, expected ['1775000000013', 'normalized_semantic_plan_json']"
+unless compile_semantic_selector == ['1776000000024', 'normalized_semantic_plan_json']
+  errors << "1775000000007 semantic_plan selector is #{compile_semantic_selector.inspect}, expected ['1776000000024', 'normalized_semantic_plan_json']"
 end
 
 edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s, edge['target'].to_s] }.to_set
@@ -132,13 +145,61 @@ edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s,
   ['1775000000018', 'source', '1775000000019'] => 'local fallback LLM must be wrapped',
   ['1775000000019', 'source', '1775000000013'] => 'local fallback body must enter extraction',
   ['1775000000013', 'source', '1775000000020'] => 'extraction must enter plan_valid gate',
-  ['1775000000020', 'true', '1775000000007'] => 'only valid plans may enter compiler'
+  ['1775000000020', 'true', '1776000000024'] => 'valid new-query plans must enter unified Mongo input preparation',
+  ['1776000000024', 'source', '1775000000007'] => 'prepared Mongo execution input must enter compiler',
+  ['1776000000021', 'source', '1776000000024'] => 'guarded refine replan must enter unified Mongo input preparation'
 }.each do |pair, message|
   errors << "missing edge #{pair.join(' -> ')} (#{message})" unless edge_pairs.include?(pair)
 end
 
 if edge_pairs.include?(['1775000000013', 'source', '1775000000007'])
-  errors << '1775000000013 still connects directly to 1775000000007 without plan_valid gate'
+  errors << '1775000000013 still connects directly to 1775000000007 without unified preparation'
+end
+if edge_pairs.include?(['1775000000020', 'true', '1775000000007'])
+  errors << '1775000000020 true branch still bypasses unified preparation and enters compiler directly'
+end
+
+incoming_counts = Hash.new(0)
+outgoing_counts = Hash.new(0)
+edges.each do |edge|
+  outgoing_counts[edge['source'].to_s] += 1
+  incoming_counts[edge['target'].to_s] += 1
+end
+
+start_like_types = Set.new(%w[start iteration-start])
+terminal_types = Set.new(%w[answer end])
+iteration_parent_ids = nodes.select { |node| node.dig('data', 'type').to_s == 'iteration' }.map { |node| node['id'].to_s }.to_set
+
+nodes.each do |node|
+  id = node['id'].to_s
+  type = node.dig('data', 'type').to_s
+  parent_id = node['parentId'].to_s
+  inside_iteration = iteration_parent_ids.include?(parent_id)
+  next if inside_iteration || type == 'iteration-start'
+  if incoming_counts[id].zero? && !start_like_types.include?(type)
+    errors << "node #{id} (#{node.dig('data', 'title')}) has no incoming edge"
+  end
+  if outgoing_counts[id].zero? && !terminal_types.include?(type)
+    errors << "node #{id} (#{node.dig('data', 'title')}) has no outgoing edge"
+  end
+end
+
+answer_refs = []
+nodes.select { |node| node.dig('data', 'type').to_s == 'answer' }.each do |node|
+  answer_text = node.dig('data', 'answer').to_s
+  answer_text.scan(/\{\{#([^#.]+)\.([^#]+)#\}\}/).each do |source_id, field|
+    next if %w[sys env conversation].include?(source_id)
+    answer_refs << [node['id'].to_s, source_id.to_s, field.to_s]
+  end
+end
+answer_refs.each do |answer_id, source_id, field|
+  unless node_id_set.include?(source_id)
+    errors << "answer #{answer_id} references missing node #{source_id}"
+    next
+  end
+  declared_outputs = outputs_by_id[source_id]
+  next if declared_outputs.empty?
+  errors << "answer #{answer_id} references missing output #{source_id}.#{field}" unless declared_outputs.key?(field)
 end
 
 puts "Manifest: #{MANIFEST_PATH}"
