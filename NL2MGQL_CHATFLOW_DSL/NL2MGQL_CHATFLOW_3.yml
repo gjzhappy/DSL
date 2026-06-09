@@ -1224,7 +1224,7 @@
               return {}
 
 
-          def main(question: str, last_context_json: str):
+          def main(question: str, last_context_json: str, final_validation_repair_hint: str = ''):
               ctx = _loads(last_context_json)
               slim = {
                   'has_last_context': bool(ctx.get('has_last_context')),
@@ -1244,6 +1244,11 @@
                   '重要规则：如果上一轮上下文 has_last_context=true，且当前用户只表达图表展示偏好，例如“饼图/柱状图/折线图/换成/改成/标题/标签/TopN/排序”，必须判定为 modify_chart，need_previous_context=true，need_requery=false，need_rechart=true。不得因为用户本轮未重复查询主题、指标、维度而进入 clarify。\n\n'
                   f'当前用户问题：{question}\n\n上一轮上下文（已裁剪，不含原始大文档）：\n{json.dumps(slim, ensure_ascii=False)}'
               )
+              if str(final_validation_repair_hint or '').strip():
+                  prompt += (
+                      '\n\nfinal_validation_repair_hint：' + str(final_validation_repair_hint).strip() +
+                      '\n如果 final_validation_repair_hint 非空，说明上一轮路由判断可能错误。请结合该提示重新判断 turn_intent。'
+                  )
               return {'intent_prompt': prompt, 'last_context_slim_json': json.dumps(slim, ensure_ascii=False)}
         code_language: python3
         desc: ''
@@ -1268,6 +1273,11 @@
           - last_context_json
           value_type: string
           variable: last_context_json
+        - value_selector:
+          - '1777000000003'
+          - repair_hint
+          value_type: string
+          variable: final_validation_repair_hint
       height: 80
       id: '1776000000002'
       position:
