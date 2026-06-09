@@ -1121,8 +1121,7 @@ workflow:
             - related_collections = ["products"]
         - id: planner-user
           role: user
-          text: |-
-            用户问题:{{#sys.query#}}
+          text: 用户问题:{{#sys.query#}}
         selected: false
         structured_output:
           schema:
@@ -1318,3 +1317,4 @@ workflow:
           def main(item):
               data = item
               if isinstance(data, str):
+                  data = json.loads(data)

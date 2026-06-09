@@ -1,3 +1,10 @@
+              if not raw:
+                  raise ValueError('LLM返�内容为空')
+              direct = _try_decode_object(raw)
+              if direct and not direct[2]:
+                  return direct[1]
+              candidates = []
+              for block in re.findall(r'```(?:json)?\s*(.*?)```', raw, flags=re.IGNORECASE | re.DOTALL):
                   parsed = _try_decode_object(block.strip())
                   if parsed:
                       obj, obj_text, tail = parsed
@@ -599,28 +606,12 @@
       type: custom
       width: 242
     - data:
-        code: |
+        code: |-
           import json
           from datetime import datetime, timezone
 
 
           INTENT_WORDS = ('描述', '分析', '总结', '说明', '对比')
-          GROUP_FIELD_CANDIDATES = (
-              'status', 'payment_status',
-              'vendor', 'vendor_name', 'manufacturer', 'manufacturer_name',
-              'supplier', 'supplier_name', 'brand', 'brand_name', 'factory',
-              '厂商', '厂商名称', '供应商', '供应商名称', '品牌',
-              '_id', 'name', 'category'
-          )
-          METRIC_FIELD_HINTS = ('count', 'total', 'sum', 'amount', 'qty', 'quantity', 'orders', '订单数', '数量', '金额', '销售额', '合计')
-          FIELD_LABELS = {
-              'brand': '品牌',
-              'status': '订单状态',
-              'payment_status': '支付状态',
-              'province': '省份',
-              'category': '类目',
-              'product_name': '商品',
-          }
 
 
           def _loads_obj(value):
@@ -661,66 +652,180 @@
               return answer_mode == 'data_with_analysis' or any(word in q for word in INTENT_WORDS)
 
 
+          def _execution_stages(plan):
+              if not isinstance(plan, dict):
+                  return []
+              stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or [])
+              return stages if isinstance(stages, list) else []
+
+
           def _first_stage(plan):
-              stages = []
-              if isinstance(plan, dict):
-                  stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or [])
-              return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
+              stages = _execution_stages(plan)
+              return stages[0] if stages and isinstance(stages[0], dict) else {}
 
 
-          def _plan_group_field(normalized_plan, rows):
-              stage = _first_stage(normalized_plan)
-              group_fields = stage.get('group_fields') or []
-              group = str(group_fields[0] or '').strip() if group_fields else ''
-              if group and rows and group in rows[0]:
-                  return group
+          def _chart_request(plan):
+              if not isinstance(plan, dict):
+                  return {}
+              chart = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              viz = plan.get('visualization') if isinstance(plan.get('visualization'), dict) else {}
+              merged = dict(chart)
+              merged.update({k: v for k, v in viz.items() if v not in (None, '')})
+              return merged
+
+
+          def _validated_ast(plan):
+              if not isinstance(plan, dict):
+                  return {}
+              ast = plan.get('validated_ast')
+              if isinstance(ast, dict):
+                  return ast
+              for stage in _execution_stages(plan):
+                  if isinstance(stage, dict) and isinstance(stage.get('validated_ast'), dict):
+                      return stage.get('validated_ast')
+              return {}
+
+
+          def _field_from_ast_group(ast):
+              groups = ast.get('group_by') if isinstance(ast, dict) else []
+              if not isinstance(groups, list):
+                  return ''
+              for item in groups:
+                  if isinstance(item, dict):
+                      field = str(item.get('alias') or item.get('field') or '').strip()
+                      if field:
+                          return field
+                  elif isinstance(item, str) and item.strip():
+                      return item.strip()
+              return ''
+
+
+          def _field_from_ast_metric(ast):
+              aggs = ast.get('aggregations') if isinstance(ast, dict) else []
+              if not isinstance(aggs, list):
+                  return ''
+              for item in aggs:
+                  if isinstance(item, dict):
+                      field = str(item.get('alias') or item.get('field') or '').strip()
+                      if field:
+                          return field
+                  elif isinstance(item, str) and item.strip():
+                      return item.strip()
               return ''
 
 
           def _pick_group_field(rows, normalized_plan=None):
-              plan_group = _plan_group_field(normalized_plan or {}, rows)
-              if plan_group:
-                  return plan_group
-              if not rows:
-                  return ''
-              keys = list(rows[0].keys())
-              for candidate in GROUP_FIELD_CANDIDATES:
-                  if candidate in keys:
-                      return candidate
-              for key in keys:
-                  if not isinstance(rows[0].get(key), (int, float)):
-                      return key
-              return keys[0] if keys else ''
+              normalized_plan = normalized_plan or {}
+              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+              row_key_set = set(row_keys)
+              for stage in _execution_stages(normalized_plan):
+                  group_fields = stage.get('group_fields') if isinstance(stage, dict) else []
+                  if isinstance(group_fields, list) and group_fields:
+                      group = str(group_fields[0] or '').strip()
+                      if group and (not row_keys or group in row_key_set):
+                          return group
+              ast_group = _field_from_ast_group(_validated_ast(normalized_plan))
+              if ast_group and (not row_keys or ast_group in row_key_set):
+                  return ast_group
+              chart_x = str(_chart_request(normalized_plan).get('x_field') or _chart_request(normalized_plan).get('x_axis') or '').strip()
+              if chart_x and (not row_keys or chart_x in row_key_set):
+                  return chart_x
+              if rows:
+                  for key in row_keys:
+                      if not isinstance(rows[0].get(key), (int, float)) or isinstance(rows[0].get(key), bool):
+                          return key
+              return row_keys[0] if row_keys else ''
 
 
           def _pick_metric_field(rows, group_field, normalized_plan=None):
-              if not rows:
-                  return ''
-              stage = _first_stage(normalized_plan or {})
-              metric_alias = str(stage.get('metric_alias') or '').strip()
-              if metric_alias and metric_alias in rows[0]:
-                  return metric_alias
-              keys = [key for key in rows[0].keys() if key != group_field]
-              numeric_keys = [key for key in keys if isinstance(rows[0].get(key), (int, float))]
-              for key in numeric_keys:
-                  low = str(key).lower()
-                  if any(hint in low or hint in str(key) for hint in METRIC_FIELD_HINTS):
+              normalized_plan = normalized_plan or {}
+              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+              row_key_set = set(row_keys)
+              for stage in _execution_stages(normalized_plan):
+                  metric_alias = str((stage or {}).get('metric_alias') or '').strip() if isinstance(stage, dict) else ''
+                  if metric_alias and (not row_keys or metric_alias in row_key_set):
+                      return metric_alias
+              ast_metric = _field_from_ast_metric(_validated_ast(normalized_plan))
+              if ast_metric and (not row_keys or ast_metric in row_key_set):
+                  return ast_metric
+              chart_y = str(_chart_request(normalized_plan).get('y_field') or _chart_request(normalized_plan).get('y_axis') or '').strip()
+              if chart_y and (not row_keys or chart_y in row_key_set):
+                  return chart_y
+              if rows:
+                  for key in row_keys:
+                      value = rows[0].get(key)
+                      if key != group_field and isinstance(value, (int, float)) and not isinstance(value, bool):
+                          return key
+              for key in row_keys:
+                  if key != group_field:
                       return key
-              return numeric_keys[0] if numeric_keys else (keys[0] if keys else '')
+              return ''
 
 
-          def _field_label(field):
+          def _prettify(field):
+              text = str(field or '').strip()
+              if not text:
+                  return '字段'
+              return text.replace('_', ' ')
+
+
+          def _schema_label_map(plan):
+              labels = {}
+              schema = plan.get('schema_context') if isinstance(plan, dict) else None
+              if isinstance(schema, dict):
+                  fields = schema.get('fields') or schema.get('field_metadata') or []
+                  if isinstance(fields, dict):
+                      iterable = [{'name': k, **(v if isinstance(v, dict) else {})} for k, v in fields.items()]
+                  elif isinstance(fields, list):
+                      iterable = fields
+                  else:
+                      iterable = []
+                  for item in iterable:
+                      if isinstance(item, dict):
+                          name = str(item.get('name') or item.get('field') or '').strip()
+                          label = str(item.get('label') or item.get('description') or '').strip()
+                          aliases = item.get('aliases') if isinstance(item.get('aliases'), list) else []
+                          if name and label:
+                              labels[name] = label
+                          if name and aliases and name not in labels:
+                              labels[name] = str(aliases[0] or '').strip()
+              return labels
+
+
+          def _ast_alias_map(plan):
+              aliases = {}
+              ast = _validated_ast(plan)
+              for item in (ast.get('group_by') or []) if isinstance(ast, dict) else []:
+                  if isinstance(item, dict):
+                      field = str(item.get('field') or '').strip()
+                      alias = str(item.get('alias') or '').strip()
+                      if field and alias:
+                          aliases[field] = alias
+              for item in (ast.get('aggregations') or []) if isinstance(ast, dict) else []:
+                  if isinstance(item, dict):
+                      field = str(item.get('field') or item.get('alias') or '').strip()
+                      alias = str(item.get('alias') or '').strip()
+                      if field and alias:
+                          aliases[field] = alias
+              return aliases
+
+
+          def _field_label(field, normalized_plan=None, role=''):
               field = str(field or '').strip()
-              if field in FIELD_LABELS:
-                  return FIELD_LABELS[field]
-              low = field.lower()
-              if any(k in low or k in field for k in ['manufacturer', 'vendor', 'factory', 'supplier', 'merchant', '厂商', '厂家', '供应商']):
-                  return '厂商'
-              if 'brand' in low or '品牌' in field:
-                  return '品牌'
-              if any(k in low or k in field for k in ['product', 'sku', 'spu', '商品', '产品']):
-                  return '商品'
-              return field or '分组维度'
+              if not field:
+                  return '字段'
+              labels = _schema_label_map(normalized_plan or {})
+              if field in labels:
+                  return labels[field]
+              aliases = _ast_alias_map(normalized_plan or {})
+              if field in aliases:
+                  return aliases[field]
+              chart = _chart_request(normalized_plan or {})
+              axis_key = 'x_label' if role == 'group' else 'y_label'
+              axis_label = str(chart.get(axis_key) or chart.get(role + '_label') or '').strip()
+              if axis_label:
+                  return axis_label
+              return _prettify(field)
 
 
           def _fmt(value):
@@ -735,10 +840,11 @@
               row_count = len(rows)
               group_field = _pick_group_field(rows, normalized_plan)
               metric_field = _pick_metric_field(rows, group_field, normalized_plan)
-              group_label = _field_label(group_field)
+              group_label = _field_label(group_field, normalized_plan, 'group')
+              metric_label = _field_label(metric_field, normalized_plan, 'metric')
               title = '结果摘要'
               if not rows:
-                  return title + '：\n- 当前筛选条件下未查询到符合条件的订单数据。'
+                  return title + '：\n- 当前筛选条件下未查询到符合条件的数据记录。'
 
               bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
               if group_field and metric_field:
@@ -746,10 +852,10 @@
                   top = sorted_rows[0]
                   top_name = top.get(group_field, '未知')
                   top_value = top.get(metric_field, '')
-                  bullets.append(f'- 按{group_label}分组后，{top_name} 的 {metric_field} 最高，为 {_fmt(top_value)}。')
+                  bullets.append(f'- 按 {group_label} 分组后，{top_name} 的 {metric_label} 最高，为 {_fmt(top_value)}。')
                   if row_count > 1:
                       tail = sorted_rows[-1]
-                      bullets.append(f'- 最低的是 {tail.get(group_field, "未知")}，{metric_field} 为 {_fmt(tail.get(metric_field, ""))}。')
+                      bullets.append(f'- 排名靠后的分组是 {tail.get(group_field, "未知")}，{metric_label} 为 {_fmt(tail.get(metric_field, ""))}。')
                   preview = '、'.join([f'{row.get(group_field, "未知")}({_fmt(row.get(metric_field, ""))})' for row in sorted_rows[:5]])
                   if preview:
                       bullets.append(f'- 主要分组数据：{preview}。')
@@ -758,25 +864,25 @@
 
           def _analysis(rows, normalized_plan=None, chart_available=False):
               if not rows:
-                  return '简单分析：\n- 当前筛选条件下没有可用于对比的订单数据，建议放宽时间范围或检查筛选条件。'
+                  return '简单分析：\n- 当前筛选条件下没有可用于对比的数据记录，建议放宽时间范围或检查筛选条件。'
               group_field = _pick_group_field(rows, normalized_plan)
               metric_field = _pick_metric_field(rows, group_field, normalized_plan)
-              group_label = _field_label(group_field)
+              group_label = _field_label(group_field, normalized_plan, 'group')
+              metric_label = _field_label(metric_field, normalized_plan, 'metric')
               if not group_field or not metric_field:
                   return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合统计结果查看整体分布。'
-              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float))]
+              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float)) and not isinstance(row.get(metric_field), bool)]
               if len(numeric) < 2:
                   return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
               sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
               top, second = sorted_rows[0], sorted_rows[1]
               gap = top.get(metric_field) - second.get(metric_field)
-              prefix = '从柱状图看' if chart_available else '从统计结果看'
-              dim_suffix = '状态' if group_field in {'status', 'payment_status'} else group_label
+              prefix = '从图表看' if chart_available else '从统计结果看'
               return (
                   '简单分析：\n'
-                  f'- {prefix}，{top.get(group_field, "未知")} {dim_suffix}的 {metric_field} 最高，比第二名 '
+                  f'- {prefix}，{top.get(group_field, "未知")} 的 {metric_label} 最高，比第二名 '
                   f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
-                  f'- 可优先关注 {top.get(group_field, "未知")}、{second.get(group_field, "未知")} 等{group_label}的分布，进一步分析不同{group_label}的订单流转情况。'
+                  f'- 可优先关注排名靠前的分组（{top.get(group_field, "未知")}、{second.get(group_field, "未知")}）以及排名靠后的分组，继续分析不同 {group_label} 的差异情况。'
               )
 
 
@@ -803,7 +909,8 @@
               mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
               result_rows = _rows(rows)
               chart = str(chart_echarts_markdown or '').strip()
-              chart_available = bool(chart)
+              chart_enabled = bool(_chart_request(normalized_plan).get('enabled') or normalized_plan.get('needs_chart'))
+              chart_available = bool(chart_enabled and chart)
               needs_text = _needs_analysis(question, mode)
 
               parts = []
@@ -816,7 +923,7 @@
                   warning = (((normalized_plan.get('visualization') or {}).get('warning')) if isinstance(normalized_plan.get('visualization'), dict) else '') or '图表字段未匹配或图表配置不可用'
                   parts.append('图表说明：\n- 本次查询已返回可统计数据，但图表未生成，原因：' + str(warning))
               if not parts:
-                  parts.append('当前筛选条件下未查询到符合条件的订单数据。')
+                  parts.append('当前筛选条件下未查询到符合条件的数据记录。')
 
               answer = '\n\n'.join(part for part in parts if part)
               if not chart_available:
@@ -1412,110 +1519,3 @@
                 type: string
               missing_info:
                 type: array
-                items:
-                  type: string
-              chart_modification:
-                type: object
-                additionalProperties: true
-              query_refinement:
-                type: object
-                additionalProperties: true
-              analysis_focus:
-                type: string
-        structured_output_enabled: true
-        title: LLM_多轮意图识别
-        type: llm
-        vision:
-          enabled: false
-      height: 98
-      id: '1776000000003'
-      position:
-        x: 1200
-        "y": 0
-      positionAbsolute:
-        x: 1200
-        "y": 0
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import re
-
-          ALLOWED = {'new_query','modify_chart','refine_query','explain_result','reanalyze_result','fix_result','continue_previous','clarify'}
-          SCHEMA_KEYS = {'turn_intent','need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly','reason','missing_info','chart_modification','query_refinement','analysis_focus'}
-
-
-          def _strip_code_block(text):
-              text = str(text or '').strip()
-              m = re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I | re.S)
-              return m.group(1).strip() if m else text
-
-
-          def _extract_json(text):
-              text = _strip_code_block(text)
-              start, end = text.find('{'), text.rfind('}')
-              return text[start:end + 1] if start >= 0 and end >= start else text
-
-
-          def _loads_obj(value):
-              if isinstance(value, dict):
-                  return dict(value)
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(_extract_json(value))
-                      return parsed if isinstance(parsed, dict) else {}
-                  except Exception:
-                      return {}
-              return {}
-
-
-          def _bool(value, default=False):
-              if isinstance(value, bool):
-                  return value
-              if value is None or value == '':
-                  return default
-              return str(value).strip().lower() in {'1','true','yes','y','on'}
-
-
-          def _defaults(intent):
-              base = {'need_previous_context': False, 'need_requery': True, 'need_rechart': False, 'need_analysis': True, 'can_answer_directly': False}
-              if intent == 'modify_chart':
-                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': True, 'need_analysis': True})
-              elif intent in {'explain_result','reanalyze_result'}:
-                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': False, 'need_analysis': True})
-              elif intent == 'continue_previous':
-                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': False, 'need_analysis': True})
-              elif intent == 'clarify':
-                  base.update({'need_previous_context': False, 'need_requery': False, 'need_rechart': False, 'need_analysis': False, 'can_answer_directly': True})
-              elif intent == 'refine_query':
-                  base.update({'need_previous_context': True, 'need_requery': True, 'need_rechart': True, 'need_analysis': True})
-              elif intent == 'fix_result':
-                  base.update({'need_previous_context': True, 'need_requery': True, 'need_rechart': True, 'need_analysis': True})
-              return base
-
-
-          def main(intent_structured, intent_text: str, last_context_json: str, question: str):
-              ctx = _loads_obj(last_context_json)
-              obj = _loads_obj(intent_structured)
-              source = 'structured_output' if obj else 'text'
-              if not obj:
-                  obj = _loads_obj(intent_text)
-              valid = bool(obj)
-              err = '' if valid else 'intent json parse failed; fallback to new_query'
-              obj = {k: obj.get(k) for k in SCHEMA_KEYS}
-              intent = str(obj.get('turn_intent') or 'new_query').strip()
-              if intent not in ALLOWED:
-                  intent = 'new_query'; valid = False; err = (err + '; invalid intent').strip('; ')
-              d = _defaults(intent)
-              for k in ['need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly']:
-                  obj[k] = _bool(obj.get(k), d[k])
-              obj['turn_intent'] = intent
-              obj['missing_info'] = obj.get('missing_info') if isinstance(obj.get('missing_info'), list) else []
-              obj['chart_modification'] = obj.get('chart_modification') if isinstance(obj.get('chart_modification'), dict) else {}
-              obj['query_refinement'] = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
-              obj['analysis_focus'] = str(obj.get('analysis_focus') or '')
-              obj['reason'] = str(obj.get('reason') or '')
