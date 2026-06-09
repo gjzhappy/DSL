@@ -153,6 +153,22 @@ workflow:
     - last_chart_request_json
     value: ''
     value_type: string
+  - description: 上一轮 schema metadata JSON（C-MVP 字段/指标语义来源）
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0101
+    name: last_schema_metadata_json
+    selector:
+    - conversation
+    - last_schema_metadata_json
+    value: ''
+    value_type: string
+  - description: 上一轮 schema alias index JSON（C-MVP 多轮字段归一复用）
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0102
+    name: last_schema_alias_index_json
+    selector:
+    - conversation
+    - last_schema_alias_index_json
+    value: ''
+    value_type: string
   environment_variables:
   - description: 用静态 token 换动态 token 的接口
     id: 4fef4aee-cdc8-4b9c-bef8-be75bfeafa43
@@ -1302,19 +1318,3 @@ workflow:
         "y": 80
       positionAbsolute:
         x: 4024
-        "y": -220
-      selectable: false
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom-iteration-start
-      width: 44
-      zIndex: 1002
-    - data:
-        code: |
-          import json
-
-          def main(item):
-              data = item
-              if isinstance(data, str):
-                  data = json.loads(data)
