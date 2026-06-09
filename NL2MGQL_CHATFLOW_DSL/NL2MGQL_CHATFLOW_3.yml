@@ -452,8 +452,9 @@
         model:
           completion_params:
             num_ctx: 16384
-            num_predict: 2048
+            num_predict: 8192
             temperature: 0
+            think: false
           mode: chat
           name: qwen3.5:35b
           provider: langgenius/ollama/ollama
@@ -1287,7 +1288,9 @@
           variable_selector: []
         model:
           completion_params:
-            temperature: 0.0
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
             think: false
           mode: chat
           name: qwen3.5:35b

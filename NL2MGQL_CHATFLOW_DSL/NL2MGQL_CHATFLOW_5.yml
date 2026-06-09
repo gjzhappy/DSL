@@ -575,7 +575,21 @@
       width: 242
     - data:
         code: |
+          import hashlib
           import json
+          import re
+
+          MAX_SCHEMA_CONTEXT_CHARS = 8000
+          KEEP_FIELD_NAMES = {
+              'status', 'payment_status', 'brand', 'created_at', 'order_id',
+              'amount', 'quantity', 'province', 'city', 'vendor', 'supplier'
+          }
+          FALLBACK_ALIASES = {
+              '订单状态': 'status', 'order_status': 'status', '履约状态': 'status',
+              '支付状态': 'payment_status', '付款状态': 'payment_status', '是否支付': 'payment_status',
+              '品牌': 'brand', '厂牌': 'brand', '厂商': 'brand',
+              '下单时间': 'created_at', '订单时间': 'created_at', '创建时间': 'created_at',
+          }
 
 
           def _list(v):
@@ -602,27 +616,232 @@
               return {}
 
 
+          def _compact(s, limit):
+              s = re.sub(r'\n{3,}', '\n\n', str(s or '').strip())
+              return s if len(s) <= limit else s[:limit].rstrip() + '\n...[truncated]'
+
+
+          def _title(text):
+              for line in str(text or '').splitlines()[:30]:
+                  m = re.match(r'\s*#{1,6}\s+(.+?)\s*$', line)
+                  if m:
+                      return m.group(1).strip()
+              return ''
+
+
+          def _collection_from_text(text, fallback=''):
+              patterns = [
+                  r'collection\s*[:=]\s*[`"]?([A-Za-z0-9_\-]+)',
+                  r'collection_name\s*[:=]\s*[`"]?([A-Za-z0-9_\-]+)',
+                  r'集合\s*[:：]\s*[`"]?([A-Za-z0-9_\-]+)',
+              ]
+              for pat in patterns:
+                  m = re.search(pat, text or '', re.I)
+                  if m:
+                      return m.group(1).strip('`"')
+              return fallback
+
+
+          def _dedup_key(collection, context_text):
+              title = _title(context_text)
+              if title:
+                  return (collection, title)
+              h = hashlib.md5(str(context_text or '').encode('utf-8')).hexdigest()[:12]
+              return (collection, h)
+
+
+          def _score(item):
+              for key in ('score', 'similarity', 'metadata_score'):
+                  try:
+                      return float(item.get(key))
+                  except Exception:
+                      pass
+              return 0.0
+
+
+          def _extract_json_terms(obj, out):
+              if isinstance(obj, dict):
+                  for k, v in obj.items():
+                      if any(x in str(k).lower() for x in ('field', 'group', 'metric', 'chart', 'time')):
+                          if isinstance(v, str):
+                              out.add(v)
+                          elif isinstance(v, list):
+                              for x in v:
+                                  if isinstance(x, str):
+                                      out.add(x)
+                      _extract_json_terms(v, out)
+              elif isinstance(obj, list):
+                  for x in obj:
+                      _extract_json_terms(x, out)
+
+
+          def _terms_from_old_plan(old_plan_json):
+              terms = set(KEEP_FIELD_NAMES)
+              obj = _loads(old_plan_json)
+              _extract_json_terms(obj, terms)
+              return {str(x).strip() for x in terms if str(x).strip()}
+
+
+          def _alias_map_from_line(line, field):
+              aliases = []
+              for pat in (r'aliases?\s*[:=]\s*\[([^\]]+)\]', r'别名\s*[:：=]\s*\[?([^\]\n;；]+)'):
+                  m = re.search(pat, line, re.I)
+                  if m:
+                      aliases.extend([x.strip(' `"\'，,、') for x in re.split(r'[,，、/|]', m.group(1))])
+              return {a: field for a in aliases if a}
+
+
+          def _field_name_from_line(line):
+              s = line.strip()
+              patterns = [
+                  r'^[-*]\s*`?([A-Za-z_][A-Za-z0-9_]*)`?\s*[:：-]',
+                  r'^[-*]\s*field\s*[:=]\s*`?([A-Za-z_][A-Za-z0-9_]*)',
+                  r'`([A-Za-z_][A-Za-z0-9_]*)`\s*[:：-]',
+              ]
+              for pat in patterns:
+                  m = re.search(pat, s, re.I)
+                  if m:
+                      return m.group(1)
+              return ''
+
+
+          def _is_useful_field_line(line, relevant_terms):
+              low = line.lower()
+              if any(t and (t.lower() in low or t in line) for t in relevant_terms):
+                  return True
+              return any(k in low for k in ('groupable', 'filterable', 'aggregatable', 'allowed_values', 'aliases', 'enum', 'datetime'))
+
+
+          def _compress_schema(collection, role, context_text, relevant_terms):
+              text = str(context_text or '')
+              collection = _collection_from_text(text, collection)
+              purpose = ''
+              default_time_field = ''
+              fields = []
+              metrics = []
+              rules = []
+              alias_map = dict(FALLBACK_ALIASES)
+
+              for line in text.splitlines():
+                  raw = line.strip()
+                  if not raw:
+                      continue
+                  low = raw.lower()
+                  if not purpose and any(k in low for k in ('purpose', '用途', '说明')):
+                      purpose = _compact(re.sub(r'^[-#*\s]*(purpose|用途|说明)\s*[:：-]?\s*', '', raw, flags=re.I), 180)
+                  if not default_time_field:
+                      m = re.search(r'default[_\s-]*time[_\s-]*field\s*[:=：]\s*`?([A-Za-z_][A-Za-z0-9_]*)', raw, re.I)
+                      if m:
+                          default_time_field = m.group(1)
+                  if any(k in low for k in ('metric', '指标', 'count(', 'sum(', 'avg(', 'order_count', 'gmv')):
+                      if len(metrics) < 8:
+                          metrics.append(_compact(raw, 220))
+                      continue
+                  if any(k in low for k in ('query rule', 'rules', '必须', '聚合', 'aggregate', '时间范围', 'group_by')):
+                      if len(rules) < 8 and not any(bad in low for bad in ('example', '示例')):
+                          rules.append(_compact(raw, 220))
+                      continue
+                  field = _field_name_from_line(raw)
+                  if field:
+                      alias_map.update(_alias_map_from_line(raw, field))
+                      if _is_useful_field_line(raw, relevant_terms) and not any(x.startswith('- ' + field + ':') for x in fields):
+                          fields.append('- ' + field + ': ' + _compact(re.sub(r'^[-*]\s*`?' + re.escape(field) + r'`?\s*[:：-]?\s*', '', raw), 320))
+
+              # Ensure known aliases mentioned in user/refine terms survive even if source schema line was terse.
+              for alias, field in FALLBACK_ALIASES.items():
+                  if any(alias in t or t == field for t in relevant_terms) and not any(x.startswith('- ' + field + ':') for x in fields):
+                      fields.append('- %s: aliases=[%s]' % (field, alias))
+
+              if not fields:
+                  for line in text.splitlines():
+                      raw = line.strip()
+                      field = _field_name_from_line(raw)
+                      if field and len(fields) < 12:
+                          fields.append('- ' + field + ': ' + _compact(raw, 240))
+
+              lines = ['collection: ' + (collection or 'unknown')]
+              if role:
+                  lines.append('role: ' + role)
+              if default_time_field:
+                  lines.append('default_time_field: ' + default_time_field)
+              if purpose:
+                  lines.append('purpose: ' + purpose)
+              if fields:
+                  lines.append('relevant fields:')
+                  lines.extend(fields[:24])
+              if metrics:
+                  lines.append('metrics:')
+                  lines.extend('- ' + m.lstrip('-* ') for m in metrics[:8])
+              if rules:
+                  lines.append('rules:')
+                  lines.extend('- ' + r.lstrip('-* ') for r in rules[:8])
+              alias_items = sorted((k, v) for k, v in alias_map.items() if k and v)
+              if alias_items:
+                  lines.append('field_alias_map: ' + json.dumps(dict(alias_items[:80]), ensure_ascii=False))
+              return '\n'.join(lines), alias_map
+
+
           def main(refine_schema_outputs, refine_retrieval_tasks_json: str, old_normalized_semantic_plan_json: str, refine_retrieval_valid=True, refine_retrieval_error: str=''):
               outputs = _list(refine_schema_outputs)
               tasks = _list(refine_retrieval_tasks_json)
-              sections = []
+              relevant_terms = _terms_from_old_plan(old_normalized_semantic_plan_json)
+              for task in tasks:
+                  _extract_json_terms(task, relevant_terms)
+
+              best = {}
+              seen_raw = 0
               for idx, raw in enumerate(outputs):
                   item = _loads(raw)
-                  collection = str(item.get('collection_name') or (tasks[idx].get('collection_name') if idx < len(tasks) and isinstance(tasks[idx], dict) else '') or '').strip()
-                  role = str(item.get('role') or (tasks[idx].get('role') if idx < len(tasks) and isinstance(tasks[idx], dict) else '') or '').strip()
-                  context_text = str(item.get('context_text') or '').strip()
-                  if context_text:
-                      sections.append('## collection=%s\nrole=%s\n%s' % (collection, role, context_text))
+                  task = tasks[idx] if idx < len(tasks) and isinstance(tasks[idx], dict) else {}
+                  collection = str(item.get('collection_name') or task.get('collection_name') or task.get('collection_hint') or '').strip()
+                  role = str(item.get('role') or task.get('role') or '').strip()
+                  context_text = str(item.get('context_text') or item.get('text') or item.get('content') or '').strip()
+                  if not context_text:
+                      continue
+                  seen_raw += 1
+                  collection = _collection_from_text(context_text, collection)
+                  key = _dedup_key(collection, context_text)
+                  candidate = {'item': item, 'collection': collection, 'role': role, 'context_text': context_text, 'score': _score(item), 'idx': idx}
+                  old = best.get(key)
+                  if old is None or (candidate['score'], -candidate['idx']) > (old['score'], -old['idx']):
+                      best[key] = candidate
+
+              sections = []
+              alias_map = dict(FALLBACK_ALIASES)
+              for x in sorted(best.values(), key=lambda v: (-v['score'], v['idx'])):
+                  summary, aliases = _compress_schema(x['collection'], x['role'], x['context_text'], relevant_terms)
+                  alias_map.update(aliases)
+                  sections.append(summary)
+
+              warning = ''
               if not sections:
                   warning = 'Refine schema 检索失败或为空，将只允许基于上一轮 semantic plan 已有字段做保守重规划。'
-              else:
-                  warning = str(refine_retrieval_error or '') if str(refine_retrieval_valid).lower() in {'false', '0', 'no'} else ''
-              ctx = '### refine_query schema_context_for_replan\n' + '\n\n'.join(sections)
+              elif str(refine_retrieval_valid).lower() in {'false', '0', 'no'}:
+                  warning = str(refine_retrieval_error or '')
+
+              ctx = '### refine_query schema_context_for_replan (compressed)\n' + '\n\n'.join(sections)
+              truncated = False
+              if len(ctx) > MAX_SCHEMA_CONTEXT_CHARS:
+                  ctx = ctx[:MAX_SCHEMA_CONTEXT_CHARS].rstrip() + '\n...[schema_context truncated for replan prompt budget]'
+                  truncated = True
+                  warning = (warning + '; ' if warning else '') + 'schema_context 超过长度阈值，已截断。'
+
+              debug = {
+                  'task_count': len(tasks),
+                  'retrieved_sections': seen_raw,
+                  'deduped_sections': len(sections),
+                  'schema_dedup_count': max(0, seen_raw - len(sections)),
+                  'schema_compressed': True,
+                  'schema_context_chars': len(ctx),
+                  'schema_truncated': truncated,
+                  'retrieval_valid': bool(refine_retrieval_valid),
+                  'field_alias_map': alias_map,
+              }
               return {
                   'refine_schema_context': ctx,
                   'refine_schema_context_valid': bool(sections),
                   'refine_schema_warning': warning,
-                  'refine_schema_debug_json': json.dumps({'task_count': len(tasks), 'retrieved_sections': len(sections), 'retrieval_valid': bool(refine_retrieval_valid)}, ensure_ascii=False)
+                  'refine_schema_debug_json': json.dumps(debug, ensure_ascii=False)
               }
         code_language: python3
         desc: 汇总 refine 专用 schema iteration 输出，生成 schema_context_for_replan 的原始上下文；为空时降级为保守重规划提示。
@@ -684,30 +903,261 @@
     - data:
         code: |
           import json
+          import re
+
           SEMANTIC_SCHEMA = {'type': 'object', 'required': ['execution_plan', 'needs_chart', 'chart_request', 'answer_mode'], 'properties': {'execution_plan': {'type': 'object'}, 'needs_chart': {'type': 'boolean'}, 'chart_request': {'type': 'object'}, 'answer_mode': {'type': 'string'}}, 'additionalProperties': True}
+          MAX_REPLAN_PROMPT_CHARS = 16000
+          MAX_SCHEMA_CONTEXT_CHARS = 8000
+          MAX_RESULT_PREVIEW_ROWS = 5
+          FALLBACK_ALIAS_MAP = {
+              '订单状态': 'status', 'order_status': 'status', '履约状态': 'status',
+              '支付状态': 'payment_status', '付款状态': 'payment_status', '是否支付': 'payment_status',
+              '品牌': 'brand', '厂牌': 'brand', '厂商': 'brand',
+              '下单时间': 'created_at', '订单时间': 'created_at', '创建时间': 'created_at',
+          }
+
+
+          def _loads(v, default):
+              if isinstance(v, (dict, list)):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return default
+              return default
+
+
+          def _dumps(v):
+              return json.dumps(v, ensure_ascii=False, separators=(',', ':'))
+
+
+          def _compact_text(v, limit):
+              s = v if isinstance(v, str) else _dumps(v)
+              s = re.sub(r'\n{3,}', '\n\n', str(s or '').strip())
+              return s if len(s) <= limit else s[:limit].rstrip() + '\n...[truncated]'
+
+
+          def _bool(v):
+              if isinstance(v, bool):
+                  return v
+              if isinstance(v, str):
+                  x = v.strip().lower()
+                  if x in {'true', '1', 'yes', 'y'}:
+                      return True
+                  if x in {'false', '0', 'no', 'n'}:
+                      return False
+              return bool(v)
+
+
+          def _normalize_old_plan(raw):
+              plan = _loads(raw, {})
+              if not isinstance(plan, dict):
+                  plan = {}
+              plan['needs_chart'] = _bool(plan.get('needs_chart', False))
+              if not isinstance(plan.get('chart_request'), dict):
+                  plan['chart_request'] = {}
+              if not plan.get('answer_mode'):
+                  plan['answer_mode'] = 'data'
+              ep = plan.get('execution_plan')
+              if not isinstance(ep, dict):
+                  ep = {}
+              stages = ep.get('stages')
+              if isinstance(stages, dict):
+                  stages = [stages]
+              elif not isinstance(stages, list):
+                  stages = []
+              ep['stages'] = stages
+              plan['execution_plan'] = ep
+              return plan
+
+
+          def _schema_alias_map(schema_context):
+              alias_map = dict(FALLBACK_ALIAS_MAP)
+              real_fields = set()
+              for line in str(schema_context or '').splitlines():
+                  m = re.match(r'\s*-\s*([A-Za-z_][A-Za-z0-9_]*)\s*:', line)
+                  if m:
+                      field = m.group(1)
+                      real_fields.add(field)
+                      for pat in (r'aliases?\s*[:=]\s*\[([^\]]+)\]', r'别名\s*[:：=]\s*\[?([^\]\n;；]+)'):
+                          a = re.search(pat, line, re.I)
+                          if a:
+                              for x in re.split(r'[,，、/|]', a.group(1)):
+                                  x = x.strip(' `"\'')
+                                  if x:
+                                      alias_map[x] = field
+                  if line.startswith('field_alias_map:'):
+                      obj = _loads(line.split(':', 1)[1].strip(), {})
+                      if isinstance(obj, dict):
+                          for k, v in obj.items():
+                              if k and v:
+                                  alias_map[str(k)] = str(v)
+                                  real_fields.add(str(v))
+              real_fields.update(alias_map.values())
+              return alias_map, real_fields
+
+
+          def _normalize_field_value(value, alias_map, real_fields, warnings):
+              if not isinstance(value, str):
+                  return value
+              raw = value.strip()
+              if raw in real_fields:
+                  return raw
+              if raw in alias_map:
+                  return alias_map[raw]
+              low_map = {str(k).lower(): v for k, v in alias_map.items()}
+              if raw.lower() in low_map:
+                  return low_map[raw.lower()]
+              if re.search(r'(field|status|brand|time|date|订单状态|支付状态|品牌|厂牌|时间)', raw, re.I):
+                  warnings.append('无法确认字段别名映射: ' + raw)
+              return raw
+
+
+          def _normalize_refinement(obj, alias_map, real_fields, warnings):
+              if isinstance(obj, dict):
+                  out = {}
+                  for k, v in obj.items():
+                      lk = str(k).lower()
+                      if isinstance(v, str) and any(x in lk for x in ('field', 'group', 'x_', 'y_', 'metric')):
+                          out[k] = _normalize_field_value(v, alias_map, real_fields, warnings)
+                      elif isinstance(v, list) and any(x in lk for x in ('field', 'group', 'sort')):
+                          out[k] = [_normalize_field_value(x, alias_map, real_fields, warnings) for x in v]
+                      else:
+                          out[k] = _normalize_refinement(v, alias_map, real_fields, warnings)
+                  return out
+              if isinstance(obj, list):
+                  return [_normalize_refinement(x, alias_map, real_fields, warnings) for x in obj]
+              return obj
+
+
+          def _summarize_turn_intent(raw):
+              obj = _loads(raw, {})
+              if not isinstance(obj, dict):
+                  return _compact_text(raw, 1200)
+              keys = ['turn_intent', 'need_requery', 'need_rechart', 'query_refinement', 'chart_modification', 'reason', 'analysis_focus']
+              return _dumps({k: obj.get(k) for k in keys if k in obj})
+
+
+          def _summarize_refine_planning(raw):
+              obj = _loads(raw, {})
+              if not isinstance(obj, dict):
+                  return _compact_text(raw, 1200)
+              keys = ['primary_collection_hint', 'collection_hints', 'field_hints', 'business_terms', 'old_plan_fields', 'possible_new_concepts', 'retrieval_tasks', 'planning_reason']
+              slim = {k: obj.get(k) for k in keys if k in obj}
+              if isinstance(slim.get('planning_reason'), str):
+                  slim['planning_reason'] = _compact_text(slim['planning_reason'], 500)
+              return _compact_text(_dumps(slim), 1800)
+
+
+          def _preview_result(raw):
+              obj = _loads(raw, None)
+              if obj is None:
+                  return _compact_text(raw, 1500)
+              rows = None
+              if isinstance(obj, list):
+                  rows = obj
+              elif isinstance(obj, dict):
+                  for key in ('rows', 'data', 'result', 'records', 'preview'):
+                      if isinstance(obj.get(key), list):
+                          rows = obj.get(key)
+                          break
+              if rows is not None:
+                  fields = []
+                  if rows and isinstance(rows[0], dict):
+                      fields = list(rows[0].keys())
+                  return _dumps({'fields': fields, 'preview_rows': rows[:MAX_RESULT_PREVIEW_ROWS]})
+              return _compact_text(_dumps(obj), 1500)
 
 
           def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, patch_reason: str, changed_fields_json: str, refine_planning_json: str, refine_schema_context: str, refine_schema_warning: str, last_chart_request_json: str, last_query_result_json: str, normalized_turn_intent_json: str, replan_input_valid=True, replan_input_error: str=''):
-              system = '你是 refine_query full replan 语义计划重规划器。只输出符合 semantic_plan JSON Schema 的 JSON 对象；不得输出 markdown、解释文字或代码块。当前任务不是从零新查询，而是在上一轮 normalized semantic plan 基础上按用户本轮修改要求生成完整 semantic plan。'
+              schema_warning_parts = [str(refine_schema_warning or '').strip()] if str(refine_schema_warning or '').strip() else []
+              schema_context = _compact_text(refine_schema_context, MAX_SCHEMA_CONTEXT_CHARS)
+              schema_truncated = len(str(refine_schema_context or '')) > len(schema_context)
+              if schema_truncated:
+                  schema_warning_parts.append('schema_context 超过长度阈值，已截断。')
+
+              alias_map, real_fields = _schema_alias_map(schema_context)
+              norm_warnings = []
+              old_plan = _normalize_old_plan(old_normalized_semantic_plan_json)
+              qref_obj = _loads(query_refinement_json, {})
+              if not isinstance(qref_obj, dict):
+                  qref_obj = {}
+              normalized_qref = _normalize_refinement(qref_obj, alias_map, real_fields, norm_warnings)
+              schema_warning_parts.extend(norm_warnings)
+
+              system = '你是 refine_query full replan 语义计划重规划器。只输出符合 semantic_plan JSON Schema 的 JSON 对象；不得输出 markdown、解释文字或代码块。必须在上一轮 normalized semantic plan 基础上按本轮修改要求生成完整 semantic plan。'
+              hard_rules = '\n'.join([
+                  '1. 用户未明确要求修改的字段必须保持上一轮不变。',
+                  '2. 输出 semantic plan 时必须使用 schema 真实字段名，不得使用 alias、中文口语字段或不存在字段，例如订单状态/order_status 应归一为 status。',
+                  '3. 只有当前用户问题或 normalized query_refinement_json 明确要求修改，或 schema_context 证明原字段不适合时，才允许变更字段。',
+                  '4. 不允许随意修改 primary_collection、metric_function、metric_field、metric_alias、filters、sort、limit、answer_mode。',
+                  '5. schema_context 为空时，只能基于 old plan 进行保守重规划。',
+                  '6. 输出完整 JSON，必须包含 execution_plan、execution_plan.stages、needs_chart(boolean)、chart_request、answer_mode。',
+                  '7. 不输出 Mongo pipeline、markdown、解释文字或代码块。'
+              ])
               parts = [
                   '当前用户问题：\n' + str(question or ''),
-                  '上一轮 normalized semantic plan（old_plan，必须作为基准）：\n' + str(old_normalized_semantic_plan_json or ''),
-                  'query_refinement_json：\n' + str(query_refinement_json or ''),
-                  'normalized_turn_intent_json：\n' + str(normalized_turn_intent_json or ''),
-                  '确定性 patch 失败原因：\n' + str(patch_reason or ''),
-                  'changed_fields_json：\n' + str(changed_fields_json or ''),
-                  'LLM_Refine查询规划的检索意图：\n' + str(refine_planning_json or ''),
-                  '上一轮 chart_request：\n' + str(last_chart_request_json or ''),
-                  '上一轮查询结果字段/预览：\n' + str(last_query_result_json or '')[:4000],
-                  '当前 refine 分支自己检索得到的 schema_context_for_replan：\n' + str(refine_schema_context or ''),
-                  'schema warning：\n' + str(refine_schema_warning or ''),
-                  '硬性保留规则：\n1. 用户未明确要求修改的字段必须保持上一轮不变。\n2. 不允许随意修改 primary_collection、related_collections、group_fields、metric_function、metric_field、metric_alias、filters、time_range、sort、limit、chart_request、answer_mode。\n3. 只有当前用户问题或 query_refinement_json 明确要求修改，或 schema_context 证明原字段不适合时，才允许变更字段。\n4. 如果用户要求“真实厂商/供应商/业务口径”等，需要基于 schema_context 选择字段或集合。\n5. 不允许使用 schema_context 中不存在、且上一轮 plan 中也不存在的字段。\n6. schema_context 为空时，只能基于 old plan 进行保守重规划。\n7. 输出完整 semantic plan JSON，必须包含 execution_plan、execution_plan.stages、needs_chart、chart_request、answer_mode。\n8. 不输出 Mongo pipeline、markdown、解释文字或代码块。'
+                  'normalized old_plan（基准，needs_chart 已转 boolean）：\n' + _dumps(old_plan),
+                  'normalized query_refinement_json（字段别名已尽量归一到 schema 真实字段）：\n' + _dumps(normalized_qref),
+                  'normalized_turn_intent_json 关键字段：\n' + _summarize_turn_intent(normalized_turn_intent_json),
+                  '确定性 patch 失败原因：\n' + _compact_text(patch_reason, 700),
+                  'changed_fields_json：\n' + _compact_text(changed_fields_json, 900),
+                  'LLM_Refine查询规划的检索意图摘要：\n' + _summarize_refine_planning(refine_planning_json),
+                  '上一轮 chart_request 简短信息：\n' + _compact_text(last_chart_request_json, 800),
+                  '上一轮查询结果字段/最多5行预览：\n' + _preview_result(last_query_result_json),
+                  '压缩后的 schema_context_for_replan：\n' + schema_context,
+                  'schema warning：\n' + '; '.join(x for x in schema_warning_parts if x),
+                  '硬性保留规则：\n' + hard_rules,
+                  '输出 schema 要求：\n' + _dumps(SEMANTIC_SCHEMA),
               ]
               user = '\n\n'.join(parts)
-              valid = str(replan_input_valid).lower() not in {'false', '0', 'no'} and bool(str(old_normalized_semantic_plan_json or '').strip())
+              valid = str(replan_input_valid).lower() not in {'false', '0', 'no'} and bool(old_plan.get('execution_plan'))
               if not valid:
                   user += '\n\n注意：replan_input_valid=false，错误：' + str(replan_input_error or '') + '。请输出结构化错误，不要编造计划。'
-              return {'replan_system_prompt': system, 'replan_user_prompt': user, 'replan_prompt': system + '\n\n' + user, 'old_normalized_semantic_plan_json': old_normalized_semantic_plan_json, 'query_refinement_json': query_refinement_json, 'patch_reason': patch_reason, 'changed_fields_json': changed_fields_json, 'schema_context_for_replan': refine_schema_context, 'replan_json_schema': json.dumps(SEMANTIC_SCHEMA, ensure_ascii=False), 'replan_input_valid': valid, 'replan_input_error': str(replan_input_error or ''), 'replan_prompt_debug_json': json.dumps({'schema_warning': refine_schema_warning}, ensure_ascii=False)}
+
+              prompt_truncated = False
+              replan_prompt = system + '\n\n' + user
+              if len(replan_prompt) > MAX_REPLAN_PROMPT_CHARS:
+                  prompt_truncated = True
+                  overflow = len(replan_prompt) - MAX_REPLAN_PROMPT_CHARS
+                  keep_schema = max(1200, len(schema_context) - overflow - 200)
+                  schema_context = _compact_text(schema_context, keep_schema)
+                  parts[9] = '压缩后的 schema_context_for_replan：\n' + schema_context
+                  schema_warning_parts.append('replan_prompt 超过长度阈值，已二次压缩 schema_context。')
+                  parts[10] = 'schema warning：\n' + '; '.join(x for x in schema_warning_parts if x)
+                  user = '\n\n'.join(parts)
+                  replan_prompt = system + '\n\n' + user
+                  if len(replan_prompt) > MAX_REPLAN_PROMPT_CHARS:
+                      replan_prompt = replan_prompt[:MAX_REPLAN_PROMPT_CHARS].rstrip() + '\n...[replan_prompt truncated]'
+                      user = replan_prompt[len(system) + 2:]
+                      schema_warning_parts.append('replan_prompt 仍超长，已最终截断。')
+
+              debug = {
+                  'schema_dedup_count': 0,
+                  'schema_compressed': True,
+                  'field_alias_map': alias_map,
+                  'normalized_query_refinement_json': _dumps(normalized_qref),
+                  'old_plan_normalized': True,
+                  'prompt_chars': len(replan_prompt),
+                  'schema_context_chars': len(schema_context),
+                  'prompt_truncated': prompt_truncated,
+                  'schema_warning': '; '.join(x for x in schema_warning_parts if x),
+              }
+              return {
+                  'replan_system_prompt': system,
+                  'replan_user_prompt': user,
+                  'replan_prompt': replan_prompt,
+                  'old_normalized_semantic_plan_json': _dumps(old_plan),
+                  'query_refinement_json': _dumps(normalized_qref),
+                  'patch_reason': patch_reason,
+                  'changed_fields_json': changed_fields_json,
+                  'schema_context_for_replan': schema_context,
+                  'replan_json_schema': json.dumps(SEMANTIC_SCHEMA, ensure_ascii=False),
+                  'replan_input_valid': valid,
+                  'replan_input_error': str(replan_input_error or ''),
+                  'replan_prompt_debug_json': json.dumps(debug, ensure_ascii=False)
+              }
         code_language: python3
         desc: 合并 refine schema 上下文并生成单一 replan prompt，供 LLM 节点引用。
         outputs:
@@ -910,7 +1360,9 @@
           variable_selector: []
         model:
           completion_params:
-            temperature: 0.0
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
             think: false
           mode: chat
           name: qwen3.5:35b
