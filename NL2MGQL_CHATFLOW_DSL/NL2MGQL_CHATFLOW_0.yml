@@ -1388,7 +1388,11 @@ workflow:
               turn = _loads(turn_intent_json)
               planner = _loads(planner)
               intent = str(turn.get('turn_intent') or '').strip()
+              schema_ref = ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'), dict) else {}
               last_primary = str(ctx.get('last_primary_collection') or '').strip()
+              last_related = _list(ctx.get('last_related_collections'))
+              schema_ref_collections = _list(schema_ref.get('collections'))
+              context_prior_collections = _uniq([last_primary] + last_related + schema_ref_collections, 12)
               warnings, candidates = [], []
               for coll in catalog.get('collections') or []:
                   cname = str(coll.get('collection_name') or '').strip()
@@ -1406,9 +1410,13 @@ workflow:
                           score += 0.14; matched.append(term)
                   if intent in _list(coll.get('supported_intents')):
                       score += 0.05
-                  if last_primary and cname == last_primary and intent in ['refine_query', 'fix_result', 'continue_previous']:
-                      score += 0.35 if not matched else 0.12
-                      reasons.append('使用 compact_context.last_primary_collection prior')
+                  if intent in ['refine_query', 'fix_result', 'continue_previous']:
+                      if last_primary and cname == last_primary:
+                          score += 0.35 if not matched else 0.12
+                          reasons.append('使用 compact_context.last_primary_collection prior')
+                      elif cname in context_prior_collections:
+                          score += 0.18 if not matched else 0.08
+                          reasons.append('使用 compact_context.schema_context_ref.collections prior')
                   score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
                   if matched:
                       reasons.append('命中 ' + '、'.join(_uniq(matched, 8)))
@@ -1444,6 +1452,10 @@ workflow:
                       if matched:
                           related.append(rname)
                           selection['related_candidates'].append({'collection': rname, 'score': 0.72, 'reason': '命中 related collection 语义：' + '、'.join(matched[:6]), 'matched_aliases': matched[:8]})
+              if not related and intent in ['refine_query', 'fix_result', 'continue_previous']:
+                  related = [c for c in context_prior_collections if c and c != selected][:3]
+                  if related:
+                      warnings.append('related collections 使用 compact_context/schema_context_ref prior')
               selection['selected_related_collections'] = related[:3]
               if not selection['selected_primary_collection']:
                   legacy = str(planner.get('primary_collection') or '').strip()
