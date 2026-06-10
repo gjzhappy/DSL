@@ -840,10 +840,87 @@ workflow:
         isInLoop: false
         sourceType: code
         targetType: code
-      id: 1776000000024-source-1775000000007-target
+      id: 1776000000024-source-1778000000001-target
       source: '1776000000024'
       sourceHandle: source
+      target: '1778000000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1778000000001-source-1778000000002-target
+      source: '1778000000001'
+      sourceHandle: source
+      target: '1778000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1778000000002-valid-1775000000007-target
+      source: '1778000000002'
+      sourceHandle: valid
       target: '1775000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: answer
+      id: 1778000000002-requires_clarification-1778000000004-target
+      source: '1778000000002'
+      sourceHandle: requires_clarification
+      target: '1778000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: answer
+      id: 1778000000002-blocked-1778000000004-target
+      source: '1778000000002'
+      sourceHandle: blocked
+      target: '1778000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: answer
+      id: 1778000000002-needs_replan-1778000000004-target
+      source: '1778000000002'
+      sourceHandle: needs_replan
+      target: '1778000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: answer
+      id: 1778000000002-false-1778000000004-target
+      source: '1778000000002'
+      sourceHandle: 'false'
+      target: '1778000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: assigner
+        targetType: answer
+      id: 1778000000004-source-1778000000003-target
+      source: '1778000000004'
+      sourceHandle: source
+      target: '1778000000003'
       targetHandle: target
       type: custom
       zIndex: 0
