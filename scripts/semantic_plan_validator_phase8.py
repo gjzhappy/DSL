@@ -79,6 +79,7 @@ def _result(route: str, plan: Dict[str, Any] | None, errors=None, warnings=None,
         "answer_payload_json": "",
         "answer_type": {"requires_clarification": "clarification", "blocked": "validation_error", "needs_replan": "validation_error", "invalid": "system_error"}.get(route, "data"),
         "final_answer_markdown": "",
+        "context_update_json": "",
     }
 
 
@@ -192,14 +193,20 @@ def _negative_fields(compact: Dict[str, Any], patch: Dict[str, Any], patch_debug
     return list(dict.fromkeys(out))
 
 
-def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok") -> Dict[str, Any]:
+def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok", schema_runtime_context_json: str = "{}") -> Dict[str, Any]:
     errors: List[str] = []
     warnings: List[str] = []
     autofixes: List[Dict[str, Any]] = []
     debug: Dict[str, Any] = {"normalizer_route": _str(normalizer_route)}
 
+    runtime_ctx = _loads(schema_runtime_context_json, {})
+    if not isinstance(runtime_ctx, dict):
+        runtime_ctx = {}
     plan = _loads(semantic_plan_json, {})
-    schema = _loads(schema_metadata_json, {})
+    runtime_schema_json = runtime_ctx.get("schema_metadata_json") if runtime_ctx.get("schema_metadata_json") not in (None, "") else schema_metadata_json
+    runtime_alias_json = runtime_ctx.get("schema_alias_index_json") if runtime_ctx.get("schema_alias_index_json") not in (None, "") else schema_alias_index_json
+    schema = _loads(runtime_schema_json, {})
+    alias_index = _loads(runtime_alias_json, {})
     selection = _loads(collection_selection_json, {})
     compact = _loads(compact_context_json, {})
     patch = _loads(patch_result_json, {})
@@ -214,6 +221,18 @@ def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", 
     if not isinstance(qref, dict):
         qref = {}
 
+    debug["question"] = _str(question)
+    debug["schema_source"] = _str(runtime_ctx.get("schema_source")) or "direct_runtime_fallback"
+    debug["schema_context_ref"] = runtime_ctx.get("schema_context_ref") if isinstance(runtime_ctx.get("schema_context_ref"), dict) else {}
+    debug["schema_context_ready"] = bool(runtime_ctx.get("schema_context_ready")) if runtime_ctx else bool(schema)
+    debug["schema_hydration_needed"] = bool(runtime_ctx.get("schema_hydration_needed"))
+    if runtime_ctx and not runtime_ctx.get("schema_context_ready"):
+        reason = _str(runtime_ctx.get("schema_hydration_reason")) or "schema_runtime_context_not_ready"
+        collections = runtime_ctx.get("schema_hydration_collections") or []
+        msg = f"validator runtime schema context 未就绪：{reason}。"
+        if collections:
+            msg += f" 可基于 collections={collections} 轻量检索 schema 后重试校验。"
+        return _finalize(_result("needs_replan", plan if isinstance(plan, dict) else {}, [msg] + _list(runtime_ctx.get("errors")), _list(runtime_ctx.get("warnings")), debug=debug, needs_schema_retrieval=bool(runtime_ctx.get("schema_hydration_needed"))))
     if str(normalizer_valid).lower() in {"false", "0", "no"}:
         return _finalize(_result("invalid", {}, ["semantic_plan_normalizer 未通过，validator 拒绝进入 Mongo 编译。"], debug=debug))
     if not isinstance(plan, dict) or not plan:
@@ -493,7 +512,12 @@ def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
     else:
         text = "语义计划校验失败，未进入 Mongo 编译执行。请补充查询对象、字段、指标或时间范围后重试。"
     res["final_answer_markdown"] = text
+    schema_ref = {}
+    dbg = res.get("debug") if isinstance(res.get("debug"), dict) else {}
+    if isinstance(dbg.get("schema_context_ref"), dict):
+        schema_ref = dbg.get("schema_context_ref")
     res["answer_payload_json"] = json.dumps({"answer_type": res.get("answer_type"), "answer": text, "validator_route": route}, ensure_ascii=False)
+    res["context_update_json"] = json.dumps({"last_question": _str(dbg.get("question")), "answer_summary": text[:200], "validator_route": route, "schema_context_ref": schema_ref}, ensure_ascii=False)
     res["validator_result_json"] = json.dumps({k: v for k, v in res.items() if k not in {"validator_result_json"}}, ensure_ascii=False)
     return res
 

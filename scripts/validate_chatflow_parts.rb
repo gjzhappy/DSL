@@ -34,7 +34,8 @@ REQUIRED_VALIDATOR_OUTPUTS = {
   'normalized_semantic_plan_json' => 'string',
   'semantic_plan_json' => 'string',
   'answer_payload_json' => 'string',
-  'final_answer_markdown' => 'string'
+  'final_answer_markdown' => 'string',
+  'context_update_json' => 'string'
 }.freeze
 
 errors = []
@@ -151,6 +152,26 @@ errors << 'required Phase 8 validator node 1778000000001 is missing' if validato
 if validator_node && validator_node.dig('data', 'title') != '代码执行_semantic_plan_validator'
   errors << "1778000000001 title is #{validator_node.dig('data', 'title').inspect}, expected 代码执行_semantic_plan_validator"
 end
+
+runtime_node = node_by_id['1779000000001']
+errors << 'required Phase 9 runtime schema context node 1779000000001 is missing' if runtime_node.nil?
+if runtime_node && runtime_node.dig('data', 'title') != '代码执行_准备Validator运行时Schema上下文'
+  errors << "1779000000001 title is #{runtime_node.dig('data', 'title').inspect}, expected 代码执行_准备Validator运行时Schema上下文"
+end
+runtime_outputs = outputs_by_id['1779000000001'] || {}
+{
+  'schema_runtime_context_json' => 'string',
+  'schema_context_ready' => 'boolean',
+  'schema_hydration_needed' => 'boolean',
+  'schema_hydration_collections' => 'array[string]',
+  'schema_metadata_json' => 'string',
+  'schema_alias_index_json' => 'string',
+  'schema_source' => 'string'
+}.each do |field, type|
+  actual_type = runtime_outputs.dig(field, 'type')
+  errors << "1779000000001 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
+end
+
 validator_branch = node_by_id['1778000000002']
 errors << 'required Phase 8 validator route branch 1778000000002 is missing' if validator_branch.nil?
 if validator_branch && validator_branch.dig('data', 'title') != '条件分支_validator结果判断'
@@ -172,7 +193,8 @@ edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s,
   ['1775000000019', 'source', '1775000000013'] => 'local fallback body must enter extraction',
   ['1775000000013', 'source', '1775000000020'] => 'extraction must enter plan_valid gate',
   ['1775000000020', 'true', '1776000000024'] => 'valid new-query plans must enter unified Mongo input preparation',
-  ['1776000000024', 'source', '1778000000001'] => 'prepared normalized plans must enter Phase 8 validator before compiler',
+  ['1776000000024', 'source', '1779000000001'] => 'prepared normalized plans must enter Phase 9 runtime schema context before validator',
+  ['1779000000001', 'source', '1778000000001'] => 'Phase 9 runtime schema context must enter validator',
   ['1778000000001', 'source', '1778000000002'] => 'validator result must enter validator route branch',
   ['1778000000002', 'valid', '1775000000007'] => 'only validator valid branch may enter compiler',
   ['1778000000002', 'requires_clarification', '1778000000004'] => 'validator clarification branch must save context without compiler',
@@ -191,6 +213,25 @@ end
 if edge_pairs.include?(['1775000000020', 'true', '1775000000007'])
   errors << '1775000000020 true branch still bypasses unified preparation and enters compiler directly'
 end
+if edge_pairs.include?(['1776000000024', 'source', '1778000000001'])
+  errors << '1776000000024 still connects directly to validator without Phase 9 runtime schema context'
+end
+# Phase 9 guardrails: full schema/alias may be carried at runtime but must not be
+# persisted back into compact conversation context or validator non-valid context updates.
+save_node = node_by_id['1775000000023']
+(save_node&.dig('data', 'items') || []).each do |item|
+  selector = item['variable_selector'] || []
+  value = item['value'] || []
+  if selector == ['conversation', 'last_schema_metadata_json'] || selector == ['conversation', 'last_schema_alias_index_json']
+    errors << "1775000000023 persists full schema runtime #{value.inspect} into #{selector.inspect}, forbidden in Phase 9"
+  end
+end
+nonvalid_save = node_by_id['1778000000004']
+nonvalid_ctx_item = (nonvalid_save&.dig('data', 'items') || []).find { |item| item['variable_selector'] == ['conversation', 'last_context_update_json'] }
+unless nonvalid_ctx_item && nonvalid_ctx_item['value'] == ['1778000000001', 'context_update_json']
+  errors << "1778000000004 last_context_update_json must use validator context_update_json minimal summary, got #{nonvalid_ctx_item&.dig('value').inspect}"
+end
+
 #{insert}
 incoming_counts = Hash.new(0)
 outgoing_counts = Hash.new(0)

@@ -187,24 +187,6 @@
         - input_type: variable
           operation: over-write
           value:
-          - '1775000000007'
-          - schema_metadata_json
-          variable_selector:
-          - conversation
-          - last_schema_metadata_json
-          write_mode: over-write
-        - input_type: variable
-          operation: over-write
-          value:
-          - '1775000000007'
-          - schema_alias_index_json
-          variable_selector:
-          - conversation
-          - last_schema_alias_index_json
-          write_mode: over-write
-        - input_type: variable
-          operation: over-write
-          value:
           - '1775000000022'
           - final_answer_summary
           variable_selector:
@@ -352,16 +334,6 @@
           - chart_request_flat_json
           value_type: string
           variable: last_chart_request_json
-        - value_selector:
-          - '1775000000007'
-          - schema_metadata_json
-          value_type: string
-          variable: last_schema_metadata_json
-        - value_selector:
-          - '1775000000007'
-          - schema_alias_index_json
-          value_type: string
-          variable: last_schema_alias_index_json
         - value_selector:
           - '1775000000022'
           - compact_context_json
@@ -1663,7 +1635,7 @@
         assigned_variable_selector:
         - conversation
         - last_answer_payload_json
-        desc: Phase 8 validator 非 valid 分支保存最小多轮上下文：问题、answer_payload、validator 路由；不保存 debug/schema。
+        desc: Phase 9 validator 非 valid 分支保存最小多轮上下文：问题、answer_payload、validator 路由与 schema_context_ref 摘要；不保存 debug/schema。
         input_variable_selector:
         - '1778000000001'
         - answer_payload_json
@@ -1690,7 +1662,7 @@
           operation: over-write
           value:
           - '1778000000001'
-          - validator_result_json
+          - context_update_json
           variable_selector:
           - conversation
           - last_context_update_json
