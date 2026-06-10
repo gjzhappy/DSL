@@ -75,6 +75,21 @@
           - answer_mode
           value_type: string
           variable: answer_mode
+        - value_selector:
+          - '1775000000007'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1777000000001'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+        - value_selector:
+          - '1777000000001'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
       height: 96
       id: '1775000000022'
       position:
@@ -383,427 +398,357 @@
         code: |
           import json
 
-
-          STAGE_ALLOWED_FIELDS = [
-              'stage_name',
-              'collection',
-              'intent_type',
-              'depends_on',
-              'time_range',
-              'filters',
-              'group_fields',
-              'entity_field',
-              'metric_function',
-              'metric_field',
-              'metric_alias',
-              'rank_n',
-              'rank_order_field',
-              'rank_direction',
-              'sort',
-              'limit',
-              'projection_mode',
-              'projection_fields',
-              'join_source_field',
-              'join_target_field',
-              'attach_as',
-          ]
-
-          STAGE_DEFAULTS = {
-              'stage_name': '',
-              'collection': '',
-              'intent_type': '',
-              'depends_on': '',
-              'time_range': {},
-              'filters': [],
-              'group_fields': [],
-              'entity_field': '',
-              'metric_function': '',
-              'metric_field': '',
-              'metric_alias': '',
-              'rank_n': 0,
-              'rank_order_field': '',
-              'rank_direction': '',
-              'sort': [],
-              'limit': 0,
-              'projection_mode': '',
-              'projection_fields': [],
-              'join_source_field': '',
-              'join_target_field': '',
-              'attach_as': '',
-          }
+          COMPACT_CONTEXT_TARGET_BYTES = 12000
+          COMPACT_CONTEXT_HARD_BYTES = 60000
+          MAX_PREVIEW_ROWS = 5
+          MAX_PREVIEW_FIELDS = 20
+          MAX_PREVIEW_STRING = 200
 
           BANNED_CONTEXT_KEYS = {
-              'schema_context',
-              'schema_metadata',
-              'schema_alias_index',
-              'last_schema_metadata_json',
-              'last_schema_alias_index_json',
-              'last_chart_echarts_markdown',
-              'echarts_markdown',
-              'option',
-              'debug',
-              'stage_execution_trace',
-              'query_response_body',
-              'query_response_headers',
-              'query_request_body',
-              'raw_response',
-              'headers',
-              'final_response_body',
-              'pipeline_json',
-              'last_query_result_json_state',
-              'last_result_rows_json',
-              'last_merged_rows',
-              'data',
+              'schema_metadata', 'schema_alias_index', 'schema_context', 'last_schema_metadata_json',
+              'last_schema_alias_index_json', 'raw_schema_docs', 'raw_llm_response', 'full_prompt',
+              'pipeline_json', 'validated_ast', 'query_request_body', 'query_response_body',
+              'query_response_headers', 'stage_execution_trace', 'last_merged_rows',
+              'last_result_rows_json', 'chart.option', 'echarts_option', 'echarts_markdown',
+              'last_chart_echarts_markdown', 'debug', 'option', 'data', 'rows', 'full_rows',
           }
 
-
-          def safe_load_json(value, default):
+          def _loads(value, default):
               if isinstance(value, (dict, list)):
                   return value
-              if value is None:
-                  return default
-              if isinstance(value, str):
-                  text = value.strip()
-                  if not text:
-                      return default
+              if isinstance(value, str) and value.strip():
                   try:
-                      return json.loads(text)
+                      return json.loads(value)
                   except Exception:
                       return default
               return default
 
+          def _dumps(value):
+              return json.dumps(value, ensure_ascii=False)
 
-
-
-          def _schema_context_ref(collections, schema_metadata_json):
-              meta = safe_load_json(schema_metadata_json, {})
-              if not isinstance(meta, dict):
-                  meta = {}
-              return {
-                  'collections': collections if isinstance(collections, list) else [],
-                  'schema_digest': _string(meta.get('schema_digest'), 128),
-                  'schema_version': _string(meta.get('schema_version'), 128),
-              }
-
-          def _safe_json(value):
-              if value is None or value == '':
-                  return ''
-              try:
-                  return json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
-              except Exception:
-                  return str(value)
-
-
-          def _as_list(value):
-              if isinstance(value, list):
-                  return value
-              if value is None or value == '':
-                  return []
-              return [value]
-
-
-          def _string(value, max_len=None):
+          def _text(value, max_len=0):
               text = str(value or '').strip()
-              if max_len and len(text) > max_len:
-                  return text[:max_len]
-              return text
+              return text[:max_len] if max_len and len(text) > max_len else text
 
-
-          def _safe_int(value, default=0):
+          def _int(value, default=0):
               try:
                   return int(value)
               except Exception:
                   return default
 
+          def _list(value):
+              if isinstance(value, list):
+                  return value
+              if value in (None, ''):
+                  return []
+              return [value]
 
-          def _compact_json_text(value, max_len=120):
-              try:
-                  text = json.dumps(value, ensure_ascii=False, default=str)
-              except Exception:
-                  text = str(value)
-              return text[:max_len]
-
-
-          def _compact_scalar(value, max_len=120):
-              if isinstance(value, (dict, list)):
-                  return _compact_json_text(value, max_len)
-              if isinstance(value, str):
-                  return value[:max_len]
-              return value
-
+          def _uniq(values, limit=0):
+              out = []
+              for value in values or []:
+                  text = str(value or '').strip()
+                  if text and text not in out:
+                      out.append(text)
+                      if limit and len(out) >= limit:
+                          break
+              return out
 
           def _strip_banned(value):
               if isinstance(value, dict):
-                  return {str(key): _strip_banned(item) for key, item in value.items() if str(key) not in BANNED_CONTEXT_KEYS}
+                  clean = {}
+                  for key, item in value.items():
+                      skey = str(key)
+                      if skey in BANNED_CONTEXT_KEYS or skey.lower() in BANNED_CONTEXT_KEYS:
+                          continue
+                      clean[skey] = _strip_banned(item)
+                  return clean
               if isinstance(value, list):
                   return [_strip_banned(item) for item in value]
               return value
 
+          def _default_time_range():
+              return {'field': '', 'mode': '', 'relative_days': 0, 'start': '', 'end': ''}
 
-          def _compact_stage_value(key, value):
-              value = _strip_banned(value)
-              if key in ('filters', 'group_fields', 'sort', 'projection_fields'):
-                  if not isinstance(value, list):
-                      value = _as_list(value)
-                  return value[:20]
-              if key == 'time_range':
-                  return value if isinstance(value, dict) else {}
-              if key in ('rank_n', 'limit'):
-                  return _safe_int(value, 0)
-              return _string(value, 500)
-
-
-          def _dedupe_texts(values):
-              seen = []
-              for value in values or []:
-                  text = str(value or '').strip()
-                  if text and text not in seen:
-                      seen.append(text)
-              return seen
-
-
-          def compact_plan(value):
-              plan = safe_load_json(value, {})
-              if isinstance(plan, dict) and isinstance(plan.get('execution_plan'), dict):
-                  plan = plan.get('execution_plan') or {}
-              if not isinstance(plan, dict):
-                  plan = {}
-
-              stages_source = plan.get('stages') if isinstance(plan.get('stages'), list) else []
-              stages = []
-              for stage in stages_source:
-                  if not isinstance(stage, dict):
-                      continue
-                  compact_stage = {}
-                  for key in STAGE_ALLOWED_FIELDS:
-                      compact_stage[key] = _compact_stage_value(key, stage.get(key, STAGE_DEFAULTS[key]))
-                  stages.append(compact_stage)
-
-              collections = _dedupe_texts(plan.get('collections') or [])
-              if not collections:
-                  collections = _dedupe_texts([stage.get('collection') for stage in stages])
-
+          def _normalize_time_range(value):
+              value = value if isinstance(value, dict) else {}
               return {
-                  'execution_mode': _string(plan.get('execution_mode') or 'single_stage', 100),
-                  'primary_collection': _string(plan.get('primary_collection'), 100),
-                  'collections': collections,
-                  'stages': stages,
+                  'field': _text(value.get('field')),
+                  'mode': _text(value.get('mode')),
+                  'relative_days': _int(value.get('relative_days'), 0),
+                  'start': _text(value.get('start')),
+                  'end': _text(value.get('end')),
               }
 
-
-          def _chart_pick(source):
-              chart = safe_load_json(source, {})
-              if not isinstance(chart, dict):
-                  return {}
-              decision = chart.get('decision') if isinstance(chart.get('decision'), dict) else {}
-              picked = {}
-              for key in ('enabled', 'chart_type', 'x_field', 'y_field', 'series_name', 'title'):
-                  value = chart.get(key)
-                  if value in (None, ''):
-                      value = decision.get(key)
-                  if key == 'chart_type' and value in (None, ''):
-                      value = chart.get('type') or decision.get('type')
-                  if key == 'x_field' and value in (None, ''):
-                      value = chart.get('x') or decision.get('x')
-                  if key == 'y_field' and value in (None, ''):
-                      value = chart.get('y') or decision.get('y')
-                  picked[key] = value
-              if picked.get('enabled') in (None, ''):
-                  picked['enabled'] = bool(picked.get('chart_type') or picked.get('x_field') or picked.get('y_field'))
-              return picked
-
-
-          def compact_chart(last_chart, last_chart_request_json_state):
-              picked = _chart_pick(last_chart)
-              if not any(picked.get(key) not in (None, '', False) for key in ('enabled', 'chart_type', 'x_field', 'y_field', 'series_name', 'title')):
-                  picked = _chart_pick(last_chart_request_json_state)
+          def _default_plan_summary():
               return {
-                  'enabled': bool(picked.get('enabled')),
-                  'chart_type': _string(picked.get('chart_type'), 100),
-                  'x_field': _string(picked.get('x_field'), 100),
-                  'y_field': _string(picked.get('y_field'), 100),
-                  'series_name': _string(picked.get('series_name'), 200),
-                  'title': _string(picked.get('title'), 300),
+                  'primary_collection': '',
+                  'related_collections': [],
+                  'intent_type': '',
+                  'time_range': _default_time_range(),
+                  'filters': [],
+                  'group_fields': [],
+                  'metric_alias': '',
+                  'metric_function': '',
+                  'metric_field': '',
+                  'sort': [],
+                  'limit': 0,
+                  'projection_fields': [],
               }
 
+          def _default_chart_request():
+              return {'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''}
 
-          def _extract_rows(value):
-              parsed = safe_load_json(value, value)
-              if isinstance(parsed, list):
-                  return [row for row in parsed if isinstance(row, dict)]
-              if not isinstance(parsed, dict):
-                  return []
-              for key in ('rows', 'result_rows', 'data', 'results', 'items', 'records', 'documents'):
-                  rows = parsed.get(key)
-                  if isinstance(rows, list):
-                      return [row for row in rows if isinstance(row, dict)]
-                  if isinstance(rows, dict):
-                      nested = _extract_rows(rows)
-                      if nested:
-                          return nested
-              for key in ('result', 'response', 'body'):
-                  nested = _extract_rows(parsed.get(key))
-                  if nested:
-                      return nested
-              return []
+          def _default_result_profile():
+              return {'row_count': 0, 'fields': [], 'numeric_fields': [], 'dimension_fields': [], 'preview_rows': []}
 
+          def _default_schema_ref():
+              return {'collections': [], 'schema_digest': '', 'schema_version': '', 'catalog_digest': ''}
 
-          def _rows(value):
-              return _extract_rows(value)
-
-
-          def compact_result_profile(last_merged_rows, last_result_rows_json, last_query_result_json_state):
-              rows = _extract_rows(last_merged_rows) or _extract_rows(last_result_rows_json) or _extract_rows(last_query_result_json_state)
-              fields = []
-              for row in rows[:20]:
-                  for key in row.keys():
-                      if key not in fields:
-                          fields.append(key)
-                      if len(fields) >= 50:
-                          break
-                  if len(fields) >= 50:
-                      break
-
-              sample_rows = []
-              for row in rows[:3]:
-                  compact_row = {}
-                  for index, (key, value) in enumerate(row.items()):
-                      if index >= 20:
-                          break
-                      compact_row[str(key)] = _compact_scalar(value, 120)
-                  sample_rows.append(compact_row)
-
+          def _default_context():
               return {
-                  'row_count': len(rows),
-                  'fields': fields,
-                  'sample_rows': sample_rows,
-              }
-
-
-          def _dump_context_with_guard(context):
-              text = json.dumps(context, ensure_ascii=False)
-              if len(text) <= 60000:
-                  context.setdefault('size_guard', {})['actual_bytes'] = len(text)
-                  context.setdefault('size_guard', {})['truncated'] = False
-                  return json.dumps(context, ensure_ascii=False)
-
-              context.get('result_profile', {})['sample_rows'] = []
-              text = json.dumps(context, ensure_ascii=False)
-              if len(text) <= 60000:
-                  context.setdefault('size_guard', {})['actual_bytes'] = len(text)
-                  context.setdefault('size_guard', {})['truncated'] = True
-                  return json.dumps(context, ensure_ascii=False)
-
-              context['answer_summary'] = _string(context.get('answer_summary'), 300)
-              text = json.dumps(context, ensure_ascii=False)
-              if len(text) <= 79000:
-                  context.setdefault('size_guard', {})['actual_bytes'] = len(text)
-                  context.setdefault('size_guard', {})['truncated'] = True
-                  return json.dumps(context, ensure_ascii=False)
-
-              emergency = {
                   'context_version': 'compact_context_contract',
-                  'version': 'context_v3_emergency_minimal',
-                  'has_last_context': bool(context.get('has_last_context')),
-                  'last_question': _string(context.get('last_question'), 1000),
-                  'task_type': 'mongo_query',
-                  'primary_collection': _string(context.get('primary_collection'), 100),
-                  'last_primary_collection': _string(context.get('primary_collection'), 100),
-                  'collections': context.get('collections') if isinstance(context.get('collections'), list) else [],
+                  'has_last_context': False,
+                  'last_question': '',
+                  'last_turn_intent': {'turn_intent': '', 'refine_type': ''},
+                  'last_primary_collection': '',
                   'last_related_collections': [],
-                  'plan': {
-                      'execution_mode': _string((context.get('plan') or {}).get('execution_mode'), 100),
-                      'stages': [],
-                  },
-                  'last_plan_summary': {
-                      'execution_mode': _string((context.get('plan') or {}).get('execution_mode'), 100),
-                      'stages': [],
-                  },
-                  'chart': {
-                      'enabled': False,
-                      'chart_type': '',
-                      'x_field': '',
-                      'y_field': '',
-                  },
-                  'last_chart_request': {
-                      'enabled': False,
-                      'chart_type': '',
-                      'x_field': '',
-                      'y_field': '',
-                  },
-                  'last_result_profile': {'row_count': 0, 'fields': [], 'sample_rows': []},
-                  'schema_context_ref': _schema_context_ref(context.get('collections') if isinstance(context.get('collections'), list) else [], ''),
-                  'answer_summary': _string(context.get('answer_summary'), 300),
-                  'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': True},
-              }
-              return json.dumps(emergency, ensure_ascii=False)
-
-
-          def main(last_question: str, last_normalized_semantic_plan_json: str, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state: str, last_result_rows_json: str, last_final_answer_summary: str, last_chart, last_chart_request_json_state: str, last_chart_echarts_markdown: str, last_result_summary: str, last_schema_metadata_json: str='', last_schema_alias_index_json: str=''):
-              execution_plan = safe_load_json(last_normalized_execution_plan, {})
-              if not execution_plan:
-                  semantic_plan = safe_load_json(last_normalized_semantic_plan_json, {})
-                  execution_plan = semantic_plan.get('execution_plan') if isinstance(semantic_plan, dict) else {}
-              compacted_plan = compact_plan(execution_plan)
-
-              primary_collection = compacted_plan.get('primary_collection') or ''
-              if not primary_collection and compacted_plan.get('stages'):
-                  primary_collection = compacted_plan['stages'][0].get('collection') or ''
-
-              collections = compacted_plan.get('collections') or _dedupe_texts([stage.get('collection') for stage in compacted_plan.get('stages', [])])
-              compacted_plan_for_context = {
-                  'execution_mode': compacted_plan.get('execution_mode') or 'single_stage',
-                  'stages': compacted_plan.get('stages') or [],
-              }
-
-              chart = compact_chart(last_chart, last_chart_request_json_state)
-              result_profile = compact_result_profile(last_merged_rows, last_result_rows_json, last_query_result_json_state)
-              answer_summary = _string(last_result_summary or last_final_answer_summary, 1000)
-              last_question_text = _string(last_question, 1000)
-
-              has_plan = bool(compacted_plan_for_context.get('stages'))
-              has_rows = bool(result_profile.get('row_count'))
-              has_chart = bool(chart.get('enabled') or chart.get('chart_type') or chart.get('x_field') or chart.get('y_field'))
-              has_last_context = bool(last_question_text and (has_plan or has_rows or has_chart or answer_summary))
-
-              context = {
-                  'context_version': 'compact_context_contract',
-                  'version': 'context_v3_minimal',
-                  'has_last_context': has_last_context,
-                  'last_question': last_question_text,
-                  'task_type': 'mongo_query',
-                  'primary_collection': primary_collection,
-                  'last_primary_collection': primary_collection,
-                  'collections': collections,
-                  'last_related_collections': [c for c in collections if c and c != primary_collection],
-                  'plan': compacted_plan_for_context,
-                  'last_plan_summary': compacted_plan_for_context,
+                  'last_plan_summary': _default_plan_summary(),
                   'last_resolved_fields': [],
                   'last_resolved_metrics': [],
-                  'chart': chart,
-                  'last_chart_request': chart,
-                  'result_profile': result_profile,
-                  'last_result_profile': result_profile,
-                  'schema_context_ref': _schema_context_ref(collections, last_schema_metadata_json),
-                  'answer_summary': answer_summary,
-                  'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': False},
+                  'last_chart_request': _default_chart_request(),
+                  'last_result_profile': _default_result_profile(),
+                  'schema_context_ref': _default_schema_ref(),
+                  'answer_summary': '',
+                  'size_guard': {'max_bytes': COMPACT_CONTEXT_TARGET_BYTES, 'actual_bytes': 0, 'truncated': False, 'truncate_reason': ''},
+                  'context_warnings': [],
               }
 
-              rows = _extract_rows(last_result_rows_json) or _extract_rows(last_query_result_json_state) or _extract_rows(last_merged_rows)
-              old_semantic_plan_json = _safe_json(last_normalized_semantic_plan_json)
-              last_rows_json = json.dumps(rows, ensure_ascii=False)
-              last_chart_json = str(last_chart_request_json_state or '').strip() or _safe_json(last_chart)
+          def _first_stage(plan):
+              if isinstance(plan, dict) and isinstance(plan.get('execution_plan'), dict):
+                  plan = plan.get('execution_plan') or {}
+              stages = plan.get('stages') if isinstance(plan, dict) and isinstance(plan.get('stages'), list) else []
+              return stages[0] if stages and isinstance(stages[0], dict) else {}
 
-              compact_context_json = _dump_context_with_guard(context)
+          def _plan_summary_from_plan(plan):
+              summary = _default_plan_summary()
+              stage = _first_stage(plan)
+              root = plan if isinstance(plan, dict) else {}
+              primary = _text(root.get('primary_collection') or stage.get('primary_collection') or stage.get('collection'))
+              related = _uniq(_list(root.get('related_collections')) + _list(stage.get('related_collections')), 20)
+              summary.update({
+                  'primary_collection': primary,
+                  'related_collections': related,
+                  'intent_type': _text(stage.get('intent_type')),
+                  'time_range': _normalize_time_range(stage.get('time_range')),
+                  'filters': _strip_banned(stage.get('filters') if isinstance(stage.get('filters'), list) else []),
+                  'group_fields': _list(stage.get('group_fields'))[:40],
+                  'metric_alias': _text(stage.get('metric_alias')),
+                  'metric_function': _text(stage.get('metric_function')),
+                  'metric_field': _text(stage.get('metric_field')),
+                  'sort': _strip_banned(stage.get('sort') if isinstance(stage.get('sort'), list) else []),
+                  'limit': _int(stage.get('limit'), 0),
+                  'projection_fields': _list(stage.get('projection_fields'))[:80],
+              })
+              return summary
+
+          def _rows_from(value):
+              obj = _loads(value, None)
+              if isinstance(obj, list):
+                  return [x for x in obj if isinstance(x, dict)]
+              if isinstance(obj, dict):
+                  for key in ('rows', 'data', 'result', 'records', 'preview_rows'):
+                      if isinstance(obj.get(key), list):
+                          return [x for x in obj.get(key) if isinstance(x, dict)]
+              return []
+
+          def _compact_scalar(value):
+              if isinstance(value, str):
+                  return value[:MAX_PREVIEW_STRING]
+              if isinstance(value, (int, float, bool)) or value is None:
+                  return value
+              try:
+                  return json.dumps(value, ensure_ascii=False, default=str)[:MAX_PREVIEW_STRING]
+              except Exception:
+                  return str(value)[:MAX_PREVIEW_STRING]
+
+          def _result_profile_from_rows(*sources):
+              rows = []
+              for src in sources:
+                  rows = _rows_from(src)
+                  if rows:
+                      break
+              profile = _default_result_profile()
+              profile['row_count'] = len(rows)
+              for row in rows:
+                  for key, value in row.items():
+                      name = str(key)
+                      if name not in profile['fields']:
+                          profile['fields'].append(name)
+                      if isinstance(value, (int, float)) and not isinstance(value, bool):
+                          if name not in profile['numeric_fields']:
+                              profile['numeric_fields'].append(name)
+                      elif isinstance(value, (str, bool)) or value is None:
+                          if name not in profile['dimension_fields']:
+                              profile['dimension_fields'].append(name)
+                  if len(profile['preview_rows']) < MAX_PREVIEW_ROWS:
+                      compact = {}
+                      for key, value in row.items():
+                          if len(compact) >= MAX_PREVIEW_FIELDS:
+                              break
+                          compact[str(key)] = _compact_scalar(value)
+                      profile['preview_rows'].append(compact)
+              profile['fields'] = profile['fields'][:80]
+              return profile
+
+          def _chart_from(value):
+              obj = _loads(value, {})
+              if not isinstance(obj, dict):
+                  obj = {}
               return {
-                  'has_last_context': bool(has_last_context),
+                  'enabled': bool(obj.get('enabled') or obj.get('chart_type') or obj.get('type')),
+                  'chart_type': _text(obj.get('chart_type') or obj.get('type')),
+                  'x_field': _text(obj.get('x_field') or obj.get('x')),
+                  'y_field': _text(obj.get('y_field') or obj.get('y')),
+                  'series_name': _text(obj.get('series_name') or obj.get('series')),
+                  'title': _text(obj.get('title'), 200),
+              }
+
+          def _schema_ref_from_metadata(collections, schema_metadata_json):
+              meta = _loads(schema_metadata_json, {})
+              if not isinstance(meta, dict):
+                  meta = {}
+              digest = _text(meta.get('schema_digest'), 160)
+              if digest and not digest.startswith('sha256:'):
+                  digest = 'sha256:' + digest
+              return {
+                  'collections': _uniq(collections, 20),
+                  'schema_digest': digest,
+                  'schema_version': _text(meta.get('schema_version'), 128),
+                  'catalog_digest': '',
+              }
+
+          def _normalize_context(raw, warnings):
+              base = _default_context()
+              if not isinstance(raw, dict):
+                  warnings.append('conversation.last_context_json 非法，已尝试从旧 conversation 变量迁移。')
+                  return None
+              cleaned = _strip_banned(raw)
+              base['has_last_context'] = bool(cleaned.get('has_last_context'))
+              base['last_question'] = _text(cleaned.get('last_question'), 1000)
+              turn = cleaned.get('last_turn_intent') if isinstance(cleaned.get('last_turn_intent'), dict) else {}
+              base['last_turn_intent'] = {'turn_intent': _text(turn.get('turn_intent')), 'refine_type': _text(turn.get('refine_type'))}
+              plan = cleaned.get('last_plan_summary') if isinstance(cleaned.get('last_plan_summary'), dict) else {}
+              if not plan and isinstance(cleaned.get('plan'), dict):
+                  plan = _plan_summary_from_plan(cleaned.get('plan'))
+              normalized_plan = _default_plan_summary()
+              normalized_plan.update({k: plan.get(k, normalized_plan[k]) for k in normalized_plan.keys() if isinstance(plan, dict)})
+              normalized_plan['time_range'] = _normalize_time_range(normalized_plan.get('time_range'))
+              normalized_plan['filters'] = normalized_plan.get('filters') if isinstance(normalized_plan.get('filters'), list) else []
+              normalized_plan['group_fields'] = _list(normalized_plan.get('group_fields'))
+              normalized_plan['sort'] = normalized_plan.get('sort') if isinstance(normalized_plan.get('sort'), list) else []
+              normalized_plan['projection_fields'] = _list(normalized_plan.get('projection_fields'))
+              normalized_plan['limit'] = _int(normalized_plan.get('limit'), 0)
+              base['last_plan_summary'] = _strip_banned(normalized_plan)
+              base['last_primary_collection'] = _text(cleaned.get('last_primary_collection') or normalized_plan.get('primary_collection'))
+              base['last_related_collections'] = _uniq(cleaned.get('last_related_collections') or normalized_plan.get('related_collections') or [], 20)
+              base['last_resolved_fields'] = _uniq(cleaned.get('last_resolved_fields') or [], 80)
+              base['last_resolved_metrics'] = _uniq(cleaned.get('last_resolved_metrics') or [], 40)
+              base['last_chart_request'] = _chart_from(cleaned.get('last_chart_request'))
+              profile = cleaned.get('last_result_profile') if isinstance(cleaned.get('last_result_profile'), dict) else {}
+              default_profile = _default_result_profile()
+              default_profile.update({k: profile.get(k, default_profile[k]) for k in default_profile.keys() if isinstance(profile, dict)})
+              default_profile['preview_rows'] = _strip_banned(default_profile.get('preview_rows') if isinstance(default_profile.get('preview_rows'), list) else [])[:MAX_PREVIEW_ROWS]
+              base['last_result_profile'] = default_profile
+              ref = cleaned.get('schema_context_ref') if isinstance(cleaned.get('schema_context_ref'), dict) else {}
+              default_ref = _default_schema_ref()
+              default_ref.update({k: ref.get(k, default_ref[k]) for k in default_ref.keys()})
+              base['schema_context_ref'] = default_ref
+              base['answer_summary'] = _text(cleaned.get('answer_summary'), 800)
+              base['context_warnings'] = _uniq((cleaned.get('context_warnings') if isinstance(cleaned.get('context_warnings'), list) else []) + warnings, 40)
+              return base
+
+          def _migrate_from_legacy(last_question, last_normalized_semantic_plan_json, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state, last_result_rows_json, last_final_answer_summary, last_chart, last_chart_request_json_state, last_result_summary, last_schema_metadata_json, warnings):
+              plan = _loads(last_normalized_execution_plan, {})
+              semantic = _loads(last_normalized_semantic_plan_json, {})
+              if not plan and isinstance(semantic, dict):
+                  plan = semantic.get('execution_plan') or semantic
+              summary = _plan_summary_from_plan(plan)
+              primary = summary.get('primary_collection') or ''
+              related = summary.get('related_collections') or []
+              collections = _uniq([primary] + related, 20)
+              profile = _result_profile_from_rows(last_result_rows_json, last_query_result_json_state, last_merged_rows)
+              chart = _chart_from(last_chart_request_json_state or last_chart)
+              context = _default_context()
+              context.update({
+                  'has_last_context': bool(last_question and (primary or profile.get('row_count') or last_result_summary or last_final_answer_summary)),
+                  'last_question': _text(last_question, 1000),
+                  'last_primary_collection': primary,
+                  'last_related_collections': related,
+                  'last_plan_summary': summary,
+                  'last_resolved_fields': _uniq(summary.get('group_fields') + summary.get('projection_fields') + [summary.get('metric_field')], 80),
+                  'last_resolved_metrics': _uniq([summary.get('metric_alias'), summary.get('metric_field')], 40),
+                  'last_chart_request': chart,
+                  'last_result_profile': profile,
+                  'schema_context_ref': _schema_ref_from_metadata(collections, last_schema_metadata_json),
+                  'answer_summary': _text(last_result_summary or last_final_answer_summary, 800),
+                  'context_warnings': warnings + ['已从旧 last_* conversation 变量迁移生成 compact_context。'],
+              })
+              if not context['schema_context_ref']['schema_digest']:
+                  context['context_warnings'].append('旧变量迁移未能获得 schema_digest；下一轮结构性 refine 需要重新 schema retrieval。')
+              return context
+
+          def _dump_with_guard(context):
+              context = _strip_banned(context)
+              context['answer_summary'] = _text(context.get('answer_summary'), 800)
+              context['size_guard'] = {'max_bytes': COMPACT_CONTEXT_TARGET_BYTES, 'actual_bytes': 0, 'truncated': False, 'truncate_reason': ''}
+              text = _dumps(context)
+              context['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
+              if context['size_guard']['actual_bytes'] > COMPACT_CONTEXT_TARGET_BYTES:
+                  context['last_result_profile']['preview_rows'] = context['last_result_profile'].get('preview_rows', [])[:3]
+                  context['answer_summary'] = _text(context.get('answer_summary'), 400)
+                  reason = 'compact_context 超过 12000 bytes，已裁剪 preview_rows 与 answer_summary。'
+                  context['size_guard']['truncated'] = True
+                  context['size_guard']['truncate_reason'] = reason
+                  context['context_warnings'] = _uniq((context.get('context_warnings') or []) + [reason], 40)
+                  text = _dumps(context)
+                  context['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
+              if context['size_guard']['actual_bytes'] > COMPACT_CONTEXT_HARD_BYTES:
+                  context['last_result_profile']['preview_rows'] = []
+                  context['answer_summary'] = _text(context.get('answer_summary'), 200)
+                  reason = 'compact_context 超过 60000 bytes 硬上限，已清空 preview_rows。'
+                  context['size_guard']['truncated'] = True
+                  context['size_guard']['truncate_reason'] = reason
+                  context['context_warnings'] = _uniq((context.get('context_warnings') or []) + [reason], 40)
+              text = _dumps(context)
+              context['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
+              return _dumps(context), context
+
+          def main(last_question: str, last_normalized_semantic_plan_json: str, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state: str, last_result_rows_json: str, last_final_answer_summary: str, last_chart, last_chart_request_json_state: str, last_chart_echarts_markdown: str, last_result_summary: str, last_schema_metadata_json: str='', last_schema_alias_index_json: str='', conversation_last_context_json: str=''):
+              warnings = []
+              raw_context = _loads(conversation_last_context_json, None)
+              context = _normalize_context(raw_context, warnings) if raw_context is not None else None
+              if context is None:
+                  context = _migrate_from_legacy(last_question, last_normalized_semantic_plan_json, last_normalized_execution_plan, last_merged_rows, last_query_result_json_state, last_result_rows_json, last_final_answer_summary, last_chart, last_chart_request_json_state, last_result_summary, last_schema_metadata_json, warnings)
+              compact_context_json, context = _dump_with_guard(context)
+              old_semantic_plan_json = last_normalized_semantic_plan_json if isinstance(last_normalized_semantic_plan_json, str) and last_normalized_semantic_plan_json.strip() else '{}'
+              preview_rows_json = _dumps(context['last_result_profile'].get('preview_rows') or [])
+              last_chart_json = _dumps(context.get('last_chart_request') or _default_chart_request())
+              return {
+                  'has_last_context': bool(context.get('has_last_context')),
                   'last_context_json': compact_context_json,
                   'compact_context_json': compact_context_json,
                   'old_normalized_semantic_plan_json': old_semantic_plan_json or '{}',
-                  'last_query_result_json': last_rows_json or '[]',
-                  'last_chart_request_json': last_chart_json or '{}',
+                  'last_query_result_json': preview_rows_json,
+                  'last_chart_request_json': last_chart_json,
                   'last_schema_metadata_json': str(last_schema_metadata_json or ''),
                   'last_schema_alias_index_json': str(last_schema_alias_index_json or ''),
+                  'last_primary_collection': context.get('last_primary_collection') or '',
+                  'last_related_collections_json': _dumps(context.get('last_related_collections') or []),
+                  'last_plan_summary_json': _dumps(context.get('last_plan_summary') or _default_plan_summary()),
+                  'last_result_profile_json': _dumps(context.get('last_result_profile') or _default_result_profile()),
+                  'last_chart_request_json_state': last_chart_json,
+                  'schema_context_ref_json': _dumps(context.get('schema_context_ref') or _default_schema_ref()),
+                  'context_warnings_json': _dumps(context.get('context_warnings') or []),
               }
         code_language: python3
         desc: ''
@@ -830,6 +775,27 @@
             children:
             type: string
           last_schema_alias_index_json:
+            children:
+            type: string
+          last_primary_collection:
+            children:
+            type: string
+          last_related_collections_json:
+            children:
+            type: string
+          last_plan_summary_json:
+            children:
+            type: string
+          last_result_profile_json:
+            children:
+            type: string
+          last_chart_request_json_state:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          context_warnings_json:
             children:
             type: string
         selected: false
@@ -901,6 +867,11 @@
           - last_schema_alias_index_json
           value_type: string
           variable: last_schema_alias_index_json
+        - value_selector:
+          - conversation
+          - last_context_json
+          value_type: string
+          variable: conversation_last_context_json
       height: 80
       id: '1776000000001'
       position:

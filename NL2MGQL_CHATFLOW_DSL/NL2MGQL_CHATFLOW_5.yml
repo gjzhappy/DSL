@@ -639,13 +639,15 @@
               }
 
 
-          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, turn_intent: str, need_requery, last_chart_request_json: str):
+          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, turn_intent: str, need_requery, last_chart_request_json: str, compact_context_json: str = ''):
               q = str(question or '')
               old = _loads(old_normalized_semantic_plan_json)
               refine = _loads(query_refinement_json)
               parsed_time = _parse_relative_time(q)
               structural = _detect_structural_change(q, refine)
               structural_change = structural['structural_change']
+              compact_context = _loads(compact_context_json)
+              schema_ref = compact_context.get('schema_context_ref') if isinstance(compact_context.get('schema_context_ref'), dict) else {}
               debug = {
                   'turn_intent': str(turn_intent or ''),
                   'need_requery': _bool(need_requery),
@@ -654,6 +656,11 @@
                   'parsed_time_range': parsed_time,
                   'structural_change': structural_change,
                   'structural_reasons': structural['reasons'],
+                  'schema_retrieval_policy': {
+                      'must_retrieve_when': ['new_query', 'patch_route=full_replan', 'new_field', 'new_metric', 'new_filter', 'relation_or_join', 'collection_switch', 'negated_old_field', 'selected_collection_changed', 'related_collections_changed', 'schema_digest_missing_or_changed', 'catalog_digest_missing_or_changed', 'validator_needs_schema_retrieval_reserved'],
+                      'may_reuse_without_retrieval_when': ['time_only', 'limit_only', 'safe_sort_only', 'display_only_without_new_fields', 'chart_only_style_or_type', 'explain_result', 'reanalyze_result_from_profile', 'answer_formatting'],
+                      'current_schema_context_ref': schema_ref,
+                  },
               }
               validation = _validate_patch(refine, [], structural_change)
 
@@ -791,6 +798,11 @@
           - last_chart_request_json
           value_type: string
           variable: last_chart_request_json
+        - value_selector:
+          - '1776000000001'
+          - compact_context_json
+          value_type: string
+          variable: compact_context_json
       height: 80
       id: '1776000000019'
       position:
