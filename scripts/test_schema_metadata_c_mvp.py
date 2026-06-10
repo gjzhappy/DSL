@@ -3,7 +3,7 @@ import copy
 import json
 from schema_metadata_c_mvp_lib import (
     extract_schema_metadata, build_alias_index, resolve_field_name, resolve_metric_name,
-    resolve_field_label, resolve_metric_label, build_chart_title, prettify_field_name,
+    resolve_field_label, resolve_metric_label, resolve_value_alias, build_chart_title, prettify_field_name,
 )
 
 ORDERS_MD = '''# orders
@@ -96,6 +96,61 @@ metrics:
 ```
 '''
 
+
+
+FULL_SCHEMA_JSON = {
+    "contract_version": "schema_metadata_contract",
+    "schema_version": "full-v1",
+    "collections": {
+        "orders": {
+            "collection_name": "orders",
+            "collection_label": "订单",
+            "domain": "commerce",
+            "collection_aliases": ["订单", "订单表"],
+            "primary_key": "order_id",
+            "default_time_field": "created_at",
+            "fields": {
+                "status": {
+                    "name": "status",
+                    "label": "订单状态",
+                    "type": "enum",
+                    "role": "dimension",
+                    "aliases": ["履约状态"],
+                    "allowed_values": ["pending", "paid", "cancelled"],
+                    "value_aliases": {"已取消": "cancelled"},
+                    "filterable": True,
+                    "groupable": True,
+                    "sortable": True,
+                    "returnable": True,
+                    "projectable": True,
+                    "chartable": True,
+                },
+                "payment_status": {
+                    "name": "payment_status",
+                    "label": "支付状态",
+                    "type": "enum",
+                    "value_aliases": {"已支付": "paid"},
+                },
+                "customer_phone": {
+                    "name": "customer_phone",
+                    "label": "客户手机",
+                    "pii": True,
+                    "sensitive": True,
+                },
+            },
+            "metrics": {
+                "gmv_sum": {
+                    "name": "gmv_sum",
+                    "label": "销售额",
+                    "expression": "sum(amount)",
+                    "aliases": ["GMV"],
+                }
+            },
+            "relations": [{"target_collection": "products"}],
+        }
+    },
+}
+
 PCB_MD = '''## Schema Metadata
 ```yaml
 metadata_type: mongo_schema
@@ -136,6 +191,15 @@ def main():
     assert_eq(orders['metrics']['order_count']['label'], '订单数', 'orders order_count label')
     assert_eq(orders['relations'][0]['join_keys'][0]['source_field'], 'product_name', 'relation source_field')
 
+
+    assert_eq(schema['contract_version'], 'schema_metadata_contract', 'contract version')
+    assert_true(schema['schema_digest'], 'schema digest exists')
+    assert_eq(orders['domain'], '', 'domain default')
+    assert_eq(orders['query_rules']['max_limit'], 100, 'query rules default')
+    assert_eq(orders['fields']['status']['semantic_type'], 'dimension', 'semantic_type defaults to role')
+    assert_eq(orders['fields']['status']['returnable'], True, 'returnable C-MVP default')
+    assert_eq(orders['fields']['status']['projectable'], True, 'projectable C-MVP default')
+
     idx = build_alias_index(schema)['aliases']
     assert_eq(idx['订单状态'][0]['collection'] + '.' + idx['订单状态'][0]['name'], 'orders.status', 'alias 订单状态')
     assert_eq(idx['履约状态'][0]['collection'] + '.' + idx['履约状态'][0]['name'], 'orders.status', 'alias 履约状态')
@@ -173,6 +237,41 @@ def main():
     empty_schema = {'collections': {'orders': {'collection_name':'orders','fields': {'status': {'name':'status'}}, 'metrics': {'order_count': {'name':'order_count'}}}}, 'warnings': []}
     assert_eq(resolve_field_label('status', empty_schema, 'orders'), 'status', 'no schema field label fallback')
     assert_eq(resolve_metric_label('order_count', empty_schema, 'orders'), 'order count', 'no schema metric label fallback')
+
+
+
+    full_schema = extract_schema_metadata(FULL_SCHEMA_JSON)
+    full_orders = full_schema['collections']['orders']
+    assert_eq(full_orders['fields']['customer_phone']['returnable'], False, 'pii returnable default false')
+    assert_eq(full_orders['fields']['customer_phone']['groupable'], False, 'pii groupable default false')
+    assert_eq(full_orders['metrics']['gmv_sum']['function'], 'sum', 'metric function inferred from expression')
+    assert_eq(full_orders['metrics']['gmv_sum']['source_fields'], [], 'metric source_fields remains empty without field')
+    assert_true(full_schema['schema_digest'], 'full schema digest exists')
+    full_schema_reordered = copy.deepcopy(FULL_SCHEMA_JSON)
+    full_schema_reordered['collections']['orders']['fields'] = {
+        'customer_phone': FULL_SCHEMA_JSON['collections']['orders']['fields']['customer_phone'],
+        'payment_status': FULL_SCHEMA_JSON['collections']['orders']['fields']['payment_status'],
+        'status': FULL_SCHEMA_JSON['collections']['orders']['fields']['status'],
+    }
+    assert_eq(extract_schema_metadata(full_schema_reordered)['schema_digest'], full_schema['schema_digest'], 'schema digest stable across dict order')
+    full_idx = build_alias_index(full_schema)
+    assert_eq(full_idx['contract_version'], 'schema_alias_index_contract', 'alias index contract')
+    assert_eq(full_idx['metric_aliases']['销售额'][0]['name'], 'gmv_sum', 'metric alias 销售额')
+    paid = resolve_value_alias('已支付', full_schema, 'orders')
+    assert_eq(paid['candidates'][0]['field'], 'payment_status', 'value alias field')
+    assert_eq(paid['candidates'][0]['name'], 'paid', 'value alias canonical value')
+    cancelled = resolve_value_alias('已取消', full_schema, 'orders', 'status')
+    assert_eq(cancelled['candidates'][0]['name'], 'cancelled', 'value alias cancelled')
+    assert_true(any('join_keys' in w for w in full_schema['warnings']), 'relation missing join_keys warning')
+
+    list_dict_schema = extract_schema_metadata(json.dumps({
+        'collection_name': 'events',
+        'fields': [{'name': 'event_name', 'label': '事件名'}],
+        'metrics': {'event_count': {'label': '事件数', 'function': 'count'}},
+    }, ensure_ascii=False))
+    assert_true(isinstance(list_dict_schema['collections']['events']['fields'], dict), 'fields list normalized to dict')
+    assert_true(isinstance(list_dict_schema['collections']['events']['metrics'], dict), 'metrics dict remains dict')
+    assert_eq(list_dict_schema['collections']['events']['metrics']['event_count']['field'], '_id', 'count metric field defaults to primary key')
 
     # deterministic patch sentinel: keep C-MVP helpers pure and not patch-related.
     assert_eq(prettify_field_name('relative_days'), 'relative days', 'prettify does not affect deterministic patch')
