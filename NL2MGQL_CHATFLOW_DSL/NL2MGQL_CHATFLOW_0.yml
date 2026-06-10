@@ -1085,148 +1085,156 @@ workflow:
         - id: planner-system
           role: system
           text: |
-            你是一个 MongoDB 查询规划器，只负责根据用户问题判断最可能对应的主 collection 和�关 collection。
+            你是 Phase 7 的 LLM_查询规划节点：只生成 semantic_plan_contract JSON，不再承担 collection 初判职责。
 
-            任务�标：
-            - 根据用户的自然语言问题，输出查询规划结果
-            - 只输出结构化 JSON
-            - 不要输出解释性自然语言
-            - 不要生成 AST
-            - 不要生成 MongoDB 查询语句
-            - 不要猜测不存在的 collection
-            - 不要输出 markdown
-            - 不要输出多余字段
+            输入包含用户问题、collection_selection_json、compact_context_json 以及可能存在的 schema metadata/alias 摘要。
 
-            输入说明：
-            - 用户只会提� question
-            - primary_collection 必须根据用户问题的“主业务对象”来判断
-            - related_collections 只表示为了补充主查询结果而可能需要一起参与的其他 collection
+            硬性规则：
+            - 只输出 JSON；不要输出 markdown、解释、代码块。
+            - 顶层 contract_version 必须为 semantic_plan_contract。
+            - primary_collection 必须来自 collection_selection_json.selected_primary_collection。
+            - related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。
+            - 只能使用 schema_context / schema_metadata 中存在的 collection、field、metric、relation；别名必须解析为 canonical name。
+            - 不确定 collection/field/metric/relation 时，不要猜，输出 requires_clarification=true 或 needs_schema_retrieval=true。
+            - compact_context_json 只能作为弱上下文，不得继承当前用户已否定的旧字段。
+            - 不输出 Mongo pipeline、MQL、MGQL pipeline、AST、patch diff，也不要输出 $match、$group、$project、$lookup 等 Mongo stage。
 
-            当前可选 collection 及其定义如下，必须严格以这�定义为准：
-
-            1. orders
-            Aliases: 订单, 订单表, 订单�合, 下单记录, 销售订单
-            Purpose:
-            - 订单主�合
-            - 用于订单明细查询
-            - 用于订单状态�选
-            - 用于品牌 / 省份 / 时间维度统计
-            - 用于销售额聚合分析
-            - 一条文档通常代表一笔订单
-            关键字段：
-            - order_id
-            - product_name
-            - brand
-            - category
-            - province
-            - status
-            - payment_status
-            - amount
-            - quantity
-            - created_at
-            典型问题：
-            - 近30天已支付订单有多少
-            - 各品牌销售额 Top10
-            - 最近7天每天订单数趋势
-            - 按省份统计订单量
-            - 某个订单号的订单详情
-            - 近30天手机类�销量最高的品牌
-
-            2. products
-            Aliases: 商品, 商品表, 商品�合, SKU主数据, 商品主数据
-            Purpose:
-            - 商品主数据�合
-            - 用于商品基础信息查询
-            - 用于品牌 / 类� / 价格维度统计
-            - 用于上架状态分析
-            - 一条文档通常代表一个商品或 SKU 主体
-            关键字段：
-            - product_id
-            - sku_id
-            - spu_id
-            - product_name
-            - brand
-            - category
-            - status
-            - price
-            - stock
-            - created_at
-            典型问题：
-            - 华为品牌有哪�商品
-            - 最近30天新建的商品最近20条
-            - 各品牌商品数 Top10
-            - 手机类�平均价格是多少
-            - 当前在售商品中价格最高的前20个商品
-            - 某个 SKU 的商品详情
-
-            primary_collection 规则：
-            - 订单交易、订单数、销量、销售额、GMV、时间趋势、支付情况 => orders
-            - 商品详情、SKU/SPU、商品价格、库存、上架状态、商品清单 => products
-
-            related_collections 规则：
-            - 只有明确需要补充另一张表信息时才返�
-            - 不要包含 primary_collection 本身
-            - 最多返� 3 个
-
-
-            输出要求：
-            - 严格按 JSON Schema 输出
-            - 不要输出 markdown
-            - 不要输出多余字段
-            - confidence 取值 0 到 1
-            - reason 保持一句话
-
-            强制示例：
-            1) 近30天各品牌销售额 Top10
-            - primary_collection = orders
-            - related_collections = []
-
-            2) 华为品牌有哪�商品
-            - primary_collection = products
-            - related_collections = []
-
-            3) 近30天已支付订单中，各品牌销售额前10的所有 product 信息
-            - primary_collection = orders
-            - related_collections = ["products"]
+            必须输出完整 semantic_plan_contract：
+            {
+              "contract_version":"semantic_plan_contract",
+              "primary_collection":"",
+              "related_collections":[],
+              "execution_mode":"single_stage",
+              "answer_mode":"data",
+              "needs_chart":false,
+              "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],
+              "final_merge":{"merge_mode":"none"},
+              "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},
+              "requires_clarification":false,
+              "clarification_question":"",
+              "needs_schema_retrieval":false,
+              "warnings":[]
+            }
         - id: planner-user
           role: user
-          text: 用户问题:{{#sys.query#}}
+          text: |-
+            question:
+            {{#sys.query#}}
+
+            collection_selection_json:
+            {{#1777000000001.collection_selection_json#}}
+
+            compact_context_json（弱上下文，不继承用户已否定字段）:
+            {{#1776000000001.last_context_json#}}
+
+            schema_metadata_summary_json（如存在，仅使用 canonical field/metric/relation/query_rules）:
+            {{#1776000000001.last_schema_metadata_json#}}
+
+            schema_alias_index_summary_json（如存在，用于别名到 canonical name 映射）:
+            {{#1776000000001.last_schema_alias_index_json#}}
         selected: false
         structured_output:
           schema:
-            additionalProperties: false
-            properties:
-              confidence:
-                description: 判断置信度，范� 0 到 1
-                maximum: 1
-                minimum: 0
-                type: number
-              primary_collection:
-                description: 主业务对象对应的主 collection
-                enum:
-                - orders
-                - products
-                - unknown
-                type: string
-              reason:
-                description: 简短说明判断依据，控制在一句话内
-                type: string
-              related_collections:
-                description: 可能需要补充参与的其他 collection
-                items:
-                  enum:
-                  - orders
-                  - products
-                  type: string
-                maxItems: 3
-                type: array
-                uniqueItems: true
+            type: object
+            additionalProperties: true
             required:
+            - contract_version
             - primary_collection
             - related_collections
-            - confidence
-            - reason
-            type: object
+            - execution_mode
+            - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
+            properties:
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              execution_mode:
+                type: string
+              answer_mode:
+                type: string
+              needs_chart:
+                type: boolean
+              stages:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  additionalProperties: true
+                  required:
+                  - stage_name
+                  - stage_type
+                  - collection
+                  - intent_type
+                  - time_range
+                  - filters
+                  - group_fields
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - sort
+                  - limit
+                  - projection_fields
+                  properties:
+                    stage_name:
+                      type: string
+                    stage_type:
+                      type: string
+                    collection:
+                      type: string
+                    intent_type:
+                      type: string
+                    time_range:
+                      type: object
+                    filters:
+                      type: array
+                      items:
+                        type: object
+                    group_fields:
+                      type: array
+                      items:
+                        type: string
+                    metric_function:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_alias:
+                      type: string
+                    sort:
+                      type: array
+                      items:
+                        type: object
+                    limit:
+                      type: integer
+                    projection_fields:
+                      type: array
+                      items:
+                        type: string
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
+                items:
+                  type: string
         structured_output_enabled: true
         title: LLM_查询规划
         type: llm
@@ -1572,7 +1580,7 @@ workflow:
                   f"当前目标 collection: {name}\n"
                   f"collection 选择依据: {reason}\n"
                   "请检索该 collection 的 schema、字段含义、典型过滤字段、聚合指标、"
-                  "与其他 collection 的关联线索、以及任何能帮助生成 Mongo 聚合 AST 的信息。"
+                  "与其他 collection 的关联线索、以及任何能帮助生成 semantic_plan_contract 的 canonical 字段、指标、relation、query_rules 信息。"
               )
               tasks.append({
                   "collection_name": name,
