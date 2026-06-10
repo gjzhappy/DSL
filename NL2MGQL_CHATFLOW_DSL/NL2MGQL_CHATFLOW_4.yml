@@ -8,6 +8,24 @@
           final_answer_markdown:
             children:
             type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_text:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          answer_payload_json:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+          compact_context_json:
+            children:
+            type: string
           answer_mode:
             children:
             type: string
@@ -187,6 +205,33 @@
           - conversation
           - last_error
           write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - compact_context_json
+          variable_selector:
+          - conversation
+          - last_context_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - answer_payload_json
+          variable_selector:
+          - conversation
+          - last_answer_payload_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - context_update_json
+          variable_selector:
+          - conversation
+          - last_context_update_json
+          write_mode: over-write
         selected: false
         title: 变量赋值_保存多轮上下文
         type: assigner
@@ -302,8 +347,23 @@
           - schema_alias_index_json
           value_type: string
           variable: last_schema_alias_index_json
+        - value_selector:
+          - '1775000000022'
+          - compact_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1775000000022'
+          - answer_payload_json
+          value_type: string
+          variable: last_answer_payload_json
+        - value_selector:
+          - '1775000000022'
+          - context_update_json
+          value_type: string
+          variable: last_context_update_json
         selected: false
-        answer: "{{#1775000000022.final_answer_markdown#}}\n"
+        answer: "{{#1775000000022.answer_payload_markdown#}}\n"
         title: Answer
         type: answer
       height: 270
@@ -611,25 +671,39 @@
           def _dump_context_with_guard(context):
               text = json.dumps(context, ensure_ascii=False)
               if len(text) <= 60000:
-                  return text
+                  context.setdefault('size_guard', {})['actual_bytes'] = len(text)
+                  context.setdefault('size_guard', {})['truncated'] = False
+                  return json.dumps(context, ensure_ascii=False)
 
               context.get('result_profile', {})['sample_rows'] = []
               text = json.dumps(context, ensure_ascii=False)
               if len(text) <= 60000:
-                  return text
+                  context.setdefault('size_guard', {})['actual_bytes'] = len(text)
+                  context.setdefault('size_guard', {})['truncated'] = True
+                  return json.dumps(context, ensure_ascii=False)
 
               context['answer_summary'] = _string(context.get('answer_summary'), 300)
               text = json.dumps(context, ensure_ascii=False)
               if len(text) <= 79000:
-                  return text
+                  context.setdefault('size_guard', {})['actual_bytes'] = len(text)
+                  context.setdefault('size_guard', {})['truncated'] = True
+                  return json.dumps(context, ensure_ascii=False)
 
               emergency = {
+                  'context_version': 'compact_context_contract',
                   'version': 'context_v3_emergency_minimal',
+                  'has_last_context': bool(context.get('has_last_context')),
                   'last_question': _string(context.get('last_question'), 1000),
                   'task_type': 'mongo_query',
                   'primary_collection': _string(context.get('primary_collection'), 100),
+                  'last_primary_collection': _string(context.get('primary_collection'), 100),
                   'collections': context.get('collections') if isinstance(context.get('collections'), list) else [],
+                  'last_related_collections': [],
                   'plan': {
+                      'execution_mode': _string((context.get('plan') or {}).get('execution_mode'), 100),
+                      'stages': [],
+                  },
+                  'last_plan_summary': {
                       'execution_mode': _string((context.get('plan') or {}).get('execution_mode'), 100),
                       'stages': [],
                   },
@@ -639,7 +713,16 @@
                       'x_field': '',
                       'y_field': '',
                   },
+                  'last_chart_request': {
+                      'enabled': False,
+                      'chart_type': '',
+                      'x_field': '',
+                      'y_field': '',
+                  },
+                  'last_result_profile': {'row_count': 0, 'fields': [], 'sample_rows': []},
+                  'schema_context_ref': {'collections': context.get('collections') if isinstance(context.get('collections'), list) else [], 'schema_digest': '', 'schema_version': ''},
                   'answer_summary': _string(context.get('answer_summary'), 300),
+                  'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': True},
               }
               return json.dumps(emergency, ensure_ascii=False)
 
@@ -672,15 +755,26 @@
               has_last_context = bool(last_question_text and (has_plan or has_rows or has_chart or answer_summary))
 
               context = {
+                  'context_version': 'compact_context_contract',
                   'version': 'context_v3_minimal',
+                  'has_last_context': has_last_context,
                   'last_question': last_question_text,
                   'task_type': 'mongo_query',
                   'primary_collection': primary_collection,
+                  'last_primary_collection': primary_collection,
                   'collections': collections,
+                  'last_related_collections': [c for c in collections if c and c != primary_collection],
                   'plan': compacted_plan_for_context,
+                  'last_plan_summary': compacted_plan_for_context,
+                  'last_resolved_fields': [],
+                  'last_resolved_metrics': [],
                   'chart': chart,
+                  'last_chart_request': chart,
                   'result_profile': result_profile,
+                  'last_result_profile': result_profile,
+                  'schema_context_ref': {'collections': collections, 'schema_digest': '', 'schema_version': ''},
                   'answer_summary': answer_summary,
+                  'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': False},
               }
 
               rows = _extract_rows(last_result_rows_json) or _extract_rows(last_query_result_json_state) or _extract_rows(last_merged_rows)
@@ -688,12 +782,14 @@
               last_rows_json = json.dumps(rows, ensure_ascii=False)
               last_chart_json = str(last_chart_request_json_state or '').strip() or _safe_json(last_chart)
 
+              compact_context_json = _dump_context_with_guard(context)
               return {
-                  'has_last_context': has_last_context,
-                  'last_context_json': _dump_context_with_guard(context),
-                  'old_normalized_semantic_plan_json': old_semantic_plan_json,
-                  'last_query_result_json': last_rows_json,
-                  'last_chart_request_json': last_chart_json,
+                  'has_last_context': bool(has_last_context),
+                  'last_context_json': compact_context_json,
+                  'compact_context_json': compact_context_json,
+                  'old_normalized_semantic_plan_json': old_semantic_plan_json or '{}',
+                  'last_query_result_json': last_rows_json or '[]',
+                  'last_chart_request_json': last_chart_json or '{}',
                   'last_schema_metadata_json': str(last_schema_metadata_json or ''),
                   'last_schema_alias_index_json': str(last_schema_alias_index_json or ''),
               }
@@ -704,6 +800,9 @@
             children:
             type: boolean
           last_context_json:
+            children:
+            type: string
+          compact_context_json:
             children:
             type: string
           old_normalized_semantic_plan_json:

@@ -1489,6 +1489,78 @@
               return bool(normalized_plan.get('needs_chart') or semantic_plan.get('needs_chart') or viz.get('enabled') or chart_request.get('enabled') or asked)
 
 
+          def _first_stage_for_context(plan):
+              stages = _execution_stages(plan if isinstance(plan, dict) else {})
+              return stages[0] if stages and isinstance(stages[0], dict) else {}
+
+
+          def _compact_rows_profile(rows):
+              fields = []
+              preview_rows = []
+              for row in rows[:5]:
+                  if not isinstance(row, dict):
+                      continue
+                  compact = {}
+                  for key, value in row.items():
+                      if key not in fields:
+                          fields.append(key)
+                      if len(compact) < 12:
+                          compact[str(key)] = value if isinstance(value, (str, int, float, bool)) or value is None else str(value)[:120]
+                  preview_rows.append(compact)
+              return {'row_count': len(rows), 'fields': fields, 'preview_rows': preview_rows}
+
+
+          def _compact_context_contract(question, normalized_plan, chart_request, rows, answer_summary):
+              stage = _first_stage_for_context(normalized_plan)
+              primary = str((normalized_plan or {}).get('primary_collection') or stage.get('primary_collection') or stage.get('collection') or '').strip()
+              collections = []
+              for item in [primary] + list((normalized_plan or {}).get('related_collections') or []):
+                  item = str(item or '').strip()
+                  if item and item not in collections:
+                      collections.append(item)
+              if not collections and stage.get('collection'):
+                  collections.append(str(stage.get('collection')).strip())
+              group_fields = stage.get('group_fields') if isinstance(stage.get('group_fields'), list) else []
+              plan_summary = {
+                  'execution_mode': str((normalized_plan or {}).get('execution_mode') or 'single_stage'),
+                  'intent_type': str(stage.get('intent_type') or ''),
+                  'time_range': stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {},
+                  'group_fields': group_fields,
+                  'metric_alias': str(stage.get('metric_alias') or ''),
+                  'metric_function': str(stage.get('metric_function') or ''),
+                  'metric_field': str(stage.get('metric_field') or ''),
+                  'filters': stage.get('filters') if isinstance(stage.get('filters'), list) else [],
+                  'sort': stage.get('sort') if isinstance(stage.get('sort'), list) else [],
+                  'limit': int(stage.get('limit') or 0) if str(stage.get('limit') or '').isdigit() else 0,
+              }
+              result_profile = _compact_rows_profile(rows)
+              compact = {
+                  'context_version': 'compact_context_contract',
+                  'has_last_context': bool(question and (plan_summary.get('group_fields') or plan_summary.get('metric_alias') or result_profile.get('row_count') or answer_summary)),
+                  'last_question': str(question or '')[:1000],
+                  'last_turn_intent': {},
+                  'last_primary_collection': primary,
+                  'last_related_collections': [c for c in collections if c and c != primary],
+                  'last_plan_summary': plan_summary,
+                  'last_resolved_fields': [],
+                  'last_resolved_metrics': [],
+                  'last_chart_request': chart_request if isinstance(chart_request, dict) else {},
+                  'last_result_profile': result_profile,
+                  'schema_context_ref': {'collections': collections, 'schema_digest': '', 'schema_version': ''},
+                  'answer_summary': str(answer_summary or '')[:1000],
+                  'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': False},
+              }
+              text = json.dumps(compact, ensure_ascii=False)
+              compact['size_guard']['actual_bytes'] = len(text)
+              if len(text) > 60000:
+                  compact['last_result_profile']['preview_rows'] = []
+                  compact['answer_summary'] = compact['answer_summary'][:300]
+                  compact['size_guard']['truncated'] = True
+                  text = json.dumps(compact, ensure_ascii=False)
+                  compact['size_guard']['actual_bytes'] = len(text)
+              return compact
+
+
           def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, answer_mode: str):
               semantic_plan = _loads_obj(semantic_plan_json)
               normalized_plan = _loads_obj(normalized_semantic_plan_json)
@@ -1515,7 +1587,44 @@
               if not chart_available:
                   for phrase in ['从柱状图看', '从图表看', '如图所示']:
                       answer = answer.replace(phrase, '从统计结果看')
+              answer_text = ('\n\n'.join(part for part in parts if part and part != chart))[:4000]
+              if not answer_text:
+                  answer_text = answer[:4000]
+              chart_payload_markdown = chart if chart_available else ''
+              answer_type = 'query_with_chart' if chart_available else ('empty_result' if not result_rows else 'query_only')
+              compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), result_rows, answer_text)
+              compact_context_json = json.dumps(compact_context, ensure_ascii=False)
+              context_update = {
+                  'contract_version': 'context_update_contract',
+                  'should_save_context': bool(compact_context.get('has_last_context')),
+                  'compact_context': compact_context,
+                  'last_context_json': compact_context_json,
+                  'warnings': [],
+              }
+              answer_payload = {
+                  'contract_version': 'answer_payload_contract',
+                  'answer_type': answer_type,
+                  'answer_text': answer_text or '',
+                  'chart_echarts_markdown': chart_payload_markdown or '',
+                  'result_summary': answer_text or '',
+                  'message': answer_text or '',
+                  'state_update': {
+                      'should_save_context': bool(compact_context.get('has_last_context')),
+                      'context_summary': compact_context,
+                  },
+                  'debug_summary': {
+                      'answer_mode': mode or '',
+                      'row_count': len(result_rows),
+                      'chart_available': bool(chart_available),
+                  },
+              }
               return {
                   'final_answer_markdown': answer,
-                  'answer_mode': mode,
-                  'final_answer_summary': ('\n\n'.join(part for part in parts if part and part != chart))[:4000],
+                  'answer_payload_markdown': answer,
+                  'answer_text': answer_text or '',
+                  'chart_echarts_markdown': chart_payload_markdown or '',
+                  'answer_payload_json': json.dumps(answer_payload, ensure_ascii=False),
+                  'context_update_json': json.dumps(context_update, ensure_ascii=False),
+                  'compact_context_json': compact_context_json,
+                  'answer_mode': mode or '',
+                  'final_answer_summary': answer_text[:4000],
