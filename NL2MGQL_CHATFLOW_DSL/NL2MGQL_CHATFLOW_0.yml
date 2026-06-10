@@ -169,6 +169,30 @@ workflow:
     - last_schema_alias_index_json
     value: ''
     value_type: string
+  - description: Phase 1 compact context JSON（不保存完整 schema/alias/rows/echarts）
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0201
+    name: last_context_json
+    selector:
+    - conversation
+    - last_context_json
+    value: '{}'
+    value_type: string
+  - description: Phase 1 answer payload JSON（统一回答 contract 兼容字段）
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0202
+    name: last_answer_payload_json
+    selector:
+    - conversation
+    - last_answer_payload_json
+    value: '{}'
+    value_type: string
+  - description: Phase 1 context update JSON（compact context 更新 contract）
+    id: 1cefb67e-305c-44a4-8e01-aad79b0a0203
+    name: last_context_update_json
+    selector:
+    - conversation
+    - last_context_update_json
+    value: '{}'
+    value_type: string
   environment_variables:
   - description: 用静态 token 换动态 token 的接口
     id: 4fef4aee-cdc8-4b9c-bef8-be75bfeafa43
