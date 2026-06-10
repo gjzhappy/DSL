@@ -473,6 +473,18 @@
               return default
 
 
+
+
+          def _schema_context_ref(collections, schema_metadata_json):
+              meta = safe_load_json(schema_metadata_json, {})
+              if not isinstance(meta, dict):
+                  meta = {}
+              return {
+                  'collections': collections if isinstance(collections, list) else [],
+                  'schema_digest': _string(meta.get('schema_digest'), 128),
+                  'schema_version': _string(meta.get('schema_version'), 128),
+              }
+
           def _safe_json(value):
               if value is None or value == '':
                   return ''
@@ -720,7 +732,7 @@
                       'y_field': '',
                   },
                   'last_result_profile': {'row_count': 0, 'fields': [], 'sample_rows': []},
-                  'schema_context_ref': {'collections': context.get('collections') if isinstance(context.get('collections'), list) else [], 'schema_digest': '', 'schema_version': ''},
+                  'schema_context_ref': _schema_context_ref(context.get('collections') if isinstance(context.get('collections'), list) else [], ''),
                   'answer_summary': _string(context.get('answer_summary'), 300),
                   'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': True},
               }
@@ -772,7 +784,7 @@
                   'last_chart_request': chart,
                   'result_profile': result_profile,
                   'last_result_profile': result_profile,
-                  'schema_context_ref': {'collections': collections, 'schema_digest': '', 'schema_version': ''},
+                  'schema_context_ref': _schema_context_ref(collections, last_schema_metadata_json),
                   'answer_summary': answer_summary,
                   'size_guard': {'max_bytes': 60000, 'actual_bytes': 0, 'truncated': False},
               }
