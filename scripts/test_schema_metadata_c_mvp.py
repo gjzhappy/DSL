@@ -4,6 +4,7 @@ import json
 from schema_metadata_c_mvp_lib import (
     extract_schema_metadata, build_alias_index, resolve_field_name, resolve_metric_name,
     resolve_field_label, resolve_metric_label, resolve_value_alias, build_chart_title, prettify_field_name,
+    build_collection_catalog, select_collections,
 )
 
 ORDERS_MD = '''# orders
@@ -199,6 +200,38 @@ def main():
     assert_eq(orders['fields']['status']['semantic_type'], 'dimension', 'semantic_type defaults to role')
     assert_eq(orders['fields']['status']['returnable'], True, 'returnable C-MVP default')
     assert_eq(orders['fields']['status']['projectable'], True, 'projectable C-MVP default')
+
+
+    catalog = build_collection_catalog(schema)
+    assert_eq(catalog['catalog_version'], 'collection_catalog_contract', 'collection catalog contract')
+    assert_true(catalog['catalog_digest'], 'collection catalog digest exists')
+    orders_catalog = [c for c in catalog['collections'] if c['collection_name'] == 'orders'][0]
+    assert_true('订单' in orders_catalog['aliases'], 'collection catalog aliases include collection label')
+    assert_true('order_count' in orders_catalog['primary_metrics'], 'collection catalog includes metric names')
+    assert_true('products' in orders_catalog['related_collections'], 'collection catalog includes related collection')
+
+    selected = select_collections('过去一个月所有订单，按厂商统计订单数', schema_metadata=schema)
+    assert_eq(selected['contract_version'], 'collection_selection_contract', 'collection selection contract')
+    assert_eq(selected['selected_primary_collection'], 'orders', 'selector chooses orders')
+    assert_eq(selected['needs_schema_retrieval'], True, 'selector keeps schema retrieval enabled')
+
+    product_selected = select_collections('统计各品牌商品数', schema_metadata=extract_schema_metadata(ORDERS_MD + PRODUCTS_MD))
+    assert_eq(product_selected['selected_primary_collection'], 'products', 'selector chooses products')
+
+    cross_selected = select_collections('近30天已支付订单中，各品牌销售额前10的商品信息', schema_metadata=extract_schema_metadata(ORDERS_MD + PRODUCTS_MD))
+    assert_eq(cross_selected['selected_primary_collection'], 'orders', 'selector chooses orders for order sales query')
+    assert_true(any(x['collection'] == 'products' for x in cross_selected['related_candidates']), 'selector keeps products related candidate')
+
+    refine_selected = select_collections(
+        '不对，按订单状态统计过去两个月',
+        compact_context_json=json.dumps({'last_primary_collection': 'orders'}, ensure_ascii=False),
+        turn_intent_json=json.dumps({'turn_intent': 'refine_query'}, ensure_ascii=False),
+        schema_metadata=extract_schema_metadata(ORDERS_MD + PRODUCTS_MD),
+    )
+    assert_eq(refine_selected['selected_primary_collection'], 'orders', 'selector uses refine current question and prior')
+
+    low_selected = select_collections('帮我看一下这个情况', schema_metadata=extract_schema_metadata(ORDERS_MD + PRODUCTS_MD))
+    assert_true(low_selected['low_confidence'] or low_selected['warnings'], 'selector low confidence exposes warning')
 
     idx = build_alias_index(schema)['aliases']
     assert_eq(idx['订单状态'][0]['collection'] + '.' + idx['订单状态'][0]['name'], 'orders.status', 'alias 订单状态')

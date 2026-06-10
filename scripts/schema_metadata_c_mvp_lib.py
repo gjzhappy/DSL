@@ -480,6 +480,237 @@ def extract_schema_metadata(schema_context):
     return meta
 
 
+
+COLLECTION_CATALOG_VERSION = 'collection_catalog_contract'
+COLLECTION_SELECTION_CONTRACT_VERSION = 'collection_selection_contract'
+
+
+def _catalog_str_list(value, limit=None):
+    items = []
+    seen = set()
+    for item in _as_str_list(value):
+        if item and item not in seen:
+            seen.add(item)
+            items.append(item)
+            if limit and len(items) >= limit:
+                break
+    return items
+
+
+def _collection_priority(collection_name, index):
+    name = str(collection_name or '').strip().lower()
+    if name == 'orders':
+        return 100
+    if name == 'products':
+        return 80
+    return max(10, 60 - index)
+
+
+def _infer_supported_intents(coll):
+    intents = {'detail', 'aggregate_summary'}
+    fields = coll.get('fields') or {}
+    metrics = coll.get('metrics') or {}
+    if coll.get('default_time_field') or any((f or {}).get('semantic_type') == 'time' or (f or {}).get('role') == 'time' for f in fields.values()):
+        intents.add('trend')
+    if metrics:
+        intents.add('ranking')
+    if coll.get('relations'):
+        intents.add('enrich')
+    return sorted(intents)
+
+
+def _derive_collection_catalog_from_metadata(schema_metadata):
+    meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections' in schema_metadata else extract_schema_metadata(schema_metadata)
+    warnings = []
+    collections = []
+    for idx, (cname, coll) in enumerate(sorted((meta.get('collections') or {}).items())):
+        fields = coll.get('fields') or {}
+        metrics = coll.get('metrics') or {}
+        aliases = [cname, coll.get('collection_label')]
+        aliases.extend(coll.get('collection_aliases') or [])
+        primary_metrics = []
+        for mname, metric in metrics.items():
+            if len(primary_metrics) >= 12:
+                break
+            primary_metrics.append(mname)
+            primary_metrics.extend(_catalog_str_list([metric.get('label')] + (metric.get('aliases') or []), limit=3))
+        primary_dimensions = []
+        for fname, field in fields.items():
+            if len(primary_dimensions) >= 16:
+                break
+            if field.get('groupable') or field.get('filterable') or field.get('chartable') or field.get('role') in {'dimension', 'time'} or field.get('semantic_type') in {'dimension', 'time'}:
+                primary_dimensions.append(fname)
+                primary_dimensions.extend(_catalog_str_list([field.get('label')] + (field.get('aliases') or []), limit=2))
+        related = []
+        for rel in coll.get('relations') or []:
+            target = str((rel or {}).get('target_collection') or '').strip()
+            if target and target not in related:
+                related.append(target)
+        collections.append({
+            'collection_name': cname,
+            'collection_label': str(coll.get('collection_label') or cname).strip() or cname,
+            'domain': str(coll.get('domain') or '').strip(),
+            'aliases': _catalog_str_list(aliases, limit=24),
+            'description': str(coll.get('description') or '').strip(),
+            'default_time_field': str(coll.get('default_time_field') or '').strip(),
+            'primary_metrics': _catalog_str_list(primary_metrics, limit=24),
+            'primary_dimensions': _catalog_str_list(primary_dimensions, limit=32),
+            'supported_intents': _infer_supported_intents(coll),
+            'related_collections': related[:8],
+            'priority': _collection_priority(cname, idx),
+        })
+    if not collections:
+        warnings.append('schema metadata 中没有 collections，collection catalog 为空。')
+    catalog = {
+        'catalog_version': COLLECTION_CATALOG_VERSION,
+        'catalog_digest': '',
+        'collections': collections,
+        'warnings': warnings + _as_str_list((meta or {}).get('warnings'))[:5],
+    }
+    catalog['catalog_digest'] = compute_collection_catalog_digest(catalog)
+    return catalog
+
+
+def compute_collection_catalog_digest(collection_catalog):
+    catalog = copy.deepcopy(collection_catalog or {})
+    catalog.pop('catalog_digest', None)
+    payload = json.dumps(catalog, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def build_collection_catalog(schema_metadata=None, collection_catalog=None):
+    if isinstance(collection_catalog, str) and collection_catalog.strip():
+        try:
+            collection_catalog = json.loads(collection_catalog)
+        except Exception:
+            collection_catalog = None
+    if isinstance(collection_catalog, dict) and collection_catalog.get('catalog_version') == COLLECTION_CATALOG_VERSION:
+        catalog = copy.deepcopy(collection_catalog)
+        catalog.setdefault('collections', [])
+        catalog.setdefault('warnings', [])
+        catalog['catalog_digest'] = catalog.get('catalog_digest') or compute_collection_catalog_digest(catalog)
+        return catalog
+    return _derive_collection_catalog_from_metadata(schema_metadata or {})
+
+
+def default_collection_selection():
+    return {
+        'contract_version': COLLECTION_SELECTION_CONTRACT_VERSION,
+        'selected_primary_collection': '',
+        'selected_related_collections': [],
+        'confidence': 0,
+        'needs_schema_retrieval': True,
+        'primary_candidates': [],
+        'related_candidates': [],
+        'low_confidence': False,
+        'requires_clarification': False,
+        'clarification_question': '',
+        'warnings': [],
+    }
+
+
+def _load_selection_obj(value):
+    if isinstance(value, dict):
+        return copy.deepcopy(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return json.loads(value)
+        except Exception:
+            return {}
+    return {}
+
+
+def select_collections(question, compact_context_json=None, turn_intent_json=None, schema_metadata=None, collection_catalog=None, planner=None):
+    catalog = build_collection_catalog(schema_metadata, collection_catalog)
+    result = default_collection_selection()
+    result['collection_catalog_digest'] = catalog.get('catalog_digest', '')
+    q = str(question or '')
+    ctx = _load_selection_obj(compact_context_json)
+    turn = _load_selection_obj(turn_intent_json)
+    planner = _load_selection_obj(planner)
+    intent = str(turn.get('turn_intent') or turn.get('intent') or '').strip()
+    last_primary = str(ctx.get('last_primary_collection') or '').strip()
+    warnings = []
+    scored = []
+    explicit_hits = set()
+    for coll in catalog.get('collections') or []:
+        cname = str(coll.get('collection_name') or '').strip()
+        if not cname:
+            continue
+        score = 0.0
+        matched = []
+        reasons = []
+        for alias in _catalog_str_list((coll.get('aliases') or []) + [coll.get('collection_label'), cname]):
+            if alias and alias in q:
+                score += 0.55
+                matched.append(alias)
+                explicit_hits.add(cname)
+        for token in _catalog_str_list(coll.get('primary_metrics') or []):
+            if token and token in q:
+                score += 0.22
+                matched.append(token)
+        for token in _catalog_str_list(coll.get('primary_dimensions') or []):
+            if token and token in q:
+                score += 0.14
+                matched.append(token)
+        if intent and intent in (coll.get('supported_intents') or []):
+            score += 0.05
+        if last_primary and cname == last_primary and intent in {'refine_query', 'fix_result', 'continue_previous'}:
+            if cname not in explicit_hits:
+                score += 0.35
+                reasons.append('命中上一轮 primary collection prior')
+            else:
+                score += 0.12
+                reasons.append('当前问题命中且叠加上一轮 primary collection prior')
+        score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
+        if matched:
+            reasons.append('命中：' + '、'.join(_catalog_str_list(matched, limit=8)))
+        if not reasons and score > 0:
+            reasons.append('collection priority tie-breaker')
+        scored.append({'collection': cname, 'score': round(min(score, 1.0), 4), 'reason': '；'.join(reasons), 'matched_aliases': _catalog_str_list(matched, limit=12)})
+    scored.sort(key=lambda x: (-x['score'], x['collection']))
+    result['primary_candidates'] = [x for x in scored if x['score'] > 0][:3]
+    top = result['primary_candidates'][0] if result['primary_candidates'] else None
+    second = result['primary_candidates'][1] if len(result['primary_candidates']) > 1 else None
+    if top and top['score'] >= 0.5:
+        result['selected_primary_collection'] = top['collection']
+        result['confidence'] = top['score']
+    elif top:
+        result['confidence'] = top['score']
+        result['low_confidence'] = True
+        result['requires_clarification'] = True
+        result['clarification_question'] = '请明确要查询的业务对象或 collection。'
+        warnings.append('collection selector low confidence')
+    else:
+        result['low_confidence'] = True
+        result['requires_clarification'] = True
+        result['clarification_question'] = '请明确要查询的业务对象或 collection。'
+        warnings.append('没有命中 collection catalog 候选')
+    if top and second and top['score'] - second['score'] < 0.12:
+        warnings.append('primary collection 候选分数接近，存在歧义')
+    selected = result['selected_primary_collection']
+    related = []
+    related_candidates = []
+    if selected:
+        cmap = {c.get('collection_name'): c for c in catalog.get('collections') or []}
+        selected_coll = cmap.get(selected) or {}
+        for rname in selected_coll.get('related_collections') or []:
+            rc = cmap.get(rname) or {}
+            rterms = _catalog_str_list([rname, rc.get('collection_label')] + (rc.get('aliases') or []) + (rc.get('primary_metrics') or []) + (rc.get('primary_dimensions') or []), limit=60)
+            matched = [t for t in rterms if t and t in q]
+            if matched:
+                related.append(rname)
+                related_candidates.append({'collection': rname, 'score': 0.72, 'reason': '命中 related collection 语义：' + '、'.join(matched[:6]), 'matched_aliases': matched[:8]})
+    result['selected_related_collections'] = related[:3]
+    result['related_candidates'] = related_candidates[:5]
+    if not result['selected_primary_collection'] and planner.get('primary_collection'):
+        legacy = str(planner.get('primary_collection') or '').strip()
+        if legacy and legacy != 'unknown':
+            result['primary_candidates'].append({'collection': legacy, 'score': 0.45, 'reason': '兼容 fallback：旧 planner primary_collection', 'matched_aliases': []})
+            warnings.append('selector 未高置信命中，保留旧 planner collection 候选')
+    result['warnings'] = warnings
+    return result
+
 def _add_alias(index, alias, collection, kind, name, label, source, field=None):
     alias = str(alias or '').strip()
     if not alias:

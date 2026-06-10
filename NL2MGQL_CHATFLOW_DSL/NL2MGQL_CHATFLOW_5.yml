@@ -2165,11 +2165,20 @@
               return primary, collections, fields
 
 
-          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, refine_planning_structured=None, refine_planning_text: str='', patch_reason: str='', changed_fields: str=''):
+          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, refine_planning_structured=None, refine_planning_text: str='', patch_reason: str='', changed_fields: str='', collection_selection_json: str=''):
               old = _loads_obj(old_normalized_semantic_plan_json)
               primary, old_collections, old_fields = _old_collections_and_fields(old)
+              selection = _loads_obj(collection_selection_json)
+              selected_primary = str(selection.get('selected_primary_collection') or '').strip()
+              selected_related = _loads_list(selection.get('selected_related_collections'))
+              if selected_primary:
+                  primary = selected_primary
               planning = refine_planning_structured if isinstance(refine_planning_structured, dict) and refine_planning_structured else _loads_obj(refine_planning_text)
               collection_hints, field_hints, business_terms = [], [], []
+              if selected_primary:
+                  _add(collection_hints, selected_primary)
+              for c in selected_related:
+                  _add(collection_hints, c)
               for c in old_collections:
                   _add(collection_hints, c)
               _add(collection_hints, planning.get('primary_collection_hint'))
@@ -2186,7 +2195,7 @@
               for raw in _loads_list(planning.get('retrieval_tasks')):
                   if not isinstance(raw, dict):
                       continue
-                  col = str(raw.get('collection_hint') or primary or '').strip()
+                  col = str(selected_primary or raw.get('collection_hint') or primary or '').strip()
                   q = str(raw.get('query') or question or '').strip()
                   reason = str(raw.get('reason') or planning.get('planning_reason') or patch_reason or '').strip()
                   if not col:
@@ -2195,16 +2204,16 @@
                   if key in seen:
                       continue
                   seen.add(key)
-                  tasks.append({'collection_name': col, 'role': 'primary' if col == primary else 'candidate', 'query_text': q, 'reason': reason, 'fields': field_hints})
+                  tasks.append({'collection_name': col, 'role': 'primary' if col == primary else 'candidate', 'query_text': q, 'reason': reason, 'fields': field_hints, 'selection_reason': (selection.get('primary_candidates') or [{}])[0].get('reason', '') if selected_primary and col == selected_primary else '', 'selection_confidence': float(selection.get('confidence') or 0), 'matched_aliases': (selection.get('primary_candidates') or [{}])[0].get('matched_aliases', []) if selected_primary and col == selected_primary else []})
               for col in collection_hints:
                   if len(tasks) >= 8:
                       break
                   if not col or any(t.get('collection_name') == col for t in tasks):
                       continue
                   q = ' '.join([str(question or ''), col] + field_hints + business_terms + [str(patch_reason or '')]).strip()
-                  tasks.append({'collection_name': col, 'role': 'primary' if col == primary else 'candidate', 'query_text': q[:1600], 'reason': 'fallback collection hint retrieval', 'fields': field_hints})
+                  tasks.append({'collection_name': col, 'role': 'primary' if col == primary else 'candidate', 'query_text': q[:1600], 'reason': 'fallback collection hint retrieval', 'fields': field_hints, 'selection_reason': (selection.get('primary_candidates') or [{}])[0].get('reason', '') if selected_primary and col == selected_primary else '', 'selection_confidence': float(selection.get('confidence') or 0), 'matched_aliases': (selection.get('primary_candidates') or [{}])[0].get('matched_aliases', []) if selected_primary and col == selected_primary else []})
               if not tasks and primary:
-                  tasks.append({'collection_name': primary, 'role': 'primary', 'query_text': ' '.join([str(question or ''), primary] + old_fields + business_terms)[:1600], 'reason': 'fallback to old primary_collection', 'fields': old_fields})
+                  tasks.append({'collection_name': primary, 'role': 'primary', 'query_text': ' '.join([str(question or ''), primary] + old_fields + business_terms)[:1600], 'reason': 'fallback to old primary_collection', 'fields': old_fields, 'selection_reason': (selection.get('primary_candidates') or [{}])[0].get('reason', ''), 'selection_confidence': float(selection.get('confidence') or 0), 'matched_aliases': (selection.get('primary_candidates') or [{}])[0].get('matched_aliases', [])})
               valid = bool(old and tasks and not planning.get('clarify_needed'))
               error = ''
               if not old:
@@ -2222,7 +2231,8 @@
                   'refine_schema_query_text': schema_query,
                   'refine_retrieval_valid': valid,
                   'refine_retrieval_error': error,
-                  'refine_retrieval_debug_json': json.dumps({'used_structured_output': isinstance(refine_planning_structured, dict) and bool(refine_planning_structured), 'task_count': len(tasks), 'clarify_needed': bool(planning.get('clarify_needed'))}, ensure_ascii=False),
+                  'refine_retrieval_debug_json': json.dumps({'used_structured_output': isinstance(refine_planning_structured, dict) and bool(refine_planning_structured), 'task_count': len(tasks), 'clarify_needed': bool(planning.get('clarify_needed')), 'collection_selection_used': bool(selected_primary)}, ensure_ascii=False),
+                  'collection_selection_json': json.dumps(selection, ensure_ascii=False),
                   'old_normalized_semantic_plan_json': json.dumps(old, ensure_ascii=False) if old else '',
                   'query_refinement_json': json.dumps(_loads_obj(query_refinement_json), ensure_ascii=False),
                   'patch_reason': str(patch_reason or ''),
@@ -2256,6 +2266,9 @@
             children:
             type: string
           refine_retrieval_debug_json:
+            children:
+            type: string
+          collection_selection_json:
             children:
             type: string
           old_normalized_semantic_plan_json:
@@ -2315,6 +2328,11 @@
           - changed_fields
           value_type: string
           variable: changed_fields
+        - value_selector:
+          - '1777000000002'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
       height: 80
       id: '1776000000025'
       position:
@@ -4471,6 +4489,278 @@
         "y": 520
       positionAbsolute:
         x: 7200
+        "y": 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+
+          CATALOG_VERSION = 'collection_catalog_contract'
+          SELECTION_VERSION = 'collection_selection_contract'
+
+          def _loads(value):
+              if isinstance(value, dict):
+                  return dict(value)
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return {}
+              return {}
+
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if value in (None, ''):
+                  return []
+              return [str(value).strip()]
+
+          def _uniq(items, limit=0):
+              out, seen = [], set()
+              for item in items:
+                  item = str(item or '').strip()
+                  if item and item not in seen:
+                      seen.add(item); out.append(item)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+          def _digest(obj):
+              tmp = dict(obj or {})
+              tmp.pop('catalog_digest', None)
+              return hashlib.sha256(json.dumps(tmp, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+          def _fallback_catalog():
+              catalog = {
+                  'catalog_version': CATALOG_VERSION,
+                  'catalog_digest': '',
+                  'collections': [
+                      {
+                          'collection_name': 'orders', 'collection_label': '订单', 'domain': 'commerce',
+                          'aliases': ['orders', '订单', '订单表', '销售订单', '下单记录'],
+                          'description': '订单主集合，用于订单明细、销售统计、支付状态、订单趋势分析',
+                          'default_time_field': 'created_at',
+                          'primary_metrics': ['order_count', '订单数', '单量', '订单量', 'gmv_sum', '销售额', 'GMV', 'quantity_sum'],
+                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'province', '省份', 'status', '订单状态', 'payment_status', '支付状态', 'created_at'],
+                          'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
+                          'related_collections': ['products'], 'priority': 100,
+                      },
+                      {
+                          'collection_name': 'products', 'collection_label': '商品', 'domain': 'commerce',
+                          'aliases': ['products', '商品', '商品表', '产品', '产品表', '货品'],
+                          'description': '商品主数据集合，用于商品明细、品牌、类目、上下架状态和商品数量统计',
+                          'default_time_field': 'updated_at',
+                          'primary_metrics': ['product_count', '商品数', '产品数', 'sku_count'],
+                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'status', '商品状态', 'product_name', '商品名称'],
+                          'supported_intents': ['detail', 'aggregate_summary', 'ranking', 'enrich'],
+                          'related_collections': [], 'priority': 80,
+                      },
+                  ],
+                  'warnings': ['使用内置 C-MVP collection catalog fallback。'],
+              }
+              catalog['catalog_digest'] = _digest(catalog)
+              return catalog
+
+          def _catalog_from_schema(schema_metadata_json, manual_catalog_json):
+              manual = _loads(manual_catalog_json)
+              if manual.get('catalog_version') == CATALOG_VERSION:
+                  manual.setdefault('warnings', [])
+                  manual.setdefault('collections', [])
+                  manual['catalog_digest'] = manual.get('catalog_digest') or _digest(manual)
+                  return manual
+              meta = _loads(schema_metadata_json)
+              collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
+              if not collections:
+                  return _fallback_catalog()
+              out = []
+              for idx, name in enumerate(sorted(collections.keys())):
+                  coll = collections.get(name) or {}
+                  fields = coll.get('fields') if isinstance(coll.get('fields'), dict) else {}
+                  metrics = coll.get('metrics') if isinstance(coll.get('metrics'), dict) else {}
+                  aliases = _uniq([name, coll.get('collection_label')] + _list(coll.get('collection_aliases')), 24)
+                  metric_terms = []
+                  for mname, m in metrics.items():
+                      m = m or {}
+                      metric_terms.extend([mname, m.get('label')] + _list(m.get('aliases')))
+                  dim_terms = []
+                  for fname, f in fields.items():
+                      f = f or {}
+                      if f.get('groupable') or f.get('filterable') or f.get('chartable') or f.get('role') in ['dimension', 'time'] or f.get('semantic_type') in ['dimension', 'time']:
+                          dim_terms.extend([fname, f.get('label')] + _list(f.get('aliases')))
+                  related = []
+                  for rel in coll.get('relations') or []:
+                      target = str((rel or {}).get('target_collection') or '').strip()
+                      if target and target not in related:
+                          related.append(target)
+                  out.append({
+                      'collection_name': name,
+                      'collection_label': str(coll.get('collection_label') or name),
+                      'domain': str(coll.get('domain') or ''),
+                      'aliases': aliases,
+                      'description': str(coll.get('description') or ''),
+                      'default_time_field': str(coll.get('default_time_field') or ''),
+                      'primary_metrics': _uniq(metric_terms, 24),
+                      'primary_dimensions': _uniq(dim_terms, 32),
+                      'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
+                      'related_collections': related[:8],
+                      'priority': 100 if name == 'orders' else (80 if name == 'products' else max(10, 60 - idx)),
+                  })
+              catalog = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': out, 'warnings': []}
+              catalog['catalog_digest'] = _digest(catalog)
+              return catalog
+
+          def _default_selection():
+              return {
+                  'contract_version': SELECTION_VERSION,
+                  'selected_primary_collection': '',
+                  'selected_related_collections': [],
+                  'confidence': 0,
+                  'needs_schema_retrieval': True,
+                  'primary_candidates': [],
+                  'related_candidates': [],
+                  'low_confidence': False,
+                  'requires_clarification': False,
+                  'clarification_question': '',
+                  'warnings': [],
+              }
+
+          def main(question: str, turn_intent_json: str = '', compact_context_json: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', planner=None):
+              catalog = _catalog_from_schema(schema_metadata_json, collection_catalog_json)
+              selection = _default_selection()
+              selection['collection_catalog_digest'] = catalog.get('catalog_digest', '')
+              q = str(question or '')
+              ctx = _loads(compact_context_json)
+              turn = _loads(turn_intent_json)
+              planner = _loads(planner)
+              intent = str(turn.get('turn_intent') or '').strip()
+              last_primary = str(ctx.get('last_primary_collection') or '').strip()
+              warnings, candidates = [], []
+              for coll in catalog.get('collections') or []:
+                  cname = str(coll.get('collection_name') or '').strip()
+                  if not cname:
+                      continue
+                  score, matched, reasons = 0.0, [], []
+                  for term in _uniq(_list(coll.get('aliases')) + [coll.get('collection_label'), cname], 48):
+                      if term and term in q:
+                          score += 0.55; matched.append(term)
+                  for term in _uniq(_list(coll.get('primary_metrics')), 48):
+                      if term and term in q:
+                          score += 0.22; matched.append(term)
+                  for term in _uniq(_list(coll.get('primary_dimensions')), 64):
+                      if term and term in q:
+                          score += 0.14; matched.append(term)
+                  if intent in _list(coll.get('supported_intents')):
+                      score += 0.05
+                  if last_primary and cname == last_primary and intent in ['refine_query', 'fix_result', 'continue_previous']:
+                      score += 0.35 if not matched else 0.12
+                      reasons.append('使用 compact_context.last_primary_collection prior')
+                  score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
+                  if matched:
+                      reasons.append('命中 ' + '、'.join(_uniq(matched, 8)))
+                  candidates.append({'collection': cname, 'score': round(min(score, 1.0), 4), 'reason': '；'.join(reasons), 'matched_aliases': _uniq(matched, 12)})
+              candidates.sort(key=lambda x: (-x['score'], x['collection']))
+              selection['primary_candidates'] = [x for x in candidates if x['score'] > 0][:3]
+              top = selection['primary_candidates'][0] if selection['primary_candidates'] else None
+              second = selection['primary_candidates'][1] if len(selection['primary_candidates']) > 1 else None
+              if top and top['score'] >= 0.5:
+                  selection['selected_primary_collection'] = top['collection']
+                  selection['confidence'] = top['score']
+              elif top:
+                  selection['confidence'] = top['score']
+                  selection['low_confidence'] = True
+                  selection['requires_clarification'] = True
+                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
+                  warnings.append('collection selector low confidence')
+              else:
+                  selection['low_confidence'] = True
+                  selection['requires_clarification'] = True
+                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
+                  warnings.append('没有命中 collection catalog 候选')
+              if top and second and top['score'] - second['score'] < 0.12:
+                  warnings.append('primary collection 候选分数接近，存在歧义')
+              cmap = {c.get('collection_name'): c for c in catalog.get('collections') or []}
+              selected = selection['selected_primary_collection']
+              related = []
+              if selected:
+                  for rname in cmap.get(selected, {}).get('related_collections') or []:
+                      rc = cmap.get(rname) or {}
+                      terms = _uniq([rname, rc.get('collection_label')] + _list(rc.get('aliases')) + _list(rc.get('primary_metrics')) + _list(rc.get('primary_dimensions')), 80)
+                      matched = [t for t in terms if t and t in q]
+                      if matched:
+                          related.append(rname)
+                          selection['related_candidates'].append({'collection': rname, 'score': 0.72, 'reason': '命中 related collection 语义：' + '、'.join(matched[:6]), 'matched_aliases': matched[:8]})
+              selection['selected_related_collections'] = related[:3]
+              if not selection['selected_primary_collection']:
+                  legacy = str(planner.get('primary_collection') or '').strip()
+                  if legacy and legacy != 'unknown':
+                      selection['primary_candidates'].append({'collection': legacy, 'score': 0.45, 'reason': '兼容 fallback：旧 planner primary_collection', 'matched_aliases': []})
+                      warnings.append('selector 未高置信命中，保留旧 planner collection 候选')
+              selection['warnings'] = warnings
+              return {
+                  'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                  'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                  'selected_primary_collection': selection['selected_primary_collection'],
+                  'selected_related_collections': selection['selected_related_collections'],
+                  'selection_confidence': float(selection.get('confidence') or 0),
+                  'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+              }
+        code_language: python3
+        desc: refine full_replan 前基于 compact context prior 选择 collection；use_patch/chart_only 不经过本节点。
+        outputs:
+          collection_catalog_json:
+            children:
+            type: string
+          collection_selection_json:
+            children:
+            type: string
+          selected_primary_collection:
+            children:
+            type: string
+          selected_related_collections:
+            children:
+            type: array[string]
+          selection_confidence:
+            children:
+            type: number
+          selector_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_CollectionCatalog候选选择
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: turn_intent_json
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1776000000001'
+          - last_schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+      height: 80
+      id: '1777000000002'
+      position:
+        x: 3600
+        "y": 520
+      positionAbsolute:
+        x: 3600
         "y": 520
       selected: false
       sourcePosition: right
