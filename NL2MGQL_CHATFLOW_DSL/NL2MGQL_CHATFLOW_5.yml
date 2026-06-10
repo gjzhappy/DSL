@@ -1776,6 +1776,153 @@
                   return v
               return str(v or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
 
+          BIG_FIELD_KEYS = {
+              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
+              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
+              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
+              'echarts_markdown','debug'
+          }
+
+          def _deepcopy_json(value):
+              try:
+                  return json.loads(json.dumps(value, ensure_ascii=False))
+              except Exception:
+                  return value if isinstance(value, dict) else {}
+
+          def _as_list(value):
+              return value if isinstance(value, list) else []
+
+          def _as_dict(value):
+              return value if isinstance(value, dict) else {}
+
+          def _clean_for_contract(value, warnings, path=''):
+              if isinstance(value, dict):
+                  cleaned = {}
+                  for k, v in value.items():
+                      key = str(k)
+                      child_path = (path + '.' + key).strip('.')
+                      if key in BIG_FIELD_KEYS or key.startswith('debug_'):
+                          warnings.append('removed_large_field:' + child_path)
+                          continue
+                      cleaned[key] = _clean_for_contract(v, warnings, child_path)
+                  return cleaned
+              if isinstance(value, list):
+                  return [_clean_for_contract(v, warnings, path + '[]') for v in value]
+              return value
+
+          def _pick_collection(plan):
+              planner = plan.get('planner') if isinstance(plan.get('planner'), dict) else {}
+              selection = plan.get('collection_selection') if isinstance(plan.get('collection_selection'), dict) else {}
+              return str(plan.get('primary_collection') or plan.get('collection') or planner.get('primary_collection') or selection.get('selected_primary_collection') or '').strip()
+
+          def _default_chart_request(chart=None):
+              chart = chart if isinstance(chart, dict) else {}
+              return {
+                  'enabled': bool(chart.get('enabled')),
+                  'chart_type': str(chart.get('chart_type') or chart.get('type') or '').strip(),
+                  'x_field': str(chart.get('x_field') or chart.get('x_axis') or '').strip(),
+                  'y_field': str(chart.get('y_field') or chart.get('y_axis') or '').strip(),
+                  'series_name': str(chart.get('series_name') or '').strip(),
+                  'title': str(chart.get('title') or '').strip(),
+              }
+
+          def _metric_from_metrics(stage):
+              metrics = stage.get('metrics') if isinstance(stage, dict) else None
+              first = metrics[0] if isinstance(metrics, list) and metrics and isinstance(metrics[0], dict) else {}
+              return {
+                  'metric_alias': first.get('metric_alias') or first.get('alias') or first.get('name') or first.get('output_field') or '',
+                  'metric_function': first.get('metric_function') or first.get('function') or '',
+                  'metric_field': first.get('metric_field') or first.get('field') or first.get('source_field') or '',
+              }
+
+          def _normalize_time_range(value):
+              tr = value if isinstance(value, dict) else {}
+              try:
+                  relative_days = int(tr.get('relative_days') or 0)
+              except Exception:
+                  relative_days = 0
+              return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
+
+          def _normalize_stage(raw_stage, idx, primary_collection):
+              stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
+              metric = _metric_from_metrics(stage)
+              collection = str(stage.get('collection') or stage.get('primary_collection') or primary_collection or '').strip()
+              stage.setdefault('stage_name', stage.get('stage_id') or 'stage' + str(idx + 1))
+              stage.setdefault('stage_type', 'primary_query')
+              stage['collection'] = collection
+              stage.setdefault('intent_type', '')
+              stage['time_range'] = _normalize_time_range(stage.get('time_range'))
+              stage['filters'] = _as_list(stage.get('filters'))
+              stage['group_fields'] = _as_list(stage.get('group_fields'))
+              stage['metric_function'] = str(stage.get('metric_function') or metric.get('metric_function') or '').strip()
+              stage['metric_field'] = str(stage.get('metric_field') or metric.get('metric_field') or '').strip()
+              stage['metric_alias'] = str(stage.get('metric_alias') or metric.get('metric_alias') or '').strip()
+              stage['sort'] = _as_list(stage.get('sort'))
+              try:
+                  stage['limit'] = int(stage.get('limit') or 0)
+              except Exception:
+                  stage['limit'] = 0
+              stage['projection_fields'] = _as_list(stage.get('projection_fields'))
+              return stage
+
+          def semantic_plan_normalizer(raw_plan, source='unknown'):
+              warnings = []
+              try:
+                  if not isinstance(raw_plan, dict) or not raw_plan:
+                      return {}, False, 'empty', '', warnings, source or 'unknown'
+                  plan = _deepcopy_json(raw_plan)
+                  for wrapper_key in ('semantic_plan_contract','semantic_plan','normalized_semantic_plan','guarded_semantic_plan','replanned_semantic_plan'):
+                      wrapped = plan.get(wrapper_key)
+                      if isinstance(wrapped, dict):
+                          plan = _deepcopy_json(wrapped)
+                          break
+                  plan = _clean_for_contract(plan, warnings)
+                  execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
+                  if isinstance(execution_plan.get('stages'), list):
+                      plan['stages'] = execution_plan.get('stages')
+                      if isinstance(execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
+                          plan['final_merge'] = execution_plan.get('final_merge')
+                      if execution_plan.get('execution_mode') and not plan.get('execution_mode'):
+                          plan['execution_mode'] = execution_plan.get('execution_mode')
+                  if not isinstance(plan.get('chart_request'), dict) and isinstance(plan.get('visualization'), dict):
+                      plan['chart_request'] = plan.get('visualization')
+                  if not isinstance(plan.get('chart_request'), dict):
+                      top_chart = {k: plan.get(k) for k in ('enabled','chart_type','x_field','y_field','series_name','title') if k in plan}
+                      plan['chart_request'] = top_chart if top_chart else {}
+                  primary_collection = _pick_collection(plan)
+                  raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+                  if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
+                      primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
+                  stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
+                  if not primary_collection and stages:
+                      primary_collection = str(stages[0].get('collection') or '').strip()
+                  chart_request = _default_chart_request(plan.get('chart_request'))
+                  needs_chart = bool(plan.get('needs_chart')) or bool(chart_request.get('enabled'))
+                  chart_request['enabled'] = bool(chart_request.get('enabled')) or needs_chart
+                  final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
+                  final_merge.setdefault('merge_mode', 'none')
+                  normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
+                  contract = {
+                      'contract_version': 'semantic_plan_contract',
+                      'primary_collection': primary_collection,
+                      'related_collections': _as_list(plan.get('related_collections')),
+                      'execution_mode': str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage',
+                      'answer_mode': str(plan.get('answer_mode') or 'data').strip() or 'data',
+                      'needs_chart': bool(needs_chart),
+                      'stages': stages,
+                      'final_merge': final_merge,
+                      'chart_request': chart_request,
+                      'requires_clarification': bool(plan.get('requires_clarification')),
+                      'clarification_question': str(plan.get('clarification_question') or '').strip(),
+                      'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
+                      'warnings': _as_list(plan.get('warnings')),
+                      'normalizer_warnings': normalizer_warnings,
+                  }
+                  route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
+                  return contract, True, route, '', normalizer_warnings, source or 'unknown'
+              except Exception as e:
+                  return {}, False, 'system_error', str(e), warnings, source or 'unknown'
+
 
           def _first_stage(plan):
               if not isinstance(plan, dict):
@@ -1986,21 +2133,23 @@
                       plan['schema_metadata'] = schema_metadata
                       plan['schema_alias_index'] = build_alias_index(schema_metadata)
                   _sync_chart_with_group(plan, schema_context)
-              if plan:
-                  plan.setdefault('contract_version', 'semantic_plan_contract')
-              normalized_json = json.dumps(plan, ensure_ascii=False) if plan else '{}'
+              plan, normalizer_valid, normalizer_route, normalizer_error, normalizer_warnings, semantic_plan_source = semantic_plan_normalizer(plan, source)
+              if not normalizer_valid:
+                  execution_input_error = execution_input_error or (normalizer_error or 'semantic_plan_normalizer 未能归一语义计划')
+              normalized_json = json.dumps(plan, ensure_ascii=False) if normalizer_valid else '{}'
               planner = _derive_planner(plan, _loads(original_planner)) if plan else _loads(original_planner)
-              schema_metadata = plan.get('schema_metadata') if isinstance(plan, dict) else {}
-              if not schema_metadata:
-                  schema_metadata = extract_schema_metadata(schema_context)
-              schema_alias_index = plan.get('schema_alias_index') if isinstance(plan, dict) else {}
-              if not schema_alias_index:
-                  schema_alias_index = build_alias_index(schema_metadata)
+              schema_metadata = extract_schema_metadata(schema_context)
+              schema_alias_index = build_alias_index(schema_metadata)
               return {
                   'normalized_semantic_plan_json': normalized_json,
                   'semantic_plan_json': normalized_json,
+                  'semantic_plan_contract_json': normalized_json,
+                  'normalizer_valid': bool(normalizer_valid),
+                  'normalizer_route': normalizer_route,
+                  'normalizer_error': normalizer_error or '',
+                  'normalizer_warnings_json': json.dumps(normalizer_warnings or [], ensure_ascii=False),
                   'planner': planner if isinstance(planner, dict) else {},
-                  'semantic_plan_source': source or 'unknown',
+                  'semantic_plan_source': semantic_plan_source or source or 'unknown',
                   'schema_context': schema_context or '',
                   'execution_input_valid': bool(plan) and not execution_input_error,
                   'execution_input_error': execution_input_error or '',
@@ -2016,6 +2165,21 @@
             children:
             type: string
           semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_contract_json:
+            children:
+            type: string
+          normalizer_valid:
+            children:
+            type: boolean
+          normalizer_route:
+            children:
+            type: string
+          normalizer_error:
+            children:
+            type: string
+          normalizer_warnings_json:
             children:
             type: string
           planner:
@@ -4436,7 +4600,7 @@
         code: |
           import json, re
           def _strip(s):
-              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\\s*(.*?)\\s*```$',s,flags=re.S|re.I)
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,flags=re.S|re.I)
               return m.group(1).strip() if m else s
           def _loads(v):
               if isinstance(v,dict): return v
@@ -4445,20 +4609,181 @@
                       x=json.loads(_strip(v)); return x if isinstance(x,dict) else {}
                   except Exception: return {}
               return {}
-          def _normalize(plan):
-              if not isinstance(plan,dict): return {}
-              if 'execution_plan' not in plan and 'stages' in plan: plan={'execution_plan':{'stages':plan.get('stages')},**{k:v for k,v in plan.items() if k!='stages'}}
-              plan.setdefault('needs_chart',bool(plan.get('chart_request'))); plan.setdefault('chart_request',{}); plan.setdefault('answer_mode','query')
-              return plan
+          BIG_FIELD_KEYS = {
+              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
+              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
+              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
+              'echarts_markdown','debug'
+          }
+
+          def _deepcopy_json(value):
+              try:
+                  return json.loads(json.dumps(value, ensure_ascii=False))
+              except Exception:
+                  return value if isinstance(value, dict) else {}
+
+          def _as_list(value):
+              return value if isinstance(value, list) else []
+
+          def _as_dict(value):
+              return value if isinstance(value, dict) else {}
+
+          def _clean_for_contract(value, warnings, path=''):
+              if isinstance(value, dict):
+                  cleaned = {}
+                  for k, v in value.items():
+                      key = str(k)
+                      child_path = (path + '.' + key).strip('.')
+                      if key in BIG_FIELD_KEYS or key.startswith('debug_'):
+                          warnings.append('removed_large_field:' + child_path)
+                          continue
+                      cleaned[key] = _clean_for_contract(v, warnings, child_path)
+                  return cleaned
+              if isinstance(value, list):
+                  return [_clean_for_contract(v, warnings, path + '[]') for v in value]
+              return value
+
+          def _pick_collection(plan):
+              planner = plan.get('planner') if isinstance(plan.get('planner'), dict) else {}
+              selection = plan.get('collection_selection') if isinstance(plan.get('collection_selection'), dict) else {}
+              return str(plan.get('primary_collection') or plan.get('collection') or planner.get('primary_collection') or selection.get('selected_primary_collection') or '').strip()
+
+          def _default_chart_request(chart=None):
+              chart = chart if isinstance(chart, dict) else {}
+              return {
+                  'enabled': bool(chart.get('enabled')),
+                  'chart_type': str(chart.get('chart_type') or chart.get('type') or '').strip(),
+                  'x_field': str(chart.get('x_field') or chart.get('x_axis') or '').strip(),
+                  'y_field': str(chart.get('y_field') or chart.get('y_axis') or '').strip(),
+                  'series_name': str(chart.get('series_name') or '').strip(),
+                  'title': str(chart.get('title') or '').strip(),
+              }
+
+          def _metric_from_metrics(stage):
+              metrics = stage.get('metrics') if isinstance(stage, dict) else None
+              first = metrics[0] if isinstance(metrics, list) and metrics and isinstance(metrics[0], dict) else {}
+              return {
+                  'metric_alias': first.get('metric_alias') or first.get('alias') or first.get('name') or first.get('output_field') or '',
+                  'metric_function': first.get('metric_function') or first.get('function') or '',
+                  'metric_field': first.get('metric_field') or first.get('field') or first.get('source_field') or '',
+              }
+
+          def _normalize_time_range(value):
+              tr = value if isinstance(value, dict) else {}
+              try:
+                  relative_days = int(tr.get('relative_days') or 0)
+              except Exception:
+                  relative_days = 0
+              return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
+
+          def _normalize_stage(raw_stage, idx, primary_collection):
+              stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
+              metric = _metric_from_metrics(stage)
+              collection = str(stage.get('collection') or stage.get('primary_collection') or primary_collection or '').strip()
+              stage.setdefault('stage_name', stage.get('stage_id') or 'stage' + str(idx + 1))
+              stage.setdefault('stage_type', 'primary_query')
+              stage['collection'] = collection
+              stage.setdefault('intent_type', '')
+              stage['time_range'] = _normalize_time_range(stage.get('time_range'))
+              stage['filters'] = _as_list(stage.get('filters'))
+              stage['group_fields'] = _as_list(stage.get('group_fields'))
+              stage['metric_function'] = str(stage.get('metric_function') or metric.get('metric_function') or '').strip()
+              stage['metric_field'] = str(stage.get('metric_field') or metric.get('metric_field') or '').strip()
+              stage['metric_alias'] = str(stage.get('metric_alias') or metric.get('metric_alias') or '').strip()
+              stage['sort'] = _as_list(stage.get('sort'))
+              try:
+                  stage['limit'] = int(stage.get('limit') or 0)
+              except Exception:
+                  stage['limit'] = 0
+              stage['projection_fields'] = _as_list(stage.get('projection_fields'))
+              return stage
+
+          def semantic_plan_normalizer(raw_plan, source='unknown'):
+              warnings = []
+              try:
+                  if not isinstance(raw_plan, dict) or not raw_plan:
+                      return {}, False, 'empty', '', warnings, source or 'unknown'
+                  plan = _deepcopy_json(raw_plan)
+                  for wrapper_key in ('semantic_plan_contract','semantic_plan','normalized_semantic_plan','guarded_semantic_plan','replanned_semantic_plan'):
+                      wrapped = plan.get(wrapper_key)
+                      if isinstance(wrapped, dict):
+                          plan = _deepcopy_json(wrapped)
+                          break
+                  plan = _clean_for_contract(plan, warnings)
+                  execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
+                  if isinstance(execution_plan.get('stages'), list):
+                      plan['stages'] = execution_plan.get('stages')
+                      if isinstance(execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
+                          plan['final_merge'] = execution_plan.get('final_merge')
+                      if execution_plan.get('execution_mode') and not plan.get('execution_mode'):
+                          plan['execution_mode'] = execution_plan.get('execution_mode')
+                  if not isinstance(plan.get('chart_request'), dict) and isinstance(plan.get('visualization'), dict):
+                      plan['chart_request'] = plan.get('visualization')
+                  if not isinstance(plan.get('chart_request'), dict):
+                      top_chart = {k: plan.get(k) for k in ('enabled','chart_type','x_field','y_field','series_name','title') if k in plan}
+                      plan['chart_request'] = top_chart if top_chart else {}
+                  primary_collection = _pick_collection(plan)
+                  raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+                  if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
+                      primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
+                  stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
+                  if not primary_collection and stages:
+                      primary_collection = str(stages[0].get('collection') or '').strip()
+                  chart_request = _default_chart_request(plan.get('chart_request'))
+                  needs_chart = bool(plan.get('needs_chart')) or bool(chart_request.get('enabled'))
+                  chart_request['enabled'] = bool(chart_request.get('enabled')) or needs_chart
+                  final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
+                  final_merge.setdefault('merge_mode', 'none')
+                  normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
+                  contract = {
+                      'contract_version': 'semantic_plan_contract',
+                      'primary_collection': primary_collection,
+                      'related_collections': _as_list(plan.get('related_collections')),
+                      'execution_mode': str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage',
+                      'answer_mode': str(plan.get('answer_mode') or 'data').strip() or 'data',
+                      'needs_chart': bool(needs_chart),
+                      'stages': stages,
+                      'final_merge': final_merge,
+                      'chart_request': chart_request,
+                      'requires_clarification': bool(plan.get('requires_clarification')),
+                      'clarification_question': str(plan.get('clarification_question') or '').strip(),
+                      'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
+                      'warnings': _as_list(plan.get('warnings')),
+                      'normalizer_warnings': normalizer_warnings,
+                  }
+                  route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
+                  return contract, True, route, '', normalizer_warnings, source or 'unknown'
+              except Exception as e:
+                  return {}, False, 'system_error', str(e), warnings, source or 'unknown'
+
           def main(structured_output=None, text: str=''):
               raw=structured_output if isinstance(structured_output,dict) and structured_output else _loads(text)
-              plan=_normalize(raw); missing=[k for k in ['execution_plan','needs_chart','chart_request','answer_mode'] if k not in plan]
-              stages=((plan.get('execution_plan') or {}).get('stages') or []) if isinstance(plan.get('execution_plan'),dict) else []
-              if not stages: missing.append('execution_plan.stages')
-              valid=not missing and not plan.get('replan_error')
-              err=('缺失字段: '+','.join(missing)) if missing else str(plan.get('replan_error') or '')
-              js=json.dumps(plan,ensure_ascii=False) if plan else ''
-              return {'replanned_semantic_plan_json':js,'replanned_normalized_semantic_plan_json':js if valid else '','replan_valid':bool(valid),'replan_error':err,'replan_warning':'','replan_debug_json':json.dumps({'used_structured_output':isinstance(structured_output,dict) and bool(structured_output),'missing':missing},ensure_ascii=False)}
+              plan, valid, route, err, warnings, source = semantic_plan_normalizer(raw, 'refine')
+              if not raw:
+                  valid=False; route='empty'; err=err or '缺少可解析的重规划 semantic plan'
+              if isinstance(raw, dict) and raw.get('replan_error'):
+                  valid=False; route='invalid'; err=str(raw.get('replan_error') or err)
+              stages=(plan.get('stages') or []) if isinstance(plan,dict) else []
+              missing=[] if stages else ['stages']
+              if not stages and valid:
+                  valid=False; route='invalid'; err='缺失字段: stages'
+              js=json.dumps(plan,ensure_ascii=False) if valid else '{}'
+              return {
+                  'replanned_semantic_plan_json': js,
+                  'replanned_normalized_semantic_plan_json': js if valid else '',
+                  'semantic_plan_json': js,
+                  'normalized_semantic_plan_json': js if valid else '',
+                  'semantic_plan_contract_json': js,
+                  'normalizer_valid': bool(valid),
+                  'normalizer_route': route,
+                  'normalizer_error': err or '',
+                  'normalizer_warnings_json': json.dumps(warnings or [],ensure_ascii=False),
+                  'semantic_plan_source': source,
+                  'replan_valid': bool(valid),
+                  'replan_error': err or '',
+                  'replan_warning': ';'.join(warnings or []),
+                  'replan_debug_json': json.dumps({'used_structured_output':isinstance(structured_output,dict) and bool(structured_output),'missing':missing,'normalizer_route':route},ensure_ascii=False)
+              }
         code_language: python3
         desc: 提取 LLM structured output，fallback text，剥离代码块并规范化重规划 semantic plan。
         outputs:
@@ -4466,6 +4791,30 @@
             children:
             type: string
           replanned_normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_json:
+            children:
+            type: string
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_contract_json:
+            children:
+            type: string
+          normalizer_valid:
+            children:
+            type: boolean
+          normalizer_route:
+            children:
+            type: string
+          normalizer_error:
+            children:
+            type: string
+          normalizer_warnings_json:
+            children:
+            type: string
+          semantic_plan_source:
             children:
             type: string
           replan_valid:
