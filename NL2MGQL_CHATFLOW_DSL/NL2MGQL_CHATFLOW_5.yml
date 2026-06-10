@@ -337,8 +337,11 @@
           import re
           from copy import deepcopy
 
-          COMPLEX_TERMS = ('真实厂商', '供应商', '高价值客户', '异常订单', '有效订单', '退款订单', '产品线', '业务归属', '客户等级', '真实口径', '厂商口径')
-          CHART_ONLY_TERMS = ('换成饼图', '换为饼图', '改成饼图', '换成折线图', '换为折线图', '改成折线图', '换成柱状图', '换为柱状图', '改成柱状图')
+          CHART_TYPE_TERMS = {
+              'pie': ('换成饼图', '换为饼图', '改成饼图', '饼图'),
+              'line': ('换成折线图', '换为折线图', '改成折线图', '折线图'),
+              'bar': ('换成柱状图', '换为柱状图', '改成柱状图', '柱状图'),
+          }
           CN_NUMBERS = {
               '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6,
               '七': 7, '八': 8, '九': 9, '十': 10, '十一': 11, '十二': 12, '半': 0.5
@@ -348,6 +351,16 @@
               '最近一个月', '最近1个月', '最近30天', '过去二个月', '过去两个月',
               '过去2个月', '近两个月', '最近两个月', '近三个月', '最近3个月',
               '过去60天', '最近60天', '近90天', '过去半年', '最近半年', '过去一年', '最近一年'
+          )
+          STRUCTURAL_KEYS = (
+              'group_by', 'group_fields', 'metric', 'metric_function', 'metric_field',
+              'filters', 'filter', 'collection', 'primary_collection', 'intent', 'intent_type',
+              'entity_field', 'join', 'enrich', 'business_logic', 'semantic_change', 'new_schema_needed'
+          )
+          UNCHANGED_GUARDS = ('group_fields_unchanged', 'metric_unchanged', 'filters_unchanged', 'collection_unchanged')
+          STRUCTURAL_PATTERNS = (
+              r'不再按', r'不按', r'改按', r'重新按', r'不是.+而是', r'按.+统计',
+              r'换成.+维度', r'改成.+口径', r'只统计', r'排除', r'筛选', r'条件', r'口径', r'维度'
           )
 
 
@@ -367,6 +380,16 @@
               if isinstance(v, bool):
                   return v
               return str(v or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+
+          def _non_empty(v):
+              if v is None or v is False:
+                  return False
+              if isinstance(v, str):
+                  return bool(v.strip())
+              if isinstance(v, (list, tuple, set, dict)):
+                  return bool(v)
+              return True
 
 
           def _stages(plan):
@@ -427,18 +450,55 @@
               return {'mode': 'relative_days', 'relative_days': days, 'source': source}
 
 
-          def _safe_time_only_refine(refine, turn_intent, need_requery):
-              return (
-                  str(turn_intent or '') == 'refine_query'
-                  and _bool(need_requery)
-                  and _bool(refine.get('time_range_change'))
+          def _has_non_empty(refine, keys):
+              return [k for k in keys if _non_empty(refine.get(k))]
+
+
+          def _detect_structural_change(q, refine):
+              reasons = []
+              for key in _has_non_empty(refine, STRUCTURAL_KEYS):
+                  reasons.append('query_refinement_json.%s' % key)
+              for key in UNCHANGED_GUARDS:
+                  if key in refine and not _bool(refine.get(key)):
+                      reasons.append('query_refinement_json.%s=false' % key)
+
+              text = str(q or '')
+              for pattern in STRUCTURAL_PATTERNS:
+                  if re.search(pattern, text):
+                      reasons.append('user_pattern:%s' % pattern)
+
+              return {'structural_change': bool(reasons), 'reasons': reasons}
+
+
+          def _extract_chart_type(q):
+              text = str(q or '')
+              for chart_type, terms in CHART_TYPE_TERMS.items():
+                  if any(term in text for term in terms):
+                      return chart_type
+              return ''
+
+
+          def _is_chart_type_only(q, refine, need_requery, structural_change):
+              if _bool(need_requery) or structural_change:
+                  return False
+              if _parse_relative_time(q) or _bool(refine.get('time_range_change')) or _non_empty(refine.get('time_range')):
+                  return False
+              chart_type = refine.get('chart_type') or refine.get('visualization_type') or _extract_chart_type(q)
+              return bool(chart_type)
+
+
+          def _can_apply_time_only_patch(refine, parsed_time, structural_change):
+              if structural_change or not parsed_time:
+                  return False
+              explicit_safe = (
+                  _bool(refine.get('time_range_change'))
                   and _bool(refine.get('group_fields_unchanged'))
                   and _bool(refine.get('metric_unchanged'))
+                  and _bool(refine.get('filters_unchanged'))
+                  and _bool(refine.get('collection_unchanged'))
               )
-
-
-          def _refine_has_time_guard(refine):
-              return any(k in refine for k in ('time_range_change', 'group_fields_unchanged', 'metric_unchanged'))
+              has_any_guard = any(k in refine for k in ('time_range_change',) + UNCHANGED_GUARDS)
+              return explicit_safe or not has_any_guard or (_bool(refine.get('time_range_change')) and not _has_non_empty(refine, STRUCTURAL_KEYS))
 
 
           def _set_all_stage_time(plan, days=None, mode=None):
@@ -469,16 +529,6 @@
                       return cr['title'] != title
               debug['title_patch'] = 'no_safe_old_time_text_found'
               return False
-
-
-          def _unique_keep_order(values):
-              seen = set()
-              result = []
-              for value in values:
-                  if value not in seen:
-                      seen.add(value)
-                      result.append(value)
-              return result
 
 
           def _patch_limit(plan, n):
@@ -523,61 +573,138 @@
               return changed
 
 
+          def _patch_chart_type(plan, chart_type):
+              if not chart_type:
+                  return False
+              if not isinstance(plan.get('chart_request'), dict):
+                  plan['chart_request'] = {}
+              plan['chart_request']['chart_type'] = chart_type
+              plan['chart_request']['type'] = chart_type
+              if isinstance(plan.get('visualization'), dict):
+                  plan['visualization']['chart_type'] = chart_type
+              return True
+
+
+          def _unique_keep_order(values):
+              seen = set()
+              result = []
+              for value in values:
+                  if value not in seen:
+                      seen.add(value)
+                      result.append(value)
+              return result
+
+
+          def _validate_patch(refine, changed_fields, structural_change):
+              unapplied = _has_non_empty(refine, STRUCTURAL_KEYS)
+              for key in UNCHANGED_GUARDS:
+                  if key in refine and not _bool(refine.get(key)):
+                      unapplied.append(key)
+              passed = (not structural_change) and (not unapplied)
+              return {'patch_validation_passed': passed, 'unapplied_refinements': _unique_keep_order(unapplied)}
+
+
+          def _result(patch_applied=False, requires_full_replan=True, plan=None, changed=None, reason='', error='', debug=None, validation=None):
+              changed = changed or []
+              debug = debug or {}
+              validation = validation or {'patch_validation_passed': False, 'unapplied_refinements': []}
+              return {
+                  'patch_applied': bool(patch_applied),
+                  'requires_full_replan': bool(requires_full_replan),
+                  'patched_normalized_semantic_plan_json': json.dumps(plan, ensure_ascii=False) if plan else '',
+                  'changed_fields': json.dumps(changed, ensure_ascii=False),
+                  'patch_reason': reason,
+                  'patch_error': error,
+                  'patch_validation_passed': bool(validation.get('patch_validation_passed')),
+                  'unapplied_refinements': json.dumps(validation.get('unapplied_refinements') or [], ensure_ascii=False),
+                  'patch_debug_json': json.dumps(debug, ensure_ascii=False),
+              }
+
+
           def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, turn_intent: str, need_requery, last_chart_request_json: str):
               q = str(question or '')
               old = _loads(old_normalized_semantic_plan_json)
               refine = _loads(query_refinement_json)
               parsed_time = _parse_relative_time(q)
-              safe_time_only = _safe_time_only_refine(refine, turn_intent, need_requery)
+              structural = _detect_structural_change(q, refine)
+              structural_change = structural['structural_change']
               debug = {
                   'turn_intent': str(turn_intent or ''),
                   'need_requery': _bool(need_requery),
                   'has_old_plan': bool(old),
                   'query_refinement_json': refine,
-                  'safe_time_only_refine': safe_time_only,
+                  'parsed_time_range': parsed_time,
+                  'structural_change': structural_change,
+                  'structural_reasons': structural['reasons'],
               }
-              if parsed_time:
-                  debug['parsed_time_range'] = parsed_time
+              validation = _validate_patch(refine, [], structural_change)
+
               if not old:
-                  return {'patch_applied': False, 'requires_full_replan': True, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '缺少上一轮 normalized semantic plan，无法执行确定性 patch', 'patch_error': 'missing_old_plan', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
-              if any(term in q for term in CHART_ONLY_TERMS):
-                  return {'patch_applied': False, 'requires_full_replan': False, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '本轮看起来只是图表类型修改，应由 chart 分支复用上一轮结果，不应触发 Mongo 重查', 'patch_error': 'chart_only_refine', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
-              if any(term in q for term in COMPLEX_TERMS):
-                  return {'patch_applied': False, 'requires_full_replan': True, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '用户引入了可能涉及新字段、新 collection 或新业务口径的复杂语义，必须重新检索 schema 并重规划', 'patch_error': '', 'patch_debug_json': json.dumps({**debug, 'complex_terms': [t for t in COMPLEX_TERMS if t in q]}, ensure_ascii=False)}
+                  return _result(reason='缺少上一轮 normalized semantic plan，无法执行确定性 patch', error='missing_old_plan', debug=debug, validation=validation)
+
+              if structural_change:
+                  reason = '检测到结构性查询变化：%s，不执行确定性 patch，转入 LLM_Refine查询规划' % '；'.join(structural['reasons'])
+                  return _result(reason=reason, debug=debug, validation=validation)
+
               plan = deepcopy(old)
               changed = []
 
-              if parsed_time:
-                  if safe_time_only or not _refine_has_time_guard(refine):
-                      if _set_all_stage_time(plan, days=parsed_time['relative_days']):
-                          changed.append('execution_plan.stages[0].time_range.relative_days')
-                          if _patch_title_time(plan, parsed_time['source'], debug):
-                              changed.append('chart_request.title')
-                  else:
-                      debug['time_patch_skipped'] = 'query_refinement_json 未确认 group_fields_unchanged=true 且 metric_unchanged=true，避免覆盖非纯时间修改'
-              elif '今年' in q:
+              if _is_chart_type_only(q, refine, need_requery, structural_change):
+                  chart_type = refine.get('chart_type') or refine.get('visualization_type') or _extract_chart_type(q)
+                  if _patch_chart_type(plan, chart_type):
+                      changed.append('chart_request.chart_type')
+                      validation = _validate_patch(refine, changed, False)
+                      return _result(True, False, plan, changed, '检测到仅图表类型变更：%s，不改变 Mongo 查询语义' % chart_type, '', debug, validation)
+
+              if _can_apply_time_only_patch(refine, parsed_time, structural_change):
+                  if _set_all_stage_time(plan, days=parsed_time['relative_days']):
+                      changed.append('execution_plan.stages[0].time_range.relative_days')
+                      if _patch_title_time(plan, parsed_time['source'], debug):
+                          changed.append('chart_request.title')
+              elif parsed_time:
+                  debug['time_patch_skipped'] = '检测到非纯时间修改或缺少安全白名单条件，禁止执行 time-only patch'
+              elif '今年' in q and not structural_change:
                   if _set_all_stage_time(plan, mode='this_year'):
                       changed.append('time_range')
-              elif '上个月' in q:
+              elif '上个月' in q and not structural_change:
                   if _set_all_stage_time(plan, mode='last_month'):
                       changed.append('time_range')
 
               m = re.search(r'(?:top|前|只看前|限制)\s*(\d+)\s*(?:条|名|个)?', q, flags=re.I)
-              if m and _patch_limit(plan, m.group(1)):
+              if m and not structural_change and _patch_limit(plan, m.group(1)):
                   changed.append('limit')
-              if any(x in q for x in ('升序', '从小到大', '从低到高')) and _patch_sort(plan, 'asc'):
+              if any(x in q for x in ('升序', '从小到大', '从低到高')) and not structural_change and _patch_sort(plan, 'asc'):
                   changed.append('sort')
-              if any(x in q for x in ('降序', '从大到小', '从高到低')) and _patch_sort(plan, 'desc'):
+              if any(x in q for x in ('降序', '从大到小', '从高到低')) and not structural_change and _patch_sort(plan, 'desc'):
                   changed.append('sort')
-              changed.extend(_patch_display(plan, q))
+              if not structural_change:
+                  changed.extend(_patch_display(plan, q))
+
               changed = _unique_keep_order(changed)
+              validation = _validate_patch(refine, changed, structural_change)
+              debug['changed_fields'] = changed
+              debug['patch_validation'] = validation
+
               if not changed:
-                  return {'patch_applied': False, 'requires_full_replan': True, 'patched_normalized_semantic_plan_json': '', 'changed_fields': '[]', 'patch_reason': '未发现可安全确定性修正的字段，进入 refine full replan', 'patch_error': '', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
-              if 'execution_plan.stages[0].time_range.relative_days' in changed:
+                  return _result(reason='未发现可安全确定性修正的字段，进入 refine full replan', debug=debug, validation=validation)
+              if not validation['patch_validation_passed']:
+                  return _result(reason='检测到未应用的结构性修改意图，放弃确定性 patch，转入 LLM_Refine查询规划', debug=debug, validation=validation)
+
+              if 'execution_plan.stages[0].time_range.relative_days' in changed and len([x for x in changed if x != 'chart_request.title']) == 1:
                   patch_reason = '检测到仅时间范围变更：%s -> relative_days=%s，保留分组、指标、排序和图表配置' % (parsed_time['source'], parsed_time['relative_days'])
               else:
                   patch_reason = '高确定性规则修正：' + ','.join(changed)
-              return {'patch_applied': True, 'requires_full_replan': False, 'patched_normalized_semantic_plan_json': json.dumps(plan, ensure_ascii=False), 'changed_fields': json.dumps(changed, ensure_ascii=False), 'patch_reason': patch_reason, 'patch_error': '', 'patch_debug_json': json.dumps(debug, ensure_ascii=False)}
+              return _result(True, False, plan, changed, patch_reason, '', debug, validation)
+
+
+          # 自检说明：
+          # 1. “改成过去两个月”且 refine 仅声明 time_range_change，并确认 group/metric/filter/collection 均 unchanged：允许 patch，relative_days=60。
+          # 2. “不再按品牌，改按订单状态统计”：命中结构性分组变化，patch_applied=false，requires_full_replan=true。
+          # 3. “按订单状态统计过去两个月”：命中结构性分组变化，即使可解析时间也不能只 patch 时间，必须 full replan。
+          # 4. “换成饼图”且 need_requery=false、无结构性变化、无时间变化：允许 chart-type-only patch，不改变 Mongo 查询语义。
+          # 5. “按订单状态统计过去两个月，生成新的柱状图”：chart 词不能覆盖结构性变化，必须 full replan。
+          # 6. “只看前10个”且无结构性变化：允许 limit-only patch。
+          # 7. “改成升序”且无结构性变化：允许 sort-only patch。
         code_language: python3
         desc: refine_query 高确定性 patch：仅处理时间范围、TopN/limit、排序方向等，不硬猜复杂业务语义。
         outputs:
@@ -597,6 +724,12 @@
             children:
             type: string
           patch_error:
+            children:
+            type: string
+          patch_validation_passed:
+            children:
+            type: boolean
+          unapplied_refinements:
             children:
             type: string
           patch_debug_json:
@@ -905,9 +1038,30 @@
             variable_selector:
             - '1776000000019'
             - patch_applied
+          - comparison_operator: is
+            id: patch-replan-false
+            value: 'false'
+            varType: boolean
+            variable_selector:
+            - '1776000000019'
+            - requires_full_replan
+          - comparison_operator: is
+            id: patch-error-empty
+            value: ''
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patch_error
+          - comparison_operator: is
+            id: patch-validation-passed
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776000000019'
+            - patch_validation_passed
           id: 'true'
           logical_operator: and
-        desc: refine_query patch 成功则直接进入 Mongo 输入统一节点；失败才调用重规划 LLM 和差异保护。
+        desc: refine_query patch 必须同时满足 patch_applied=true、requires_full_replan=false、patch_error 为空且 patch_validation_passed=true；否则调用重规划 LLM 和差异保护。
         selected: false
         title: 条件分支_patch结果判断
         type: if-else
