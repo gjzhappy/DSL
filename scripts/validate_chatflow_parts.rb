@@ -26,6 +26,16 @@ REQUIRED_PREPARE_OUTPUTS = {
   'execution_input_valid' => 'boolean',
   'execution_input_error' => 'string'
 }.freeze
+REQUIRED_VALIDATOR_OUTPUTS = {
+  'validator_result_json' => 'string',
+  'validator_route' => 'string',
+  'valid' => 'boolean',
+  'normalized_plan_json' => 'string',
+  'normalized_semantic_plan_json' => 'string',
+  'semantic_plan_json' => 'string',
+  'answer_payload_json' => 'string',
+  'final_answer_markdown' => 'string'
+}.freeze
 
 errors = []
 warnings = []
@@ -131,11 +141,27 @@ REQUIRED_PREPARE_OUTPUTS.each do |field, type|
   errors << "1776000000024 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
 end
 
+validator_outputs = outputs_by_id['1778000000001'] || {}
+REQUIRED_VALIDATOR_OUTPUTS.each do |field, type|
+  actual_type = validator_outputs.dig(field, 'type')
+  errors << "1778000000001 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
+end
+validator_node = node_by_id['1778000000001']
+errors << 'required Phase 8 validator node 1778000000001 is missing' if validator_node.nil?
+if validator_node && validator_node.dig('data', 'title') != '代码执行_semantic_plan_validator'
+  errors << "1778000000001 title is #{validator_node.dig('data', 'title').inspect}, expected 代码执行_semantic_plan_validator"
+end
+validator_branch = node_by_id['1778000000002']
+errors << 'required Phase 8 validator route branch 1778000000002 is missing' if validator_branch.nil?
+if validator_branch && validator_branch.dig('data', 'title') != '条件分支_validator结果判断'
+  errors << "1778000000002 title is #{validator_branch.dig('data', 'title').inspect}, expected 条件分支_validator结果判断"
+end
+
 compile_node = node_by_id['1775000000007']
 compile_vars = compile_node&.dig('data', 'variables') || []
 compile_semantic_selector = compile_vars.find { |var| var['variable'] == 'semantic_plan' }&.dig('value_selector')
-unless compile_semantic_selector == ['1776000000024', 'normalized_semantic_plan_json']
-  errors << "1775000000007 semantic_plan selector is #{compile_semantic_selector.inspect}, expected ['1776000000024', 'normalized_semantic_plan_json']"
+unless compile_semantic_selector == ['1778000000001', 'normalized_semantic_plan_json']
+  errors << "1775000000007 semantic_plan selector is #{compile_semantic_selector.inspect}, expected ['1778000000001', 'normalized_semantic_plan_json']"
 end
 
 edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s, edge['target'].to_s] }.to_set
@@ -146,7 +172,14 @@ edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s,
   ['1775000000019', 'source', '1775000000013'] => 'local fallback body must enter extraction',
   ['1775000000013', 'source', '1775000000020'] => 'extraction must enter plan_valid gate',
   ['1775000000020', 'true', '1776000000024'] => 'valid new-query plans must enter unified Mongo input preparation',
-  ['1776000000024', 'source', '1775000000007'] => 'prepared Mongo execution input must enter compiler',
+  ['1776000000024', 'source', '1778000000001'] => 'prepared normalized plans must enter Phase 8 validator before compiler',
+  ['1778000000001', 'source', '1778000000002'] => 'validator result must enter validator route branch',
+  ['1778000000002', 'valid', '1775000000007'] => 'only validator valid branch may enter compiler',
+  ['1778000000002', 'requires_clarification', '1778000000004'] => 'validator clarification branch must save context without compiler',
+  ['1778000000002', 'blocked', '1778000000004'] => 'validator blocked branch must save context without compiler',
+  ['1778000000002', 'needs_replan', '1778000000004'] => 'validator needs_replan branch must save context without compiler',
+  ['1778000000002', 'false', '1778000000004'] => 'validator invalid/default branch must save context without compiler',
+  ['1778000000004', 'source', '1778000000003'] => 'validator non-valid context save must continue to answer',
   ['1776000000021', 'source', '1776000000024'] => 'guarded refine replan must enter unified Mongo input preparation'
 }.each do |pair, message|
   errors << "missing edge #{pair.join(' -> ')} (#{message})" unless edge_pairs.include?(pair)
@@ -158,7 +191,7 @@ end
 if edge_pairs.include?(['1775000000020', 'true', '1775000000007'])
   errors << '1775000000020 true branch still bypasses unified preparation and enters compiler directly'
 end
-
+#{insert}
 incoming_counts = Hash.new(0)
 outgoing_counts = Hash.new(0)
 edges.each do |edge|

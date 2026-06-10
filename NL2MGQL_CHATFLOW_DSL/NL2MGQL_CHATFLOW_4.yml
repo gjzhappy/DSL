@@ -1634,6 +1634,95 @@
       type: custom
       width: 242
     - data:
+        answer: "{{#1778000000001.final_answer_markdown#}}"
+        desc: Phase 8 validator 非 valid 分支统一回答；不暴露 validator debug。
+        outputs:
+        - value_selector:
+          - '1778000000001'
+          - answer_payload_json
+          value_type: string
+          variable: answer_payload_json
+        selected: false
+        title: Answer_validator校验未通过
+        type: answer
+        variables: []
+      height: 140
+      id: '1778000000003'
+      position:
+        x: 9800
+        "y": 420
+      positionAbsolute:
+        x: 9800
+        "y": 420
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        assigned_variable_selector:
+        - conversation
+        - last_answer_payload_json
+        desc: Phase 8 validator 非 valid 分支保存最小多轮上下文：问题、answer_payload、validator 路由；不保存 debug/schema。
+        input_variable_selector:
+        - '1778000000001'
+        - answer_payload_json
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - sys
+          - query
+          variable_selector:
+          - conversation
+          - last_question
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1778000000001'
+          - answer_payload_json
+          variable_selector:
+          - conversation
+          - last_answer_payload_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1778000000001'
+          - validator_result_json
+          variable_selector:
+          - conversation
+          - last_context_update_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1778000000001'
+          - final_answer_markdown
+          variable_selector:
+          - conversation
+          - last_error
+          write_mode: over-write
+        selected: false
+        title: 变量赋值_validator非valid保存上下文
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 210
+      id: '1778000000004'
+      position:
+        x: 9600
+        "y": 280
+      positionAbsolute:
+        x: 9600
+        "y": 280
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
         code: |
           import json
 
