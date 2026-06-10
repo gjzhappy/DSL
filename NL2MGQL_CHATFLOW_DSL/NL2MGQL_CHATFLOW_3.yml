@@ -894,7 +894,7 @@
         context:
           enabled: false
           variable_selector: []
-        desc: 满血LLM关闭或失败时，使用本地模型生成AST
+        desc: 满血LLM关闭或失败时，使用本地模型保守生成 semantic_plan_contract
         model:
           completion_params:
             num_ctx: 16384
@@ -915,64 +915,105 @@
         structured_output:
           schema:
             type: object
+            additionalProperties: true
             required:
-            - execution_plan
+            - contract_version
+            - primary_collection
+            - related_collections
+            - execution_mode
+            - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
             properties:
-              execution_plan:
-                type: object
-                required:
-                - stages
-                properties:
-                  stages:
-                    type: array
-                    minItems: 1
-                    items:
-                      type: object
-                      required:
-                      - stage_id
-                      - stage_type
-                      - primary_collection
-                      - intent_type
-                      properties:
-                        stage_id:
-                          type: string
-                        stage_type:
-                          type: string
-                        primary_collection:
-                          type: string
-                        intent_type:
-                          type: string
-                        time_range:
-                          type: object
-                        filters:
-                          type: array
-                          items:
-                            type: object
-                        group_fields:
-                          type: array
-                          items:
-                            type: string
-                        metric_function:
-                          type: string
-                        metric_field:
-                          type: string
-                        metric_alias:
-                          type: string
-                        sort:
-                          type: array
-                          items:
-                            type: object
-                        limit:
-                          type: integer
-                      additionalProperties: true
-                additionalProperties: true
-              needs_chart:
-                type: boolean
-              chart_request:
-                type: object
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              execution_mode:
+                type: string
               answer_mode:
                 type: string
-            additionalProperties: true
+              needs_chart:
+                type: boolean
+              stages:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  additionalProperties: true
+                  required:
+                  - stage_name
+                  - stage_type
+                  - collection
+                  - intent_type
+                  - time_range
+                  - filters
+                  - group_fields
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - sort
+                  - limit
+                  - projection_fields
+                  properties:
+                    stage_name:
+                      type: string
+                    stage_type:
+                      type: string
+                    collection:
+                      type: string
+                    intent_type:
+                      type: string
+                    time_range:
+                      type: object
+                    filters:
+                      type: array
+                      items:
+                        type: object
+                    group_fields:
+                      type: array
+                      items:
+                        type: string
+                    metric_function:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_alias:
+                      type: string
+                    sort:
+                      type: array
+                      items:
+                        type: object
+                    limit:
+                      type: integer
+                    projection_fields:
+                      type: array
+                      items:
+                        type: string
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
+                items:
+                  type: string
         structured_output_enabled: true
         title: LLM_本地兜底生成语义计划
         type: llm

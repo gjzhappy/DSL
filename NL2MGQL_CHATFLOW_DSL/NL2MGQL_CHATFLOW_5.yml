@@ -1026,19 +1026,53 @@
             type: object
             additionalProperties: true
             required:
-            - execution_plan
-            - needs_chart
-            - chart_request
+            - contract_version
+            - primary_collection
+            - related_collections
+            - execution_mode
             - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
             properties:
-              execution_plan:
-                type: object
-              needs_chart:
-                type: boolean
-              chart_request:
-                type: object
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              execution_mode:
+                type: string
               answer_mode:
                 type: string
+              needs_chart:
+                type: boolean
+              stages:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
+                items:
+                  type: string
               replan_error:
                 type: string
               clarify_suggestion:
@@ -4382,7 +4416,7 @@
               return ('按' + x + '统计' + y if x and y else (x + ' 与 ' + y + ' 对比')).strip(), 'schema_label'
           # end schema metadata C-MVP helpers
 
-          SEMANTIC_SCHEMA = {'type': 'object', 'required': ['execution_plan', 'needs_chart', 'chart_request', 'answer_mode'], 'properties': {'execution_plan': {'type': 'object'}, 'needs_chart': {'type': 'boolean'}, 'chart_request': {'type': 'object'}, 'answer_mode': {'type': 'string'}}, 'additionalProperties': True}
+          SEMANTIC_SCHEMA = {'type': 'object', 'required': ['contract_version', 'primary_collection', 'related_collections', 'execution_mode', 'answer_mode', 'needs_chart', 'stages', 'final_merge', 'chart_request', 'requires_clarification', 'clarification_question', 'needs_schema_retrieval', 'warnings'], 'properties': {'contract_version': {'const': 'semantic_plan_contract'}, 'primary_collection': {'type': 'string'}, 'related_collections': {'type': 'array', 'items': {'type': 'string'}}, 'execution_mode': {'type': 'string'}, 'answer_mode': {'type': 'string'}, 'needs_chart': {'type': 'boolean'}, 'stages': {'type': 'array', 'minItems': 1, 'items': {'type': 'object'}}, 'final_merge': {'type': 'object'}, 'chart_request': {'type': 'object'}, 'requires_clarification': {'type': 'boolean'}, 'clarification_question': {'type': 'string'}, 'needs_schema_retrieval': {'type': 'boolean'}, 'warnings': {'type': 'array', 'items': {'type': 'string'}}}, 'additionalProperties': True}
           MAX_REPLAN_PROMPT_CHARS = 16000
           MAX_SCHEMA_CONTEXT_CHARS = 8000
           MAX_RESULT_PREVIEW_ROWS = 5
@@ -4548,7 +4582,7 @@
               return _compact_text(_dumps(obj), 1500)
 
 
-          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, patch_reason: str, changed_fields_json: str, refine_planning_json: str, refine_schema_context: str, refine_schema_warning: str, last_chart_request_json: str, last_query_result_json: str, normalized_turn_intent_json: str, replan_input_valid=True, replan_input_error: str=''):
+          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, patch_reason: str, changed_fields_json: str, refine_planning_json: str, refine_schema_context: str, refine_schema_warning: str, last_chart_request_json: str, last_query_result_json: str, normalized_turn_intent_json: str, collection_selection_json: str='', compact_context_json: str='', replan_input_valid=True, replan_input_error: str=''):
               schema_warning_parts = [str(refine_schema_warning or '').strip()] if str(refine_schema_warning or '').strip() else []
               schema_context = _compact_text(refine_schema_context, MAX_SCHEMA_CONTEXT_CHARS)
               schema_truncated = len(str(refine_schema_context or '')) > len(schema_context)
@@ -4567,31 +4601,33 @@
               normalized_qref = _normalize_refinement(qref_obj, alias_map, real_fields, old_plan_fields, norm_warnings, schema_metadata, collection_name)
               schema_warning_parts.extend(norm_warnings)
 
-              system = '你是 refine_query full replan 语义计划重规划器。只输出符合 semantic_plan JSON Schema 的 JSON 对象；不得输出 markdown、解释文字或代码块。必须在上一轮 normalized semantic plan 基础上按本轮修改要求生成完整 semantic plan。'
+              system = '你是 Phase 7 的 LLM_Refine查询规划 full replan 语义计划重规划器。只输出完整 semantic_plan_contract JSON 对象；不得输出 markdown、解释文字、代码块、Mongo pipeline、MQL、MGQL pipeline、AST 或 patch diff。必须基于 current question + compact_context_json + patch_result + query_refinement_json + collection_selection_json + fresh schema_context 重新生成完整新计划。'
               hard_rules = '\n'.join([
-                  '1. 用户未明确要求修改的字段必须保持上一轮不变。',
-                  '2. 输出 semantic plan 时必须使用 schema_context 中存在的真实字段名。',
-                  '3. 如果用户词无法映射到 schema 字段，不要编造字段。',
-                  '4. 无法确认字段时，保留 warning，必要时让后续流程澄清或失败，不要静默改成旧业务字段。',
-                  '5. 只有当前用户问题或 normalized query_refinement_json 明确要求修改，或 schema_context 证明原字段不适合时，才允许变更字段。',
-                  '6. 不允许随意修改 primary_collection、metric_function、metric_field、metric_alias、filters、sort、limit、answer_mode。',
-                  '7. schema_context 为空时，只能基于 old plan 进行保守重规划。',
-                  '8. 输出完整 JSON，必须包含 execution_plan、execution_plan.stages、needs_chart(boolean)、chart_request、answer_mode；needs_chart 必须是 JSON boolean true/false，不得输出字符串 "true"/"false"。',
-                  '9. 如果当前用户问题包含“图、柱状图、折线图、饼图、生成新的图表、做图、可视化”等图表需求，则 needs_chart 必须为 boolean true。',
-                  '10. 如果 query_refinement_json 明确修改 group_fields，或当前用户问题明确“不再按 X，改为按 Y 统计”，则 execution_plan.stages[0].group_fields 必须使用新的真实 schema 字段，chart_request.x_field 必须同步改为新的 group_fields[0]。',
-                  '11. 不输出 Mongo pipeline、markdown、解释文字或代码块。'
+                  '1. 输出必须是完整 semantic_plan_contract，顶层 contract_version=semantic_plan_contract，stages 非空；不得输出 patch diff。',
+                  '2. primary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections 必须来自 selected_related_collections 或 schema relations。',
+                  '3. 只能使用 schema_context/schema_metadata 中存在的 canonical collection、field、metric、relation、query_rules；别名必须经 schema_alias_index/schema aliases 解析。',
+                  '4. 如果用户词无法映射到 schema 字段/指标/value_alias，不要编造字段；设置 requires_clarification=true 或 needs_schema_retrieval=true。',
+                  '5. compact_context_json 只能作为上一轮摘要，不能覆盖当前用户明确意图；用户否定旧字段时不能继承该字段。',
+                  '6. 如果用户要求改变 group_fields，必须输出新的 group_fields，不能保留旧 group_fields。',
+                  '7. 如果用户说“不再按 X”，旧 plan 中对应 X 的字段必须删除；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 schema canonical field。',
+                  '8. 如果用户改变 metric，必须替换 metric_function / metric_field / metric_alias，并同步 chart_request.y_field。',
+                  '9. 如果用户新增 filter，必须输出 filters；如果用户改变时间范围，必须更新时间范围。',
+                  '10. 如果当前用户问题包含图表需求，needs_chart=true 且 chart_request.enabled=true，chart_request.x_field/y_field 必须与新 group_fields/metric_alias 对齐。',
+                  '11. 不输出 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字或代码块。' 
               ])
               parts = [
                   '当前用户问题：\n' + str(question or ''),
-                  'normalized old_plan（基准，needs_chart 已转 boolean）：\n' + _dumps(old_plan),
+                  'normalized old_plan（仅作上一轮摘要；当前用户否定/修改的字段不得继承）：\n' + _dumps(old_plan),
                   'normalized query_refinement_json（仅使用 schema_context 显式 aliases 或 old_plan 既有字段归一）：\n' + _dumps(normalized_qref),
                   'normalized_turn_intent_json 关键字段：\n' + _summarize_turn_intent(normalized_turn_intent_json),
-                  '确定性 patch 失败原因：\n' + _compact_text(patch_reason, 700),
-                  'changed_fields_json：\n' + _compact_text(changed_fields_json, 900),
+                  'patch_result_json（Phase 6 deterministic patch route 结果/失败原因，仅作输入，不由 LLM 负责 patch）：\n' + _dumps({'patch_reason': patch_reason, 'changed_fields_json': changed_fields_json}),
+                  'collection_selection_json（primary_collection/related_collections 的唯一来源）：\n' + _compact_text(collection_selection_json, 1400),
+                  'compact_context_json（弱上下文，不覆盖当前用户明确意图）：\n' + _compact_text(compact_context_json, 1800),
                   'LLM_Refine查询规划的检索意图摘要：\n' + _summarize_refine_planning(refine_planning_json),
                   '上一轮 chart_request 简短信息：\n' + _compact_text(last_chart_request_json, 800),
                   '上一轮查询结果字段/最多5行预览：\n' + _preview_result(last_query_result_json),
-                  'schema_metadata 摘要（字段/指标必须以 name 为准，用户自然语言字段只能经 aliases/label 映射）：\n' + _compact_text(json.dumps(schema_metadata, ensure_ascii=False), 3000),
+                  'schema_metadata_contract 裁剪摘要（字段/指标/relation/query_rules 必须以 canonical name 为准）：\n' + _compact_text(json.dumps(schema_metadata, ensure_ascii=False), 3000),
+                  'schema_alias_index_contract 裁剪摘要（字段/指标/value_alias 必须解析为 canonical name/value）：\n' + _compact_text(json.dumps(schema_alias_index, ensure_ascii=False), 2500),
                   '压缩后的 schema_context_for_replan：\n' + schema_context,
                   'schema warning：\n' + '; '.join(x for x in schema_warning_parts if x),
                   '硬性保留规则：\n' + hard_rules,
@@ -4609,9 +4645,12 @@
                   overflow = len(replan_prompt) - MAX_REPLAN_PROMPT_CHARS
                   keep_schema = max(1200, len(schema_context) - overflow - 200)
                   schema_context = _compact_text(schema_context, keep_schema)
-                  parts[10] = '压缩后的 schema_context_for_replan：\n' + schema_context
+                  for idx, part in enumerate(parts):
+                      if part.startswith('压缩后的 schema_context_for_replan：'):
+                          parts[idx] = '压缩后的 schema_context_for_replan：\n' + schema_context
+                      if part.startswith('schema warning：'):
+                          parts[idx] = 'schema warning：\n' + '; '.join(x for x in schema_warning_parts if x)
                   schema_warning_parts.append('replan_prompt 超过长度阈值，已二次压缩 schema_context。')
-                  parts[11] = 'schema warning：\n' + '; '.join(x for x in schema_warning_parts if x)
                   user = '\n\n'.join(parts)
                   replan_prompt = system + '\n\n' + user
                   if len(replan_prompt) > MAX_REPLAN_PROMPT_CHARS:
@@ -4757,6 +4796,16 @@
           - normalized_turn_intent_json
           value_type: string
           variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000025'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1776000000001'
+          - compact_context_json
+          value_type: string
+          variable: compact_context_json
         - value_selector:
           - '1776000000025'
           - refine_retrieval_valid
