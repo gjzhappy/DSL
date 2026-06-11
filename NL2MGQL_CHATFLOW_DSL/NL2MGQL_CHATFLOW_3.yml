@@ -2271,13 +2271,14 @@
 
 
 
-          def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, answer_mode: str, schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = ''):
+          def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = ''):
               semantic_plan = _loads_obj(semantic_plan_json)
               normalized_plan = _loads_obj(normalized_semantic_plan_json)
               mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
               result_rows = _rows(rows)
-              chart = str(chart_echarts_markdown or '').strip()
-              chart_enabled = bool(_chart_request(normalized_plan).get('enabled') or normalized_plan.get('needs_chart'))
+              chart_payload = _loads_obj(chart_payload_json)
+              chart = str((chart_payload.get('echarts_markdown') if isinstance(chart_payload, dict) else '') or chart_echarts_markdown or '').strip()
+              chart_enabled = bool((chart_payload.get('enabled') if isinstance(chart_payload, dict) else False))
               chart_available = bool(chart_enabled and chart)
               needs_text = _needs_analysis(question, mode)
 
@@ -2288,7 +2289,7 @@
                   parts.append(_summary(question, result_rows, normalized_plan))
                   parts.append(_analysis(result_rows, normalized_plan, chart_available))
               if _plan_needs_chart(normalized_plan, semantic_plan, question) and not chart_available and result_rows:
-                  warning = (((normalized_plan.get('visualization') or {}).get('warning')) if isinstance(normalized_plan.get('visualization'), dict) else '') or '图表字段未匹配或图表配置不可用'
+                  warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or (((normalized_plan.get('visualization') or {}).get('warning')) if isinstance(normalized_plan.get('visualization'), dict) else '') or '图表字段未匹配或图表配置不可用'
                   parts.append('图表说明：\n- 本次查询已返回可统计数据，但图表未生成，原因：' + str(warning))
               if not parts:
                   parts.append('当前筛选条件下未查询到符合条件的数据记录。')
@@ -2302,7 +2303,13 @@
                   answer_text = answer[:4000]
               chart_payload_markdown = chart if chart_available else ''
               answer_type = 'query_with_chart' if chart_available else ('empty_result' if not result_rows else 'query_only')
-              compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), result_rows, answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
+              chart_profile = chart_payload.get('data_profile') if isinstance(chart_payload, dict) and isinstance(chart_payload.get('data_profile'), dict) else {}
+              compact_rows = chart_profile.get('preview_rows') if isinstance(chart_profile.get('preview_rows'), list) else result_rows[:5]
+              compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
+              if chart_profile:
+                  compact_context['last_result_profile'].update({k: chart_profile[k] for k in ('row_count','fields','preview_rows') if k in chart_profile})
+              if isinstance(chart_payload, dict) and chart_payload.get('summary'):
+                  compact_context['last_chart_summary'] = str(chart_payload.get('summary') or '')[:400]
               compact_context_json = _dump_compact_context(compact_context)
               context_update = {
                   'contract_version': 'context_update_contract',
@@ -2316,6 +2323,7 @@
                   'answer_type': answer_type,
                   'answer_text': answer_text or '',
                   'chart_echarts_markdown': chart_payload_markdown or '',
+                  'chart_payload_json': json.dumps({k:v for k,v in (chart_payload if isinstance(chart_payload, dict) else {}).items() if k != 'chart_debug'}, ensure_ascii=False),
                   'result_summary': answer_text or '',
                   'message': answer_text or '',
                   'state_update': {
@@ -2334,6 +2342,7 @@
                   'answer_text': answer_text or '',
                   'chart_echarts_markdown': chart_payload_markdown or '',
                   'answer_payload_json': json.dumps(answer_payload, ensure_ascii=False),
+                  'chart_payload_json': json.dumps({k:v for k,v in (chart_payload if isinstance(chart_payload, dict) else {}).items() if k != 'chart_debug'}, ensure_ascii=False),
                   'context_update_json': json.dumps(context_update, ensure_ascii=False),
                   'compact_context_json': compact_context_json,
                   'answer_mode': mode or '',
