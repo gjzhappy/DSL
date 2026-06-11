@@ -18,6 +18,47 @@ ALLOWED_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte", "in", "nin", "contain
 SUPPORTED_CHART_TYPES = {"", "bar", "line", "pie", "table", "area", "scatter", "柱状图", "折线图", "饼图", "表格"}
 PII_WORDS = ("手机", "手机号", "电话", "身份证", "邮箱", "email", "phone", "mobile", "id_card")
 
+COMPILER_SUPPORTED_INTENT_TYPES = {"detail_query", "aggregate_summary", "group_top_entity", "group_top_record", "enrich_related"}
+INTENT_TYPE_ALIASES = {
+    "aggregate": "aggregate_summary",
+    "aggregation": "aggregate_summary",
+    "summary": "aggregate_summary",
+    "aggregate_summary": "aggregate_summary",
+    "group_by": "aggregate_summary",
+    "group_by_metric": "aggregate_summary",
+    "group_by_dimension": "aggregate_summary",
+    "group_by_dimension_with_time_range_and_aggregation": "aggregate_summary",
+    "group_by_metric_with_time_filter": "aggregate_summary",
+    "detail": "detail_query",
+    "detail_query": "detail_query",
+    "find": "detail_query",
+    "find_query": "detail_query",
+    "query": "detail_query",
+    "group_top_entity": "group_top_entity",
+    "top_entity": "group_top_entity",
+    "group_top_record": "group_top_record",
+    "top_record": "group_top_record",
+    "enrich_related": "enrich_related",
+    "join": "enrich_related",
+}
+
+
+def canonicalize_intent_type(intent_type: Any, stage: Dict[str, Any] | None = None) -> str:
+    raw = _str(intent_type).lower()
+    stage = stage if isinstance(stage, dict) else {}
+    if raw in {"aggregate", "aggregation"}:
+        if stage.get("group_fields") and (stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field")):
+            return "aggregate_summary"
+        if stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field"):
+            return "aggregate_summary"
+        if stage.get("filters") or stage.get("projection_fields"):
+            return "detail_query"
+    if raw in INTENT_TYPE_ALIASES:
+        return INTENT_TYPE_ALIASES[raw]
+    if not raw:
+        return "aggregate_summary" if (stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field")) else "detail_query"
+    return raw
+
 
 def _loads(v: Any, default: Any = None) -> Any:
     if default is None:
@@ -219,7 +260,7 @@ def _canonical_field(raw: str, schema: Dict[str, Any], collection: str, place: s
 
 
 def _stage_is_aggregate(stage: Dict[str, Any]) -> bool:
-    return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or _str(stage.get("intent_type")) in {"aggregate_summary", "ranking", "trend"})
+    return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or canonicalize_intent_type(stage.get("intent_type"), stage) in {"aggregate_summary"} or _str(stage.get("intent_type")) in {"ranking", "trend"})
 
 
 def _date_ok(s: str) -> bool:
@@ -347,6 +388,19 @@ def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", 
             errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
         coll_meta = collections.get(coll) or {}
         rules = coll_meta.get("query_rules") or {}
+
+        raw_intent_type = _str(stage.get("intent_type"))
+        canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
+        if canonical_intent_type != raw_intent_type:
+            stage["intent_type"] = canonical_intent_type
+            autofixes.append({
+                "type": "intent_type_canonicalize",
+                "from": raw_intent_type,
+                "to": canonical_intent_type,
+                "reason": "canonicalized generic aggregate intent for compiler compatibility",
+            })
+        elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
+            errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
 
         group_fields = []
         for gf in _list(stage.get("group_fields")):
@@ -665,6 +719,7 @@ def run_selftests() -> List[Tuple[str, bool, str]]:
     p=copy.deepcopy(base); check("negative residue", p, "needs_replan", extra={"patch_result_json":json.dumps({"negative_fields":["brand"]}, ensure_ascii=False)})
     p=copy.deepcopy(base); p["related_collections"]=["products"]; schema3=copy.deepcopy(schema); schema3["collections"]["products"]={"collection_name":"products","fields":{},"metrics":{},"relations":[],"query_rules":{}}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema3),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("unused related collection prune", r["validator_route"]=="valid" and r["normalized_plan"].get("related_collections")==[] and any(a.get("type")=="unused_related_collection_prune" for a in r.get("autofixes",[])), r["validator_route"]+" "+json.dumps(r.get("autofixes"), ensure_ascii=False)))
     p=copy.deepcopy(base); p["related_collections"]=["products"]; p["stages"].append({"collection":"products","intent_type":"aggregate_summary","time_range":{},"filters":[],"group_fields":["brand"],"metric_alias":"product_count","sort":[],"limit":10,"projection_fields":[]}); schema4=copy.deepcopy(schema); schema4["collections"]["orders"]["relations"]=[{"target_collection":"products","join_keys":[{"source_field":"brand","target_field":"brand"}]}]; schema4["collections"]["products"]={"collection_name":"products","fields":{"brand":{"name":"brand","groupable":True,"filterable":True,"sortable":True,"projectable":True,"returnable":True}},"metrics":{"product_count":{"name":"product_count","function":"count","field":"brand","allowed_dimensions":["brand"]}},"relations":[],"query_rules":{}}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema4),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("used related collection kept", r["validator_route"]=="valid" and r["normalized_plan"].get("related_collections")==["products"], r["validator_route"]+" "+json.dumps(r.get("errors"), ensure_ascii=False)))
+    p=copy.deepcopy(base); p["stages"][0]["intent_type"]="aggregate"; p["stages"][0]["time_range"]={"field":"created_at","mode":"relative_days","relative_days":30}; p["stages"][0]["metric_function"]="count"; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("aggregate alias canonicalize", r["validator_route"]=="valid" and r["normalized_plan"]["stages"][0].get("intent_type")!="aggregate" and any(a.get("type")=="intent_type_canonicalize" for a in r.get("autofixes",[])), r["validator_route"]+" "+json.dumps(r.get("autofixes"), ensure_ascii=False)))
     return cases
 
 

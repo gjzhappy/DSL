@@ -494,6 +494,25 @@ if compiler_code.include?("stage_time_range = _force_relative_month_time_range(q
   errors << '1775000000007 compiler path still performs question-based time/chart semantic inference'
 end
 
+unless compiler_code.include?('INTENT_TYPE_ALIASES') && compiler_code.include?("'aggregate': 'aggregate_summary'") && compiler_code.include?('canonicalize_intent_type(raw_intent_type, raw)')
+  errors << '1775000000007 compiler must defensively canonicalize aggregate intent aliases before allowed_intents validation'
+end
+unless compiler_code.include?("'error_type': 'unsupported_intent_type'") && compiler_code.include?('当前查询暂不支持该查询意图类型')
+  errors << '1775000000007 compiler must return structured unsupported_intent_type errors instead of crashing Dify code node'
+end
+validator_code_for_intent = node_by_id['1778000000001']&.dig('data', 'code').to_s
+unless validator_code_for_intent.include?('INTENT_TYPE_ALIASES') && validator_code_for_intent.include?('"aggregate": "aggregate_summary"') && validator_code_for_intent.include?('intent_type_canonicalize')
+  errors << '1778000000001 semantic_plan_validator must canonicalize aggregate intent aliases and record intent_type_canonicalize autofix'
+end
+planner_prompt_text = Array(node_by_id['1773975766025']&.dig('data', 'prompt_template')).map { |p| p['text'].to_s }.join("\n")
+replan_prompt_builder_code = node_by_id['1776000000027']&.dig('data', 'code').to_s
+unless planner_prompt_text.include?('intent_type 不得使用 aggregate') && planner_prompt_text.include?('aggregate_summary')
+  errors << 'LLM_查询规划 prompt must prohibit generic aggregate aliases and require aggregate_summary for grouped metrics'
+end
+unless replan_prompt_builder_code.include?('不得使用 aggregate') && replan_prompt_builder_code.include?('aggregate_summary')
+  errors << 'LLM_Refine查询规划 prompt builder must prohibit generic aggregate aliases and require aggregate_summary for grouped metrics'
+end
+
 edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s, edge['target'].to_s] }.to_set
 {
   ['1775000000012', 'source', '1775000000016'] => 'full LLM response must be checked before extraction/fallback',

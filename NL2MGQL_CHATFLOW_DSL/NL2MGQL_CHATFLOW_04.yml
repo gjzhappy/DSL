@@ -1123,6 +1123,50 @@
               return {'enabled': enabled, 'chart_type': chart_type}
 
 
+
+          COMPILER_SUPPORTED_INTENT_TYPES = {'detail_query', 'aggregate_summary', 'group_top_entity', 'group_top_record', 'enrich_related'}
+          INTENT_TYPE_ALIASES = {
+              'aggregate': 'aggregate_summary',
+              'aggregation': 'aggregate_summary',
+              'summary': 'aggregate_summary',
+              'aggregate_summary': 'aggregate_summary',
+              'group_by': 'aggregate_summary',
+              'group_by_metric': 'aggregate_summary',
+              'group_by_dimension': 'aggregate_summary',
+              'group_by_dimension_with_time_range_and_aggregation': 'aggregate_summary',
+              'group_by_metric_with_time_filter': 'aggregate_summary',
+              'detail': 'detail_query',
+              'detail_query': 'detail_query',
+              'find': 'detail_query',
+              'find_query': 'detail_query',
+              'query': 'detail_query',
+              'group_top_entity': 'group_top_entity',
+              'top_entity': 'group_top_entity',
+              'group_top_record': 'group_top_record',
+              'top_record': 'group_top_record',
+              'enrich_related': 'enrich_related',
+              'join': 'enrich_related',
+          }
+
+
+          def canonicalize_intent_type(intent_type, stage=None):
+              raw = str(intent_type or '').strip().lower()
+              stage = stage if isinstance(stage, dict) else {}
+              if raw in {'aggregate', 'aggregation'}:
+                  if stage.get('group_fields') and (stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field')):
+                      return 'aggregate_summary'
+                  if stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field'):
+                      return 'aggregate_summary'
+                  if stage.get('filters') or stage.get('projection_fields'):
+                      return 'detail_query'
+              if raw in INTENT_TYPE_ALIASES:
+                  return INTENT_TYPE_ALIASES[raw]
+              if not raw:
+                  has_group = bool(stage.get('group_by') or stage.get('group_fields'))
+                  has_metric = bool(stage.get('metrics') or stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field'))
+                  return 'aggregate_summary' if (has_group or has_metric) else 'detail_query'
+              return raw
+
           def _is_effectively_empty_stage(stage):
               if not isinstance(stage, dict):
                   return True
@@ -1171,6 +1215,9 @@
                   stage['collection'] = str(stage.get('collection') or stage.get('primary_collection') or coerced.get('primary_collection') or '').strip()
                   intent_type = str(stage.get('intent_type') or '').strip()
                   intent = str(stage.get('intent') or '').strip().lower()
+                  if intent_type:
+                      intent_type = canonicalize_intent_type(intent_type, stage)
+                      stage['intent_type'] = intent_type
                   if not intent_type:
                       if intent in {'find', 'detail', 'detail_query'}:
                           intent_type = 'detail_query'
@@ -1253,7 +1300,7 @@
 
               normalized_stages = []
               seen_stage_names = set()
-              allowed_intents = {'detail_query', 'aggregate_summary', 'group_top_entity', 'group_top_record', 'enrich_related'}
+              allowed_intents = COMPILER_SUPPORTED_INTENT_TYPES
               for idx, raw in enumerate(raw_stages):
                   if not isinstance(raw, dict):
                       raise ValueError(f'stages[{idx}] must be an object')
@@ -1266,9 +1313,10 @@
                       collections.append(collection)
                   if collection != primary_collection and collection not in planner_related:
                       planner_related.add(collection)
-                  intent_type = _ensure_non_empty_string(raw.get('intent_type'), f'stages[{idx}].intent_type')
+                  raw_intent_type = _ensure_non_empty_string(raw.get('intent_type'), f'stages[{idx}].intent_type')
+                  intent_type = canonicalize_intent_type(raw_intent_type, raw)
                   if intent_type not in allowed_intents:
-                      raise ValueError(f'unsupported intent_type: {intent_type}')
+                      raise ValueError(f'unsupported intent_type: {raw_intent_type}')
                   default_limit = 0 if intent_type in {'group_top_entity', 'group_top_record'} else 20
                   limit = int(raw.get('limit') if raw.get('limit') is not None else default_limit)
                   if limit < 0:
@@ -1628,7 +1676,8 @@
               return validated_ast, pipeline, False
           def _compile_stage(stage, schema_context, stage_outputs):
               stage = _sanitize_stage_for_compile(stage)
-              intent = stage.get('intent_type')
+              intent = canonicalize_intent_type(stage.get('intent_type'), stage)
+              stage['intent_type'] = intent
               if intent == 'detail_query':
                   validated_ast, pipeline = _compile_detail_query(stage, schema_context, stage_outputs)
                   return validated_ast, pipeline, False
@@ -2211,7 +2260,22 @@
                   out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
                   return out
 
-              normalized_execution_plan = _normalize_plan(plan, planner, question)
+              try:
+                  normalized_execution_plan = _normalize_plan(plan, planner, question)
+              except ValueError as e:
+                  err = str(e)
+                  if 'unsupported intent_type:' in err:
+                      unsupported = err.split('unsupported intent_type:', 1)[1].strip()
+                      out = _compiler_contract_defaults(err)
+                      out['question'] = str(question or '').strip()
+                      out['query_result_json'] = _safe_json_dumps({'success': False, 'error_type': 'unsupported_intent_type', 'error': err, 'rows': [], 'row_count': 0, 'fields': []})
+                      out['final_response_summary_json'] = _safe_json_dumps({'summary': '当前查询暂不支持该查询意图类型：' + unsupported})
+                      out['answer_text'] = '当前查询暂不支持该查询意图类型：' + unsupported
+                      compiler_debug['error_type'] = 'unsupported_intent_type'
+                      compiler_debug['unsupported_intent_type'] = unsupported
+                      out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                      return out
+                  raise
               schema_metadata = extract_schema_metadata(schema_context)
               schema_alias_index = build_alias_index(schema_metadata)
               compiler_debug['legacy_compiler_resolution_used'] = False
