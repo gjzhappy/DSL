@@ -30,13 +30,28 @@ REQUIRED_VALIDATOR_OUTPUTS = {
   'validator_result_json' => 'string',
   'validator_route' => 'string',
   'valid' => 'boolean',
+  'normalized_plan' => 'object',
   'normalized_plan_json' => 'string',
   'normalized_semantic_plan_json' => 'string',
   'semantic_plan_json' => 'string',
+  'errors' => 'array[string]',
+  'warnings' => 'array[string]',
+  'autofixes' => 'array[object]',
+  'debug' => 'object',
   'answer_payload_json' => 'string',
   'final_answer_markdown' => 'string',
-  'context_update_json' => 'string'
+  'context_update_json' => 'string',
+  'compact_context_json' => 'string'
 }.freeze
+COMMON_OUTPUT_FIELD_TYPE_RULES = {
+  'autofixes' => ['array[object]'],
+  'schema_hydration_collections' => ['array[string]'],
+  'fields' => ['array[string]'],
+  'preview_rows' => ['array[object]'],
+  'rows' => ['array[object]'],
+  'debug' => %w[object string]
+}.freeze
+STRING_LIST_FIELDS = %w[errors warnings context_warnings parse_errors].freeze
 REQUIRED_COMPILER_OUTPUTS = {
   'contract_version' => 'string',
   'compile_success' => 'boolean',
@@ -186,6 +201,51 @@ code_nodes.each do |node|
       errors << "#{message}; appears inside standalone self-test context"
     else
       warnings << "#{message}; allowed as runtime fallback/helper only"
+    end
+  end
+end
+
+# Common code-node output schema guardrails for fields that frequently drift from the
+# embedded Python return contract. These checks are intentionally conservative: broad
+# naming conventions (for example *_json) are enforced directly, while errors/warnings
+# only reject array[object] when the code clearly builds a string list.
+common_output_guardrail_checks = 0
+code_nodes.each do |node|
+  id = node['id'].to_s
+  title = node.dig('data', 'title').to_s
+  data = node['data'].is_a?(Hash) ? node['data'] : {}
+  code = data['code'].to_s
+  outputs = data['outputs'].is_a?(Hash) ? data['outputs'].transform_keys(&:to_s) : {}
+
+  outputs.each do |field, spec|
+    declared_type = spec.is_a?(Hash) ? spec['type'].to_s : ''
+    common_output_guardrail_checks += 1
+
+    if field.end_with?('_json') || field.end_with?('_fields_json') || field.end_with?('_rows_json')
+      errors << "code node #{id}(#{title}) output #{field} type is #{declared_type.inspect}, expected 'string' by *_json convention" unless declared_type == 'string'
+    end
+
+    if COMMON_OUTPUT_FIELD_TYPE_RULES.key?(field)
+      expected_types = COMMON_OUTPUT_FIELD_TYPE_RULES[field]
+      unless expected_types.include?(declared_type)
+        errors << "code node #{id}(#{title}) output #{field} type is #{declared_type.inspect}, expected one of #{expected_types.inspect}"
+      end
+    end
+
+    next unless STRING_LIST_FIELDS.include?(field)
+
+    unless %w[array[string] string array[object]].include?(declared_type)
+      errors << "code node #{id}(#{title}) output #{field} type is #{declared_type.inspect}, expected array[string] or string unless code returns dict objects"
+    end
+
+    string_list_evidence = code.include?("#{field}: List[str]") ||
+                           code.include?("#{field} = []") ||
+                           code.include?(field + '.append("') ||
+                           code.include?(field + '.append(f"') ||
+                           code.include?(field + ".append('") ||
+                           code.include?(field + ".append(f'")
+    if declared_type == 'array[object]' && string_list_evidence
+      errors << "code node #{id}(#{title}) output #{field} type is array[object], but code has string-list evidence; use array[string] or return dict objects"
     end
   end
 end
@@ -838,6 +898,7 @@ puts "Edges: #{edges.length}"
 puts "Warnings: #{warnings.length}"
 puts "Code node required fields: checked=#{code_nodes.length} errors=#{code_node_required_field_errors}"
 puts "DSL runtime hygiene: code_nodes=#{code_nodes.length} forbidden_hits=#{hygiene_forbidden_hits} suspicious_hits=#{hygiene_suspicious_hits}"
+puts "Code node output schema guardrails: checked=#{common_output_guardrail_checks}"
 puts "Layout: missing=#{layout_missing.length} duplicate_coordinates=#{duplicate_coordinates.length} overlaps=#{layout_overlaps.length} iteration_internal_overlaps=#{iteration_internal_overlaps.length}"
 warnings.each { |warning| warn "WARNING: #{warning}" }
 
