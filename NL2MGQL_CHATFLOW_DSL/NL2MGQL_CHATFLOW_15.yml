@@ -274,12 +274,6 @@
           def main(**kwargs: Any) -> Dict[str, Any]:
               return prepare_validator_schema_context(**kwargs)
 
-
-          if __name__ == "__main__":
-              schema = {"collections": {"orders": {}}, "schema_digest": "d1", "schema_version": "v1"}
-              alias = {"field_aliases": {"orders": {}}}
-              plan = {"primary_collection": "orders", "related_collections": [], "stages": [{"collection": "orders"}]}
-              print(json.dumps(prepare_validator_schema_context(json.dumps(plan), json.dumps(schema), json.dumps(alias)), ensure_ascii=False, indent=2))
         desc: Phase 9 validator runtime schema context：在 semantic_plan_validator 前准备运行时
           schema metadata/alias index；缺失时输出 hydration 需求但不写入 compact context。
         code_language: python3
