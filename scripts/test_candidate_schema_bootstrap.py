@@ -125,7 +125,9 @@ def test_candidate_schema_bootstrap_success(nodes, edges):
     assert trimmed['selected_schema_ready'] is True, trimmed
     assert json.loads(trimmed['schema_context_ref_json'])['collections'] == ['orders'], trimmed
     selector_reached = reachable(edges, selector['id'])
-    assert by_title(nodes, '遍历Collections检索Schema')['id'] not in selector_reached, selector_reached
+    removed_normal_schema_ids = {'1774083951307', '1775000000001', '1775000000001start', '1775000000002', '1775000000003', '1775000000004'}
+    assert not removed_normal_schema_ids.intersection({str(node['id']) for node in nodes})
+    assert not removed_normal_schema_ids.intersection(selector_reached), selector_reached
 
 
 def test_candidate_schemas_empty_safe_stop(nodes, edges):

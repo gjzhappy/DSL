@@ -188,14 +188,15 @@ def test_no_schema_retrieval_after_selector(nodes, edges):
     selector = by_title(nodes, '代码执行_CollectionCatalog候选选择')
     trim = by_title(nodes, '代码执行_裁剪SelectedSchema上下文')
     merge = by_title(nodes, '代码执行_合并Schema上下文并准备语义计划提示词')
-    schema = by_title(nodes, '遍历Collections检索Schema')
+    removed_normal_schema_ids = {'1774083951307', '1775000000001', '1775000000001start', '1775000000002', '1775000000003', '1775000000004'}
     pack_reached = reachable(edges, pack['id'])
     selector_reached = reachable(edges, selector['id'])
     trim_reached = reachable(edges, trim['id'])
     assert str(selector['id']) in pack_reached, pack_reached
     assert str(trim['id']) in selector_reached, selector_reached
     assert str(merge['id']) in trim_reached, trim_reached
-    assert str(schema['id']) not in selector_reached, selector_reached
+    assert not removed_normal_schema_ids.intersection({str(node['id']) for node in nodes})
+    assert not removed_normal_schema_ids.intersection(selector_reached), selector_reached
 
 
 def main():

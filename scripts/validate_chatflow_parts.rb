@@ -52,6 +52,16 @@ COMMON_OUTPUT_FIELD_TYPE_RULES = {
   'debug' => %w[object string]
 }.freeze
 STRING_LIST_FIELDS = %w[errors warnings context_warnings parse_errors].freeze
+
+OLD_NORMAL_SCHEMA_RETRIEVAL_IDS = {
+  '1774083951307' => '代码执行_构建检索任务',
+  '1775000000001' => '遍历Collections检索Schema',
+  '1775000000001start' => '遍历Collections检索Schema iteration start',
+  '1775000000002' => '代码执行_解析当前任务',
+  '1775000000003' => '知识检索_当前CollectionSchema',
+  '1775000000004' => '代码执行_打包Schema结果'
+}.freeze
+
 REQUIRED_COMPILER_OUTPUTS = {
   'contract_version' => 'string',
   'compile_success' => 'boolean',
@@ -156,6 +166,12 @@ duplicates = node_ids.tally.select { |_id, count| count > 1 }.keys
 errors << "duplicate node ids: #{duplicates.join(', ')}" unless duplicates.empty?
 node_by_id = nodes.to_h { |node| [node['id'].to_s, node] }
 node_id_set = node_by_id.keys.to_set
+
+OLD_NORMAL_SCHEMA_RETRIEVAL_IDS.each do |id, title|
+  next unless node_id_set.include?(id)
+
+  errors << "old normal schema retrieval island node #{id}(#{title}) must be removed; CandidateSchemas bootstrap replaces this path"
+end
 
 edges.each do |edge|
   source = edge['source'].to_s
@@ -341,6 +357,13 @@ selectors.each do |selector, path|
   declared_outputs = outputs_by_id[source_id]
   next if declared_outputs.empty? # Some Dify node types have implicit outputs not serialized in all exports.
   errors << "selector #{selector.inspect} at #{path.join('.')} references missing output #{field}" unless declared_outputs.key?(field)
+end
+
+old_selector_refs = selectors.select do |selector, _path|
+  selector.is_a?(Array) && !selector.empty? && OLD_NORMAL_SCHEMA_RETRIEVAL_IDS.key?(selector[0].to_s)
+end
+old_selector_refs.each do |selector, path|
+  errors << "selector #{selector.inspect} at #{path.join('.')} references removed old normal schema retrieval node"
 end
 
 REQUIRED_CHAIN.each do |id, expected_title|
@@ -607,6 +630,12 @@ end
 if trim_node && merge_schema_node
   errors << 'selected schema trim node must reach schema merge prompt node' unless reachable.call(trim_node['id'].to_s).include?(merge_schema_node['id'].to_s)
   merge_vars = (merge_schema_node.dig('data', 'variables') || [])
+  merge_vars.each do |var|
+    source_id = var.dig('value_selector', 0).to_s
+    if OLD_NORMAL_SCHEMA_RETRIEVAL_IDS.key?(source_id)
+      errors << "schema merge node must not bind #{var['variable']} from removed old normal schema retrieval node #{source_id}"
+    end
+  end
   %w[schema_context schema_metadata_json schema_alias_index_json schema_context_ref_json].each do |field|
     bound = merge_vars.any? { |var| var.dig('value_selector') == [trim_node['id'].to_s, field] }
     errors << "schema merge node must bind #{field} from selected schema trim node" unless bound
@@ -892,11 +921,10 @@ nodes.each do |node|
   parent_id = node['parentId'].to_s
   inside_iteration = iteration_parent_ids.include?(parent_id)
   next if inside_iteration || type == 'iteration-start'
-  retained_fallback = ['代码执行_构建检索任务', '遍历Collections检索Schema'].include?(node.dig('data', 'title').to_s)
-  if incoming_counts[id].zero? && !start_like_types.include?(type) && !retained_fallback
+  if incoming_counts[id].zero? && !start_like_types.include?(type)
     errors << "node #{id} (#{node.dig('data', 'title')}) has no incoming edge"
   end
-  if outgoing_counts[id].zero? && !terminal_types.include?(type) && !retained_fallback
+  if outgoing_counts[id].zero? && !terminal_types.include?(type)
     errors << "node #{id} (#{node.dig('data', 'title')}) has no outgoing edge"
   end
 end
