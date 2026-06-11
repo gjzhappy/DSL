@@ -616,6 +616,7 @@
                   print(("PASS" if ok else "FAIL"), name, detail)
                   failed = failed or not ok
               raise SystemExit(1 if failed else 0)
+        code_language: python3
         desc: Phase 8 semantic_plan_validator：在 Mongo 编译执行前校验 collection/field/metric/filter/time_range/relation/PII/chart/negative
           residue，并输出 validator_result_contract。
         outputs:
