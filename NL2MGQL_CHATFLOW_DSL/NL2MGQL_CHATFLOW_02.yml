@@ -49,6 +49,8 @@
             - 不确定 collection/field/metric/relation 时，不要猜，输出 requires_clarification=true 或 needs_schema_retrieval=true。
             - compact_context_json 只能作为弱上下文，不得继承当前用户已否定的旧字段。
             - 不输出 Mongo pipeline、MQL、MGQL pipeline、AST、patch diff，也不要输出 $match、$group、$project、$lookup 等 Mongo stage。
+            - intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related。
+            - intent_type 不得使用 aggregate / aggregation / group_by / group_by_metric_with_time_filter 这类泛化或别名值；按维度分组统计指标必须使用 aggregate_summary，明细查询必须使用 detail_query。
 
             必须输出完整 semantic_plan_contract：
             {

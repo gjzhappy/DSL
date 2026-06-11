@@ -20,6 +20,47 @@
           SUPPORTED_CHART_TYPES = {"", "bar", "line", "pie", "table", "area", "scatter", "柱状图", "折线图", "饼图", "表格"}
           PII_WORDS = ("手机", "手机号", "电话", "身份证", "邮箱", "email", "phone", "mobile", "id_card")
 
+          COMPILER_SUPPORTED_INTENT_TYPES = {"detail_query", "aggregate_summary", "group_top_entity", "group_top_record", "enrich_related"}
+          INTENT_TYPE_ALIASES = {
+              "aggregate": "aggregate_summary",
+              "aggregation": "aggregate_summary",
+              "summary": "aggregate_summary",
+              "aggregate_summary": "aggregate_summary",
+              "group_by": "aggregate_summary",
+              "group_by_metric": "aggregate_summary",
+              "group_by_dimension": "aggregate_summary",
+              "group_by_dimension_with_time_range_and_aggregation": "aggregate_summary",
+              "group_by_metric_with_time_filter": "aggregate_summary",
+              "detail": "detail_query",
+              "detail_query": "detail_query",
+              "find": "detail_query",
+              "find_query": "detail_query",
+              "query": "detail_query",
+              "group_top_entity": "group_top_entity",
+              "top_entity": "group_top_entity",
+              "group_top_record": "group_top_record",
+              "top_record": "group_top_record",
+              "enrich_related": "enrich_related",
+              "join": "enrich_related",
+          }
+
+
+          def canonicalize_intent_type(intent_type: Any, stage: Dict[str, Any] | None = None) -> str:
+              raw = _str(intent_type).lower()
+              stage = stage if isinstance(stage, dict) else {}
+              if raw in {"aggregate", "aggregation"}:
+                  if stage.get("group_fields") and (stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field")):
+                      return "aggregate_summary"
+                  if stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field"):
+                      return "aggregate_summary"
+                  if stage.get("filters") or stage.get("projection_fields"):
+                      return "detail_query"
+              if raw in INTENT_TYPE_ALIASES:
+                  return INTENT_TYPE_ALIASES[raw]
+              if not raw:
+                  return "aggregate_summary" if (stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field")) else "detail_query"
+              return raw
+
 
           def _loads(v: Any, default: Any = None) -> Any:
               if default is None:
@@ -221,7 +262,7 @@
 
 
           def _stage_is_aggregate(stage: Dict[str, Any]) -> bool:
-              return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or _str(stage.get("intent_type")) in {"aggregate_summary", "ranking", "trend"})
+              return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or canonicalize_intent_type(stage.get("intent_type"), stage) in {"aggregate_summary"} or _str(stage.get("intent_type")) in {"ranking", "trend"})
 
 
           def _date_ok(s: str) -> bool:
@@ -349,6 +390,19 @@
                       errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
                   coll_meta = collections.get(coll) or {}
                   rules = coll_meta.get("query_rules") or {}
+
+                  raw_intent_type = _str(stage.get("intent_type"))
+                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
+                  if canonical_intent_type != raw_intent_type:
+                      stage["intent_type"] = canonical_intent_type
+                      autofixes.append({
+                          "type": "intent_type_canonicalize",
+                          "from": raw_intent_type,
+                          "to": canonical_intent_type,
+                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
+                      })
+                  elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
+                      errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
 
                   group_fields = []
                   for gf in _list(stage.get("group_fields")):
