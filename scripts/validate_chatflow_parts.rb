@@ -205,6 +205,41 @@ code_nodes.each do |node|
   end
 end
 
+
+
+selector_node = nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_CollectionCatalog候选选择' }
+if selector_node.nil?
+  errors << 'required selector node 代码执行_CollectionCatalog候选选择 is missing'
+else
+  selector_code = selector_node.dig('data', 'code').to_s
+  selector_id = selector_node['id'].to_s
+  selector_source = source_for_node.call(selector_id)
+  selector_label = selector_source ? selector_source.sub("#{ROOT}/", '') : '<assembled-workflow>'
+  forbidden_selector_patterns = {
+    '_fallback_catalog' => 'selector must not define/use a runtime business fallback catalog',
+    "collection_name': 'orders'" => 'selector must not embed orders fallback catalog entries',
+    "collection_name': 'products'" => 'selector must not embed products fallback catalog entries',
+    'name == \'orders\'' => 'selector must not assign priority by collection name',
+    'name == \'products\'' => 'selector must not assign priority by collection name',
+    'if primary == "orders"' => 'selector must not branch on business collection names',
+    "if primary == 'orders'" => 'selector must not branch on business collection names',
+    'if related == "products"' => 'selector must not branch on business collection names',
+    "if related == 'products'" => 'selector must not branch on business collection names',
+    'if collection_name == "orders"' => 'selector must not branch on business collection names',
+    "if collection_name == 'orders'" => 'selector must not branch on business collection names',
+    'if collection_name == "products"' => 'selector must not branch on business collection names',
+    "if collection_name == 'products'" => 'selector must not branch on business collection names'
+  }
+  forbidden_selector_patterns.each do |pattern, message|
+    next unless selector_code.include?(pattern)
+    line = source_line_for_pattern.call(selector_source, pattern)
+    errors << "#{message} in #{selector_label} node #{selector_id} pattern=#{pattern.inspect} line=#{line || '?'}"
+  end
+  if selector_code.match?(/priority\s*=\s*[^\n]*(orders|products)/) || selector_code.match?(/priority['\"]\]\s*=\s*[^\n]*(orders|products)/)
+    errors << "selector must not contain collection-name priority special-casing in #{selector_label} node #{selector_id}"
+  end
+end
+
 # Common code-node output schema guardrails for fields that frequently drift from the
 # embedded Python return contract. These checks are intentionally conservative: broad
 # naming conventions (for example *_json) are enforced directly, while errors/warnings

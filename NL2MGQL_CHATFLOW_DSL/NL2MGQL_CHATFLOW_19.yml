@@ -490,8 +490,7 @@
           diff。必须基于 current question + compact_context_json + patch_result + query_refinement_json
           + collection_selection_json + fresh schema_context 重新生成完整新计划。'\n    hard_rules
           = '\\n'.join([\n        '1. 输出必须是完整 semantic_plan_contract，顶层 contract_version=semantic_plan_contract，stages
-          非空；不得输出 patch diff。',\n        '2. primary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections
-          必须来自 selected_related_collections 或 schema relations。',\n        '3. 只能使用
+          非空；不得输出 patch diff。',\n        '2. primary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections 只能填写本次查询实际需要读取、过滤、分组、投影、排序、merge/enrich 的集合；selected_related_collections 是可选候选，不是强制使用；如果 primary_collection 已经覆盖用户问题所需字段/指标/维度，则 related_collections 必须为空；final_merge.merge_mode=none 且所有 stage 都在 primary_collection 时，related_collections 应为空；related_collections 必须来自 selected_related_collections 或 schema relations。',\n        '3. 只能使用
           schema_context/schema_metadata 中存在的 canonical collection、field、metric、relation、query_rules；别名必须经
           schema_alias_index/schema aliases 解析。',\n        '4. 如果用户词无法映射到 schema 字段/指标/value_alias，不要编造字段；设置
           requires_clarification=true 或 needs_schema_retrieval=true。',\n        '5.

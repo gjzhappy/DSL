@@ -41,6 +41,9 @@
             - 只输出 JSON；不要输出 markdown、解释、代码块。
             - 顶层 contract_version 必须为 semantic_plan_contract。
             - primary_collection 必须来自 collection_selection_json.selected_primary_collection。
+            - related_collections 只能填写本次查询实际需要读取、过滤、分组、投影、排序、merge/enrich 的集合。
+            - selected_related_collections 是可选候选，不是强制使用；如果 primary_collection 已经覆盖用户问题所需字段/指标/维度，则 related_collections 必须为空。
+            - final_merge.merge_mode="none" 且所有 stage 都在 primary_collection 时，related_collections 应为空。
             - related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。
             - 只能使用 schema_context / schema_metadata 中存在的 collection、field、metric、relation；别名必须解析为 canonical name。
             - 不确定 collection/field/metric/relation 时，不要猜，输出 requires_clarification=true 或 needs_schema_retrieval=true。
@@ -241,37 +244,6 @@
               tmp.pop('catalog_digest', None)
               return hashlib.sha256(json.dumps(tmp, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
 
-          def _fallback_catalog():
-              catalog = {
-                  'catalog_version': CATALOG_VERSION,
-                  'catalog_digest': '',
-                  'collections': [
-                      {
-                          'collection_name': 'orders', 'collection_label': '订单', 'domain': 'commerce',
-                          'aliases': ['orders', '订单', '订单表', '销售订单', '下单记录'],
-                          'description': '订单主集合，用于订单明细、销售统计、支付状态、订单趋势分析',
-                          'default_time_field': 'created_at',
-                          'primary_metrics': ['order_count', '订单数', '单量', '订单量', 'gmv_sum', '销售额', 'GMV', 'quantity_sum'],
-                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'province', '省份', 'status', '订单状态', 'payment_status', '支付状态', 'created_at'],
-                          'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
-                          'related_collections': ['products'], 'priority': 100,
-                      },
-                      {
-                          'collection_name': 'products', 'collection_label': '商品', 'domain': 'commerce',
-                          'aliases': ['products', '商品', '商品表', '产品', '产品表', '货品'],
-                          'description': '商品主数据集合，用于商品明细、品牌、类目、上下架状态和商品数量统计',
-                          'default_time_field': 'updated_at',
-                          'primary_metrics': ['product_count', '商品数', '产品数', 'sku_count'],
-                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'status', '商品状态', 'product_name', '商品名称'],
-                          'supported_intents': ['detail', 'aggregate_summary', 'ranking', 'enrich'],
-                          'related_collections': [], 'priority': 80,
-                      },
-                  ],
-                  'warnings': ['使用内置 C-MVP collection catalog fallback。'],
-              }
-              catalog['catalog_digest'] = _digest(catalog)
-              return catalog
-
           def _catalog_from_schema(schema_metadata_json, manual_catalog_json):
               manual = _loads(manual_catalog_json)
               if manual.get('catalog_version') == CATALOG_VERSION:
@@ -282,7 +254,7 @@
               meta = _loads(schema_metadata_json)
               collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
               if not collections:
-                  return _fallback_catalog()
+                  return {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': [], 'warnings': ['collection catalog unavailable']}
               out = []
               for idx, name in enumerate(sorted(collections.keys())):
                   coll = collections.get(name) or {}
@@ -314,7 +286,7 @@
                       'primary_dimensions': _uniq(dim_terms, 32),
                       'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
                       'related_collections': related[:8],
-                      'priority': 100 if name == 'orders' else (80 if name == 'products' else max(10, 60 - idx)),
+                      'priority': int(coll.get('priority')) if str(coll.get('priority') or '').strip().isdigit() else max(10, 60 - idx),
                   })
               catalog = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': out, 'warnings': []}
               catalog['catalog_digest'] = _digest(catalog)
@@ -335,10 +307,46 @@
                   'warnings': [],
               }
 
+
+          def _term_matches(question, terms):
+              q = str(question or '')
+              return [t for t in _uniq(_list(terms), 100) if t and t in q]
+
+          def _explicit_collection_matches(question, coll):
+              return _term_matches(question, [coll.get('collection_name'), coll.get('collection_label')] + _list(coll.get('aliases')))
+
+          def _coverage_matches(question, coll):
+              return _term_matches(question, _list(coll.get('primary_metrics')) + _list(coll.get('primary_dimensions')))
+
+          def _has_cross_collection_intent(question):
+              q = str(question or '').lower()
+              return any(t in q for t in ['补充', '关联', '带出', '主数据', '详情', 'join', 'lookup', 'enrich'])
+
+          def _negates_related(question, related_name):
+              q = str(question or '').lower()
+              name = str(related_name or '').lower()
+              return bool(name and any(((neg + name) in q) or (neg in q and name in q) for neg in ['不要', '不需要', '无需', '不用', '排除', 'without', 'no ']))
+
           def main(question: str, turn_intent_json: str = '', compact_context_json: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', planner=None):
               catalog = _catalog_from_schema(schema_metadata_json, collection_catalog_json)
               selection = _default_selection()
               selection['collection_catalog_digest'] = catalog.get('catalog_digest', '')
+              if not catalog.get('collections'):
+                  selection.update({
+                      'confidence': 0,
+                      'low_confidence': True,
+                      'requires_clarification': True,
+                      'clarification_question': '缺少 collection catalog 或 schema metadata，无法确定要查询的业务集合。',
+                      'warnings': ['collection catalog unavailable'],
+                  })
+                  return {
+                      'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                      'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                      'selected_primary_collection': '',
+                      'selected_related_collections': [],
+                      'selection_confidence': 0,
+                      'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                  }
               q = str(question or '')
               ctx = _loads(compact_context_json)
               turn = _loads(turn_intent_json)
@@ -401,17 +409,33 @@
               selected = selection['selected_primary_collection']
               related = []
               if selected:
-                  for rname in cmap.get(selected, {}).get('related_collections') or []:
+                  primary_coll = cmap.get(selected, {})
+                  primary_terms = _uniq(_list(primary_coll.get('aliases')) + [primary_coll.get('collection_label'), selected] + _list(primary_coll.get('primary_metrics')) + _list(primary_coll.get('primary_dimensions')), 120)
+                  primary_matched = set(_term_matches(q, primary_terms))
+                  for rname in primary_coll.get('related_collections') or []:
                       rc = cmap.get(rname) or {}
-                      terms = _uniq([rname, rc.get('collection_label')] + _list(rc.get('aliases')) + _list(rc.get('primary_metrics')) + _list(rc.get('primary_dimensions')), 80)
-                      matched = [t for t in terms if t and t in q]
-                      if matched:
+                      explicit = _explicit_collection_matches(q, dict(rc, collection_name=rname))
+                      coverage = _coverage_matches(q, rc)
+                      matched = _uniq(explicit + coverage, 12)
+                      in_refine_context = intent in ['refine_query', 'fix_result', 'continue_previous'] and rname in context_prior_collections
+                      if not matched and not in_refine_context:
+                          continue
+                      necessary, reason = False, ''
+                      if explicit:
+                          necessary = True; reason = '用户问题明确命中 related collection name/label/alias：' + '、'.join(explicit[:6])
+                      elif _has_cross_collection_intent(q) and matched:
+                          necessary = True; reason = '用户问题包含跨集合意图词且命中 related 字段/指标/维度：' + '、'.join(matched[:6])
+                      elif coverage and not all(t in primary_matched for t in coverage):
+                          necessary = True; reason = 'related collection 覆盖 primary 未覆盖的字段/指标/维度：' + '、'.join([t for t in coverage if t not in primary_matched][:6])
+                      elif in_refine_context and not _negates_related(q, rname):
+                          necessary = True; reason = 'refine/continue compact context 已包含该 related collection 且当前问题未否定'
+                      elif matched:
+                          reason = 'related collection also matched terms, but primary collection already covers them; not selected'
+                      else:
+                          reason = 'low confidence related candidate; not selected'
+                      selection['related_candidates'].append({'collection': rname, 'score': 0.72 if necessary else 0.36, 'reason': reason, 'matched_aliases': matched[:8]})
+                      if necessary:
                           related.append(rname)
-                          selection['related_candidates'].append({'collection': rname, 'score': 0.72, 'reason': '命中 related collection 语义：' + '、'.join(matched[:6]), 'matched_aliases': matched[:8]})
-              if not related and intent in ['refine_query', 'fix_result', 'continue_previous']:
-                  related = [c for c in context_prior_collections if c and c != selected][:3]
-                  if related:
-                      warnings.append('related collections 使用 compact_context/schema_context_ref prior')
               selection['selected_related_collections'] = related[:3]
               if not selection['selected_primary_collection']:
                   legacy = str(planner.get('primary_collection') or '').strip()
@@ -540,6 +564,26 @@
                   "matched_aliases": matched,
                   "selection_warnings": warnings,
               })
+
+
+          def _term_matches(question, terms):
+              q = str(question or '')
+              return [t for t in _uniq(_list(terms), 100) if t and t in q]
+
+          def _explicit_collection_matches(question, coll):
+              return _term_matches(question, [coll.get('collection_name'), coll.get('collection_label')] + _list(coll.get('aliases')))
+
+          def _coverage_matches(question, coll):
+              return _term_matches(question, _list(coll.get('primary_metrics')) + _list(coll.get('primary_dimensions')))
+
+          def _has_cross_collection_intent(question):
+              q = str(question or '').lower()
+              return any(t in q for t in ['补充', '关联', '带出', '主数据', '详情', 'join', 'lookup', 'enrich'])
+
+          def _negates_related(question, related_name):
+              q = str(question or '').lower()
+              name = str(related_name or '').lower()
+              return bool(name and any(((neg + name) in q) or (neg in q and name in q) for neg in ['不要', '不需要', '无需', '不用', '排除', 'without', 'no ']))
 
           def main(question: str, planner=None, collection_selection_json: str = '', compact_context_json: str = ''):
               planner = _loads_obj(planner)

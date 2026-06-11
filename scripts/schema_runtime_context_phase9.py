@@ -108,6 +108,26 @@ def _alias_ready(alias_raw: Any) -> Tuple[Dict[str, Any], bool, str]:
     return alias_index, True, ""
 
 
+
+def _parsed_collection_names(schema: Dict[str, Any]) -> List[str]:
+    collections = schema.get("collections") if isinstance(schema, dict) else {}
+    return [str(k).strip() for k in collections.keys() if str(k).strip()] if isinstance(collections, dict) else []
+
+
+def _prune_ref_to_parsed(collections: List[str], schema: Dict[str, Any], warnings: List[Any]) -> List[str]:
+    parsed = set(_parsed_collection_names(schema))
+    if not parsed:
+        return collections
+    kept = [c for c in collections if c in parsed]
+    removed = [c for c in collections if c not in parsed]
+    if removed:
+        warnings.append({
+            "type": "schema_context_ref_pruned_to_parsed_collections",
+            "removed": removed,
+            "reason": "requested collection was not parsed into schema_metadata.collections",
+        })
+    return kept
+
 def _primary_in_schema(schema: Dict[str, Any], primary: str) -> bool:
     if not primary:
         return True
@@ -158,7 +178,7 @@ def prepare_validator_schema_context(
     legacy_schema_metadata_json: Any = "{}",
     legacy_schema_alias_index_json: Any = "{}",
 ) -> Dict[str, Any]:
-    warnings: List[str] = []
+    warnings: List[Any] = []
     errors: List[str] = []
     plan = _loads(semantic_plan_json, {})
     if not isinstance(plan, dict):
@@ -201,6 +221,7 @@ def prepare_validator_schema_context(
         needs_reasons.append("compact_ref_has_schema_digest_but_runtime_digest_missing")
 
     if schema_ok and alias_ok and _primary_in_schema(schema, primary):
+        collections = _prune_ref_to_parsed(collections, schema, warnings)
         return _result(
             schema_context_ready=True,
             schema_hydration_needed=False,
@@ -221,6 +242,7 @@ def prepare_validator_schema_context(
     legacy_alias, legacy_alias_ok, _ = _alias_ready(legacy_schema_alias_index_json)
     if legacy_schema_ok and legacy_alias_ok and _primary_in_schema(legacy_schema, primary):
         warnings.append("legacy_conversation_schema_fallback_used_runtime_only")
+        collections = _prune_ref_to_parsed(collections, legacy_schema, warnings)
         return _result(
             schema_context_ready=True,
             schema_hydration_needed=False,
@@ -254,6 +276,8 @@ def prepare_validator_schema_context(
         )
 
     reason = ";".join(dict.fromkeys([r for r in needs_reasons if r])) or "runtime_schema_context_not_ready"
+    if schema_ok:
+        collections = _prune_ref_to_parsed(collections, schema, warnings)
     return _result(
         schema_context_ready=False,
         schema_hydration_needed=True,

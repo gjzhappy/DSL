@@ -497,12 +497,16 @@ def _catalog_str_list(value, limit=None):
     return items
 
 
-def _collection_priority(collection_name, index):
-    name = str(collection_name or '').strip().lower()
-    if name == 'orders':
-        return 100
-    if name == 'products':
-        return 80
+def _collection_priority(coll, index):
+    if isinstance(coll, dict):
+        raw = coll.get('priority')
+    else:
+        raw = None
+    try:
+        if raw is not None and str(raw).strip() != '':
+            return int(raw)
+    except Exception:
+        pass
     return max(10, 60 - index)
 
 
@@ -557,7 +561,7 @@ def _derive_collection_catalog_from_metadata(schema_metadata):
             'primary_dimensions': _catalog_str_list(primary_dimensions, limit=32),
             'supported_intents': _infer_supported_intents(coll),
             'related_collections': related[:8],
-            'priority': _collection_priority(cname, idx),
+            'priority': _collection_priority(coll, idx),
         })
     if not collections:
         warnings.append('schema metadata 中没有 collections，collection catalog 为空。')
@@ -620,10 +624,45 @@ def _load_selection_obj(value):
     return {}
 
 
+def _term_matches(question, terms):
+    q = str(question or '')
+    return [t for t in _catalog_str_list(terms, limit=100) if t and t in q]
+
+
+def _explicit_collection_matches(question, coll):
+    return _term_matches(question, [coll.get('collection_name'), coll.get('collection_label')] + (coll.get('aliases') or []))
+
+
+def _coverage_matches(question, coll):
+    return _term_matches(question, (coll.get('primary_metrics') or []) + (coll.get('primary_dimensions') or []))
+
+
+def _has_cross_collection_intent(question):
+    q = str(question or '').lower()
+    terms = ['补充', '关联', '带出', '主数据', '详情', 'join', 'lookup', 'enrich']
+    return any(t in q for t in terms)
+
+
+def _negates_related(question, related_name):
+    q = str(question or '').lower()
+    name = str(related_name or '').lower()
+    negative_terms = ['不要', '不需要', '无需', '不用', '排除', 'without', 'no ']
+    return bool(name and any((neg + name) in q or (neg in q and name in q) for neg in negative_terms))
+
+
 def select_collections(question, compact_context_json=None, turn_intent_json=None, schema_metadata=None, collection_catalog=None, planner=None):
     catalog = build_collection_catalog(schema_metadata, collection_catalog)
     result = default_collection_selection()
     result['collection_catalog_digest'] = catalog.get('catalog_digest', '')
+    if not catalog.get('collections'):
+        result.update({
+            'confidence': 0,
+            'low_confidence': True,
+            'requires_clarification': True,
+            'clarification_question': '缺少 collection catalog 或 schema metadata，无法确定要查询的业务集合。',
+            'warnings': ['collection catalog unavailable'],
+        })
+        return result
     q = str(question or '')
     ctx = _load_selection_obj(compact_context_json)
     turn = _load_selection_obj(turn_intent_json)
@@ -691,16 +730,44 @@ def select_collections(question, compact_context_json=None, turn_intent_json=Non
     selected = result['selected_primary_collection']
     related = []
     related_candidates = []
+    schema_ref = ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'), dict) else {}
+    context_related = _catalog_str_list((ctx.get('last_related_collections') or []) + (schema_ref.get('collections') or []), limit=12)
     if selected:
         cmap = {c.get('collection_name'): c for c in catalog.get('collections') or []}
         selected_coll = cmap.get(selected) or {}
+        primary_terms = _catalog_str_list((selected_coll.get('aliases') or []) + [selected_coll.get('collection_label'), selected] + (selected_coll.get('primary_metrics') or []) + (selected_coll.get('primary_dimensions') or []), limit=120)
+        primary_matched = set(_term_matches(q, primary_terms))
         for rname in selected_coll.get('related_collections') or []:
             rc = cmap.get(rname) or {}
-            rterms = _catalog_str_list([rname, rc.get('collection_label')] + (rc.get('aliases') or []) + (rc.get('primary_metrics') or []) + (rc.get('primary_dimensions') or []), limit=60)
-            matched = [t for t in rterms if t and t in q]
-            if matched:
+            explicit = _explicit_collection_matches(q, {'collection_name': rname, **rc})
+            related_coverage = _coverage_matches(q, rc)
+            matched = _catalog_str_list(explicit + related_coverage, limit=12)
+            candidate = {'collection': rname, 'score': 0.0, 'reason': '', 'matched_aliases': matched[:8]}
+            if not matched and not (intent in {'refine_query', 'fix_result', 'continue_previous'} and rname in context_related):
+                continue
+            necessary = False
+            reason = ''
+            if explicit:
+                necessary = True
+                reason = '用户问题明确命中 related collection name/label/alias：' + '、'.join(explicit[:6])
+            elif _has_cross_collection_intent(q) and matched:
+                necessary = True
+                reason = '用户问题包含跨集合意图词且命中 related 字段/指标/维度：' + '、'.join(matched[:6])
+            elif related_coverage and not all(t in primary_matched for t in related_coverage):
+                necessary = True
+                reason = 'related collection 覆盖 primary 未覆盖的字段/指标/维度：' + '、'.join([t for t in related_coverage if t not in primary_matched][:6])
+            elif intent in {'refine_query', 'fix_result', 'continue_previous'} and rname in context_related and not _negates_related(q, rname):
+                necessary = True
+                reason = 'refine/continue compact context 已包含该 related collection 且当前问题未否定'
+            elif matched:
+                reason = 'related collection also matched terms, but primary collection already covers them; not selected'
+            else:
+                reason = 'low confidence related candidate; not selected'
+            candidate['score'] = 0.72 if necessary else 0.36
+            candidate['reason'] = reason
+            related_candidates.append(candidate)
+            if necessary:
                 related.append(rname)
-                related_candidates.append({'collection': rname, 'score': 0.72, 'reason': '命中 related collection 语义：' + '、'.join(matched[:6]), 'matched_aliases': matched[:8]})
     result['selected_related_collections'] = related[:3]
     result['related_candidates'] = related_candidates[:5]
     if not result['selected_primary_collection'] and planner.get('primary_collection'):
