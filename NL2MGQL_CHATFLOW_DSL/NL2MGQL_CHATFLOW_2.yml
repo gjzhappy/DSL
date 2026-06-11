@@ -768,18 +768,117 @@
               return pipeline
 
 
-          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str):
-              if isinstance(semantic_plan, str):
-                  semantic_plan = json.loads(semantic_plan)
+          def _compiler_contract_defaults(error=''):
+              return {
+                  'contract_version': 'compiler_execution_contract',
+                  'compile_success': False,
+                  'execution_success': False,
+                  'primary_collection': '',
+                  'pipeline_json': '[]',
+                  'request_body_json': '{}',
+                  'query_result_json': '{}',
+                  'rows_json': '[]',
+                  'row_count': 0,
+                  'fields_json': '[]',
+                  'compile_warnings_json': '[]',
+                  'execution_error': str(error or ''),
+                  'compiler_debug_json': '{}',
+                  # legacy-compatible fields
+                  'answer_text': '执行失败：' + str(error or 'compiler received invalid input'),
+                  'question': '',
+                  'last_pipeline_json': '',
+                  'last_validated_ast_json': '{}',
+                  'merged_rows_json': '[]',
+                  'chart_request_json': '{}',
+                  'chart_request_flat_json': '{}',
+                  'chart_echarts_markdown': '',
+                  'result_summary': '',
+                  'message': str(error or ''),
+                  'last_error': str(error or ''),
+                  'normalized_execution_plan_json': '{}',
+                  'stage_execution_trace_json': '[]',
+                  'final_response_body': '{}',
+                  'final_response_summary_json': '{}',
+                  'chart_enabled': 'false',
+                  'chart_type': '',
+                  'chart_data': '',
+                  'chart_title': '',
+                  'chart_axis_x_title': '',
+                  'chart_axis_y_title': '',
+                  'schema_metadata_json': '{}',
+                  'schema_alias_index_json': '{}',
+                  'chart_debug_json': '{}',
+              }
+
+
+          def _result_profile(rows):
+              rows = rows if isinstance(rows, list) else []
+              fields = []
+              for row in rows:
+                  if not isinstance(row, dict):
+                      continue
+                  for key in row.keys():
+                      name = str(key)
+                      if name not in fields:
+                          fields.append(name)
+              return {
+                  'row_count': len(rows),
+                  'fields': fields,
+                  'preview_rows': rows[:10],
+              }
+
+
+          def _select_compiler_plan(semantic_plan, validator_result_json=None):
+              debug = {'plan_source': '', 'legacy_unvalidated_plan_fallback': False, 'legacy_compiler_resolution_used': False}
+              validator_result = _ensure_obj(validator_result_json, 'validator_result') if validator_result_json else {}
+              for key in ('normalized_plan_json', 'normalized_semantic_plan_json', 'semantic_plan_json'):
+                  raw = validator_result.get(key) if isinstance(validator_result, dict) else None
+                  if isinstance(raw, str) and raw.strip():
+                      debug['plan_source'] = 'validator_result.' + key
+                      return _ensure_obj(raw, key), debug
+                  if isinstance(raw, dict) and raw:
+                      debug['plan_source'] = 'validator_result.' + key
+                      return raw, debug
               plan = _ensure_obj(semantic_plan, 'semantic_plan')
+              if plan:
+                  debug['plan_source'] = 'validator.normalized_plan_json_input'
+                  return plan, debug
+              debug['legacy_unvalidated_plan_fallback'] = True
+              debug['plan_source'] = 'empty_or_legacy_unvalidated_fallback'
+              return {}, debug
+
+
+          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str, validator_route: str='valid', validator_result_json: str=''):
+              if str(validator_route or '').strip() != 'valid':
+                  out = _compiler_contract_defaults('validator_route is not valid; compiler execution is blocked')
+                  out['question'] = str(question or '').strip()
+                  out['compiler_debug_json'] = _safe_json_dumps({'validator_route': str(validator_route or ''), 'blocked_before_compile': True})
+                  return out
+              plan, compiler_debug = _select_compiler_plan(semantic_plan, validator_result_json)
+              if not plan:
+                  out = _compiler_contract_defaults('compiler received empty validator normalized plan')
+                  out['question'] = str(question or '').strip()
+                  out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                  return out
+              if str(plan.get('contract_version') or '').strip() != 'semantic_plan_contract':
+                  out = _compiler_contract_defaults('compiler input contract_version must be semantic_plan_contract')
+                  out['question'] = str(question or '').strip()
+                  compiler_debug['input_contract_version'] = str(plan.get('contract_version') or '')
+                  out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                  return out
               planner = _ensure_obj(planner, 'planner')
               urls = _parse_query_urls(query_urls)
               if not urls:
-                  raise ValueError('SN_MONGODB_QUERY_URLS is empty')
+                  out = _compiler_contract_defaults('SN_MONGODB_QUERY_URLS is empty')
+                  out['question'] = str(question or '').strip()
+                  out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                  return out
 
               normalized_execution_plan = _normalize_plan(plan, planner, question)
               schema_metadata = extract_schema_metadata(schema_context)
               schema_alias_index = build_alias_index(schema_metadata)
+              compiler_debug['legacy_compiler_resolution_used'] = False
+              compiler_debug['schema_metadata_loaded_for_labels_only'] = bool(schema_metadata.get('collections'))
               normalized_execution_plan['schema_context'] = str(schema_context or '')
               normalized_execution_plan['schema_metadata'] = schema_metadata
               normalized_execution_plan['schema_alias_index'] = schema_alias_index
@@ -971,11 +1070,34 @@
                   answer_text = '查询成功，但结果为空。'
 
               last_validated_ast = ((stage_execution_trace or [{}])[-1] or {}).get('validated_ast') if isinstance(stage_execution_trace, list) and stage_execution_trace else {}
+              primary_pipeline_json = str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or '[]')
+              primary_request_body = (((stage_execution_trace or [{}])[-1] or {}).get('query_request_body')) or {}
+              result_profile = _result_profile(merged_rows)
+              query_result = {
+                  'contract_version': 'query_result_profile_contract',
+                  'primary_collection': str(normalized_execution_plan.get('primary_collection') or ''),
+                  'row_count': result_profile['row_count'],
+                  'fields': result_profile['fields'],
+                  'preview_rows': result_profile['preview_rows'],
+              }
 
               return {
+                  'contract_version': 'compiler_execution_contract',
+                  'compile_success': True,
+                  'execution_success': not bool(error_text),
+                  'primary_collection': str(normalized_execution_plan.get('primary_collection') or ''),
+                  'pipeline_json': primary_pipeline_json,
+                  'request_body_json': _safe_json_dumps(primary_request_body),
+                  'query_result_json': _safe_json_dumps(query_result),
+                  'rows_json': _safe_json_dumps(merged_rows[:MAX_RETURN_ROWS]),
+                  'row_count': len(merged_rows or []),
+                  'fields_json': _safe_json_dumps(result_profile['fields']),
+                  'compile_warnings_json': _safe_json_dumps(normalized_execution_plan.get('warnings') or []),
+                  'execution_error': error_text,
+                  'compiler_debug_json': _safe_json_dumps(compiler_debug),
                   'answer_text': answer_text,
                   'question': str(question or '').strip(),
-                  'last_pipeline_json': str((((stage_execution_trace or [{}])[-1] or {}).get('pipeline_json')) or ''),
+                  'last_pipeline_json': primary_pipeline_json,
                   'last_validated_ast_json': _safe_json_dumps(last_validated_ast),
                   'merged_rows_json': _safe_json_dumps(merged_rows[:MAX_RETURN_ROWS]),
                   'chart_request_json': _safe_json_dumps(chart_payload),
@@ -1001,6 +1123,32 @@
         code_language: python3
         desc: 校验语义计划并编译第一阶段 Pipeline
         outputs:
+          contract_version:
+            type: string
+          compile_success:
+            type: boolean
+          execution_success:
+            type: boolean
+          primary_collection:
+            type: string
+          pipeline_json:
+            type: string
+          request_body_json:
+            type: string
+          query_result_json:
+            type: string
+          rows_json:
+            type: string
+          row_count:
+            type: number
+          fields_json:
+            type: string
+          compile_warnings_json:
+            type: string
+          execution_error:
+            type: string
+          compiler_debug_json:
+            type: string
           answer_text:
             type: string
           question:
@@ -1055,9 +1203,19 @@
         variables:
         - value_selector:
           - '1778000000001'
-          - normalized_semantic_plan_json
+          - normalized_plan_json
           value_type: string
           variable: semantic_plan
+        - value_selector:
+          - '1778000000001'
+          - validator_route
+          value_type: string
+          variable: validator_route
+        - value_selector:
+          - '1778000000001'
+          - validator_result_json
+          value_type: string
+          variable: validator_result_json
         - value_selector:
           - '1776000000024'
           - planner

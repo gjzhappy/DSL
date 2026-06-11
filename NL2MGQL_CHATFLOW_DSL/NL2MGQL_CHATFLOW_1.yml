@@ -1289,7 +1289,7 @@
               return fields
 
 
-          def _normalize_time_range(value, collection_name, default_field='created_at'):
+          def _normalize_time_range(value, collection_name, default_field=''):
               if not isinstance(value, dict):
                   return {
                       'collection': collection_name,
@@ -1302,7 +1302,9 @@
               mode = str(value.get('mode') or 'none').strip() or 'none'
               if mode not in {'none', 'relative_days', 'absolute'}:
                   mode = 'none'
-              field = str(value.get('field') or default_field).strip() or default_field
+              field = str(value.get('field') or default_field).strip()
+              if mode != 'none' and not field:
+                  raise ValueError('validator-normalized time_range.field is required when time_range.mode is not none')
               relative_days = max(int(value.get('relative_days') or 0), 0)
               start = str(value.get('start') or '').strip()
               end = str(value.get('end') or '').strip()
@@ -1405,7 +1407,9 @@
               mode = str((time_range or {}).get('mode') or 'none').strip()
               if mode == 'none':
                   return None
-              field = str((time_range or {}).get('field') or 'created_at').strip() or 'created_at'
+              field = str((time_range or {}).get('field') or '').strip()
+              if not field:
+                  raise ValueError('validator-normalized time_range.field is required')
               if mode == 'relative_days':
                   days = int((time_range or {}).get('relative_days') or 0)
                   start_dt = datetime.now(SGT) - timedelta(days=days)
@@ -1706,7 +1710,7 @@
               planner_primary = _ensure_non_empty_string(planner.get('primary_collection'), 'planner.primary_collection')
               planner_related = set(_ensure_string_list(planner.get('related_collections') or [], 'planner.related_collections'))
               execution_mode = str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage'
-              primary_collection = _ensure_non_empty_string(plan.get('primary_collection') or planner_primary, 'execution_plan.primary_collection')
+              primary_collection = _ensure_non_empty_string(plan.get('primary_collection'), 'execution_plan.primary_collection')
               if primary_collection != planner_primary:
                   raise ValueError('execution_plan.primary_collection must match planner.primary_collection')
               collections = _ensure_string_list(plan.get('collections') or [primary_collection], 'execution_plan.collections')
@@ -1752,7 +1756,6 @@
                   if intent_type in {'group_top_entity', 'group_top_record'} and rank_n <= 0:
                       rank_n = 1
                   stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
-                  stage_time_range = _force_relative_month_time_range(question, stage_time_range, collection)
                   stage = {
                       'stage_name': stage_name,
                       'collection': collection,
@@ -1794,13 +1797,9 @@
               chart_request_title = str(chart_request.get('title') or '').strip()
               if chart_request_title:
                   visualization['title'] = chart_request_title
-              intent = _detect_visualization_intent(question)
-              if intent.get('enabled'):
-                  if not visualization.get('enabled'):
-                      visualization['enabled'] = True
-                      print('VISUALIZATION_FALLBACK_ENABLED')
-                  if not str(visualization.get('chart_type') or '').strip() and intent.get('chart_type'):
-                      visualization['chart_type'] = intent['chart_type']
+              # Phase 11: Mongo compiler consumes validator-normalized chart_request
+              # only. Do not infer visualization intent from the user's natural
+              # language in the compile path.
 
               merge_mode = str(final_merge.get('merge_mode') or 'none').strip() or 'none'
               if len(normalized_stages) <= 1 or merge_mode == 'none':
