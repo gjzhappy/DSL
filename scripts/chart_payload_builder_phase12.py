@@ -205,7 +205,7 @@ def build_chart_payload(chart_request: Dict[str, Any], query_result: Dict[str, A
         payload["warning"] = "chart_request disabled"
         return payload
     if not qr.get("success", True):
-        payload["warning"] = str(qr.get("error") or "查询执行失败，未生成图表。")
+        payload["warning"] = "查询执行失败，未生成图表。"
         payload["chart_error"] = payload["warning"]
         return payload
     if not rows:

@@ -209,6 +209,19 @@ def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", 
     alias_index = _loads(runtime_alias_json, {})
     selection = _loads(collection_selection_json, {})
     compact = _loads(compact_context_json, {})
+    if not isinstance(compact, dict):
+        compact = {}
+    debug["prior_compact_context"] = {
+        "has_last_context": bool(compact),
+        "last_primary_collection": compact.get("last_primary_collection") or "",
+        "last_related_collections": compact.get("last_related_collections") if isinstance(compact.get("last_related_collections"), list) else [],
+        "last_plan_summary": compact.get("last_plan_summary") if isinstance(compact.get("last_plan_summary"), dict) else {},
+        "last_resolved_fields": compact.get("last_resolved_fields") if isinstance(compact.get("last_resolved_fields"), list) else [],
+        "last_resolved_metrics": compact.get("last_resolved_metrics") if isinstance(compact.get("last_resolved_metrics"), list) else [],
+        "last_chart_request": compact.get("last_chart_request") if isinstance(compact.get("last_chart_request"), dict) else {},
+        "last_result_profile": compact.get("last_result_profile") if isinstance(compact.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+        "schema_context_ref": compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {},
+    }
     patch = _loads(patch_result_json, {})
     if isinstance(patch, list):
         patch = {"unapplied_refinements": patch}
@@ -525,19 +538,20 @@ def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
     dbg = res.get("debug") if isinstance(res.get("debug"), dict) else {}
     if isinstance(dbg.get("schema_context_ref"), dict):
         schema_ref = dbg.get("schema_context_ref")
+    prior = dbg.get("prior_compact_context") if isinstance(dbg.get("prior_compact_context"), dict) else {}
     compact = {
         "context_version": "compact_context_contract",
-        "has_last_context": False,
+        "has_last_context": bool(prior.get("has_last_context")),
         "last_question": _str(dbg.get("question")),
         "last_turn_intent": {"validator_route": route or "invalid", "answer_type": answer_type},
-        "last_primary_collection": "",
-        "last_related_collections": [],
-        "last_plan_summary": {},
-        "last_resolved_fields": [],
-        "last_resolved_metrics": [],
-        "last_chart_request": {},
-        "last_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
-        "schema_context_ref": schema_ref or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
+        "last_primary_collection": prior.get("last_primary_collection") or "",
+        "last_related_collections": prior.get("last_related_collections") if isinstance(prior.get("last_related_collections"), list) else [],
+        "last_plan_summary": prior.get("last_plan_summary") if isinstance(prior.get("last_plan_summary"), dict) else {},
+        "last_resolved_fields": prior.get("last_resolved_fields") if isinstance(prior.get("last_resolved_fields"), list) else [],
+        "last_resolved_metrics": prior.get("last_resolved_metrics") if isinstance(prior.get("last_resolved_metrics"), list) else [],
+        "last_chart_request": prior.get("last_chart_request") if isinstance(prior.get("last_chart_request"), dict) else {},
+        "last_result_profile": prior.get("last_result_profile") if isinstance(prior.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+        "schema_context_ref": schema_ref or prior.get("schema_context_ref") or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
         "answer_summary": text[:800],
         "size_guard": {},
         "context_warnings": [],
@@ -553,7 +567,6 @@ def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
         "chart_payload": {},
         "query_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
         "state_update": {"should_save_context": should_save, "context_summary": compact},
-        "debug_summary": {"validator_route": route or "invalid"},
     }
     context_update = {"contract_version": "context_update_contract", "should_save_context": should_save, "compact_context": compact, "last_context_json": compact_json, "warnings": [], "clear_fields": []}
     res["answer_payload_json"] = json.dumps(answer_payload, ensure_ascii=False)
