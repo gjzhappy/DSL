@@ -3274,7 +3274,10 @@
               msg = ''
               if isinstance(qr, dict):
                   msg = str(qr.get('execution_error') or qr.get('error') or qr.get('message') or '')
-              return (str(execution_error or '') or msg)[:300]
+              raw = (str(execution_error or '') or msg)[:300]
+              if raw:
+                  return '执行阶段失败，已隐藏内部错误细节。'
+              return '执行阶段返回失败。'
 
 
           def _markdown_from_payload(payload):
@@ -3286,7 +3289,7 @@
               return '\n\n'.join(parts).strip() or '系统在处理该查询时出现异常，请调整问题后重试。'
 
 
-          def _answer_payload(answer_type, answer_text='', chart_markdown='', result_summary='', message='', chart_payload=None, query_profile=None, should_save=True, context_summary=None, debug_summary=None):
+          def _answer_payload(answer_type, answer_text='', chart_markdown='', result_summary='', message='', chart_payload=None, query_profile=None, should_save=True, context_summary=None):
               return {
                   'contract_version': ANSWER_PAYLOAD_CONTRACT_VERSION,
                   'answer_type': answer_type or 'system_error',
@@ -3300,8 +3303,7 @@
                       'should_save_context': bool(should_save),
                       'context_summary': context_summary if isinstance(context_summary, dict) else {},
                   },
-                  'debug_summary': debug_summary if isinstance(debug_summary, dict) else {},
-              }
+                        }
 
 
           def _context_update(compact_context, should_save=True, warnings=None, clear_fields=None):
@@ -3317,7 +3319,7 @@
               }, compact_json
 
 
-          def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = ''):
+          def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = '', last_context_json: str = '{}'):
               try:
                   semantic_plan = _loads_obj(semantic_plan_json)
                   normalized_plan = _loads_obj(normalized_semantic_plan_json)
@@ -3369,11 +3371,15 @@
                   chart_profile = chart_payload.get('data_profile') if isinstance(chart_payload, dict) and isinstance(chart_payload.get('data_profile'), dict) else {}
                   if chart_profile.get('preview_rows') and not compact_rows:
                       compact_rows = chart_profile.get('preview_rows')[:5]
-                  compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, result_summary or answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
-                  compact_context['last_result_profile'] = query_profile
-                  if isinstance(chart_payload, dict) and chart_payload.get('summary'):
+                  if answer_type == 'execution_error':
+                      prior_context = _loads_obj(last_context_json)
+                      compact_context = prior_context if isinstance(prior_context, dict) and prior_context else _compact_context_contract(question, {}, {}, [], result_summary or answer_text, '{}', collection_catalog_json, collection_selection_json)
+                  else:
+                      compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, result_summary or answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
+                      compact_context['last_result_profile'] = query_profile
+                  if answer_type != 'execution_error' and isinstance(chart_payload, dict) and chart_payload.get('summary'):
                       compact_context['last_chart_request'].update({k: chart_payload.get(k) for k in ('chart_type', 'title', 'x_field', 'y_field') if chart_payload.get(k)})
-                  context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')))
+                  context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')) and answer_type != 'execution_error')
                   payload = _answer_payload(
                       answer_type,
                       answer_text=answer_text,
@@ -3384,7 +3390,6 @@
                       query_profile=query_profile,
                       should_save=context_update.get('should_save_context'),
                       context_summary=compact_context,
-                      debug_summary={'answer_mode': mode or '', 'row_count': query_profile.get('row_count', 0), 'chart_available': bool(chart_available), 'patch_route': str(patch_route or '')},
                   )
                   answer_markdown = _markdown_from_payload(payload)
                   sanitized_chart_payload = _compact_chart_payload(chart_payload)
@@ -3534,6 +3539,11 @@
           - execution_error
           value_type: string
           variable: execution_error
+        - value_selector:
+          - conversation
+          - last_context_json
+          value_type: string
+          variable: last_context_json
       height: 96
       id: '1775000000022'
       position:
@@ -4996,7 +5006,7 @@
               ctx['schema_context_ref']=prior_schema
               compact_json=_dumps(ctx)
               context_update={'contract_version':'context_update_contract','should_save_context':bool(ctx.get('has_last_context')),'compact_context':ctx,'last_context_json':compact_json,'warnings':ctx.get('context_warnings') or [],'clear_fields':[]}
-              answer_payload={'contract_version':'answer_payload_contract','answer_type':answer_type,'answer_text':answer_text,'chart_echarts_markdown':md,'result_summary':note,'message':'' if md else note,'chart_payload':clean_payload,'query_result_profile':data_profile or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(ctx.get('has_last_context')),'context_summary':ctx},'debug_summary':{'patch_route':'chart_only','chart_enabled':enabled}}
+              answer_payload={'contract_version':'answer_payload_contract','answer_type':answer_type,'answer_text':answer_text,'chart_echarts_markdown':md,'result_summary':note,'message':'' if md else note,'chart_payload':clean_payload,'query_result_profile':data_profile or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(ctx.get('has_last_context')),'context_summary':ctx}}
               return {'final_answer_markdown': final,'answer_payload_markdown': final,'answer_text': answer_text,'result_summary': note,'chart_request': req if isinstance(req,dict) else {},'chart_request_for_context': clean_req,'chart_payload_json': _dumps(clean_payload),'answer_payload_json': _dumps(answer_payload),'context_update_json': _dumps(context_update),'compact_context_json': compact_json,'chart_echarts_markdown': md,'final_answer_summary': note,'updated_at': datetime.now(timezone.utc).isoformat()}
         code_language: python3
         desc: Phase 12：chart-only answer adapter；只读取 ChartPayloadBuilder 输出，不查 Mongo。
@@ -5087,7 +5097,7 @@
                   text = '我需要确认一下：请补充统计对象、时间范围、分组维度或指标。'
               compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':q[:1000],'last_turn_intent':{'answer_type':'clarification'},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':text[:800],'size_guard':{},'context_warnings':[]}
               compact_json = _dumps(compact)
-              payload = {'contract_version':'answer_payload_contract','answer_type':'clarification','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':False,'context_summary':compact},'debug_summary':{}}
+              payload = {'contract_version':'answer_payload_contract','answer_type':'clarification','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':False,'context_summary':compact}}
               update = {'contract_version':'context_update_contract','should_save_context':False,'compact_context':compact,'last_context_json':compact_json,'warnings':[],'clear_fields':[]}
               return {'final_answer_markdown': text, 'answer_payload_markdown': text, 'answer_payload_json': _dumps(payload), 'context_update_json': _dumps(update), 'compact_context_json': compact_json, 'answer_text': text, 'result_summary': text[:800]}
         code_language: python3
@@ -5258,7 +5268,7 @@
               summary = '语义计划解析失败，未进入 Mongo 编译执行。'
               compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':'','last_turn_intent':{'normalizer_route':'invalid','answer_type':'system_error'},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':summary,'size_guard':{},'context_warnings':[]}
               compact_json = _dumps(compact)
-              payload = {'contract_version':'answer_payload_contract','answer_type':'system_error','answer_text':text,'chart_echarts_markdown':'','result_summary':summary,'message':'','chart_payload':{},'query_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':False,'context_summary':compact},'debug_summary':{}}
+              payload = {'contract_version':'answer_payload_contract','answer_type':'system_error','answer_text':text,'chart_echarts_markdown':'','result_summary':summary,'message':'','chart_payload':{},'query_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':False,'context_summary':compact}}
               update = {'contract_version':'context_update_contract','should_save_context':False,'compact_context':compact,'last_context_json':compact_json,'warnings':[],'clear_fields':[]}
               return {'final_answer_markdown': text, 'answer_payload_markdown': text, 'answer_payload_json': _dumps(payload), 'context_update_json': _dumps(update), 'compact_context_json': compact_json, 'answer_text': text, 'result_summary': summary}
         code_language: python3
@@ -6097,7 +6107,7 @@
                   compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':'','last_turn_intent':{},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':'','size_guard':{},'context_warnings':[]}
               compact['answer_summary'] = text[:800]
               compact_json = json.dumps(compact, ensure_ascii=False)
-              payload = {'contract_version':'answer_payload_contract','answer_type':'query_only','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':compact.get('last_result_profile') or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(compact.get('has_last_context')),'context_summary':compact},'debug_summary':{'analysis_fallback':bool(fallback_used)}}
+              payload = {'contract_version':'answer_payload_contract','answer_type':'query_only','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':compact.get('last_result_profile') or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(compact.get('has_last_context')),'context_summary':compact}}
               update = {'contract_version':'context_update_contract','should_save_context':bool(compact.get('has_last_context')),'compact_context':compact,'last_context_json':compact_json,'warnings':compact.get('context_warnings') or [],'clear_fields':[]}
               return {
                   'analysis_markdown': text,
@@ -8942,6 +8952,19 @@
               alias_index = _loads(runtime_alias_json, {})
               selection = _loads(collection_selection_json, {})
               compact = _loads(compact_context_json, {})
+              if not isinstance(compact, dict):
+                  compact = {}
+              debug["prior_compact_context"] = {
+                  "has_last_context": bool(compact),
+                  "last_primary_collection": compact.get("last_primary_collection") or "",
+                  "last_related_collections": compact.get("last_related_collections") if isinstance(compact.get("last_related_collections"), list) else [],
+                  "last_plan_summary": compact.get("last_plan_summary") if isinstance(compact.get("last_plan_summary"), dict) else {},
+                  "last_resolved_fields": compact.get("last_resolved_fields") if isinstance(compact.get("last_resolved_fields"), list) else [],
+                  "last_resolved_metrics": compact.get("last_resolved_metrics") if isinstance(compact.get("last_resolved_metrics"), list) else [],
+                  "last_chart_request": compact.get("last_chart_request") if isinstance(compact.get("last_chart_request"), dict) else {},
+                  "last_result_profile": compact.get("last_result_profile") if isinstance(compact.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+                  "schema_context_ref": compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {},
+              }
               patch = _loads(patch_result_json, {})
               if isinstance(patch, list):
                   patch = {"unapplied_refinements": patch}
@@ -9258,19 +9281,20 @@
               dbg = res.get("debug") if isinstance(res.get("debug"), dict) else {}
               if isinstance(dbg.get("schema_context_ref"), dict):
                   schema_ref = dbg.get("schema_context_ref")
+              prior = dbg.get("prior_compact_context") if isinstance(dbg.get("prior_compact_context"), dict) else {}
               compact = {
                   "context_version": "compact_context_contract",
-                  "has_last_context": False,
+                  "has_last_context": bool(prior.get("has_last_context")),
                   "last_question": _str(dbg.get("question")),
                   "last_turn_intent": {"validator_route": route or "invalid", "answer_type": answer_type},
-                  "last_primary_collection": "",
-                  "last_related_collections": [],
-                  "last_plan_summary": {},
-                  "last_resolved_fields": [],
-                  "last_resolved_metrics": [],
-                  "last_chart_request": {},
-                  "last_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
-                  "schema_context_ref": schema_ref or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
+                  "last_primary_collection": prior.get("last_primary_collection") or "",
+                  "last_related_collections": prior.get("last_related_collections") if isinstance(prior.get("last_related_collections"), list) else [],
+                  "last_plan_summary": prior.get("last_plan_summary") if isinstance(prior.get("last_plan_summary"), dict) else {},
+                  "last_resolved_fields": prior.get("last_resolved_fields") if isinstance(prior.get("last_resolved_fields"), list) else [],
+                  "last_resolved_metrics": prior.get("last_resolved_metrics") if isinstance(prior.get("last_resolved_metrics"), list) else [],
+                  "last_chart_request": prior.get("last_chart_request") if isinstance(prior.get("last_chart_request"), dict) else {},
+                  "last_result_profile": prior.get("last_result_profile") if isinstance(prior.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+                  "schema_context_ref": schema_ref or prior.get("schema_context_ref") or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
                   "answer_summary": text[:800],
                   "size_guard": {},
                   "context_warnings": [],
@@ -9286,7 +9310,6 @@
                   "chart_payload": {},
                   "query_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
                   "state_update": {"should_save_context": should_save, "context_summary": compact},
-                  "debug_summary": {"validator_route": route or "invalid"},
               }
               context_update = {"contract_version": "context_update_contract", "should_save_context": should_save, "compact_context": compact, "last_context_json": compact_json, "warnings": [], "clear_fields": []}
               res["answer_payload_json"] = json.dumps(answer_payload, ensure_ascii=False)

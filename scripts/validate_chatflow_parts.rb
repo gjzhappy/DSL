@@ -505,6 +505,59 @@ save_serialized = save_node.to_s
   errors << "Phase 13 context saver must not persist full #{token}" if save_serialized.include?(token)
 end
 
+
+
+# Phase 14 legacy cleanup / complete-C path guardrails.
+phase14_forbidden_compiler_sources = edges.select { |edge| edge['target'].to_s == '1775000000007' }.reject { |edge| edge['source'].to_s == '1778000000002' && edge['sourceHandle'].to_s == 'valid' }
+phase14_forbidden_compiler_sources.each do |edge|
+  errors << "Phase 14 compiler input must come only from validator valid; found #{edge['source']}[#{edge['sourceHandle']}] -> 1775000000007"
+end
+%w[1776000000006 1776000000009 1776000000015 1776000000016].each do |id|
+  reached = reachable.call(id)
+  %w[1775000000007 1773975766025 1775000000012 1776000000020 1776000000024 1777000000002 1779000000001 1780000000002 1780000000003 1780000000007 1780000000008 1780000000009].each do |target_id|
+    errors << "Phase 14 chart-only path node #{id} can reach forbidden compiler/planner/schema node #{target_id}" if reached.include?(target_id)
+  end
+end
+%w[1775000000022 1778000000001 1776000000006].each do |id|
+  code = node_by_id[id]&.dig('data', 'code').to_s
+  errors << "Phase 14 answer payload node #{id} must not expose debug_summary" if code.include?('debug_summary')
+end
+if merge_node
+  unless (merge_node.dig('data', 'variables') || []).any? { |var| var['variable'] == 'last_context_json' && var['value_selector'] == ['conversation', 'last_context_json'] }
+    errors << 'Phase 14 final answer merge must read prior last_context_json so execution_error does not pollute the previous successful context'
+  end
+  unless merge_code.include?("answer_type == 'execution_error'") && merge_code.include?('last_context_json') && merge_code.include?('隐藏内部错误细节')
+    errors << 'Phase 14 execution_error path must preserve prior compact context and sanitize internal execution details'
+  end
+end
+[merge_node, node_by_id['1778000000001'], node_by_id['1776000000006']].compact.each do |node|
+  code = node.dig('data', 'code').to_s
+  unless code.include?('BANNED_CONTEXT_KEYS') || code.include?('compact_context_contract')
+    errors << "Phase 14 compact context producer #{node['id']} must declare/use compact_context_contract boundary"
+  end
+end
+save_items.each do |item|
+  selector = item['variable_selector'] || []
+  value = item['value'] || []
+  if selector == ['conversation', 'last_context_json'] && value != ['1775000000022', 'compact_context_json']
+    errors << "Phase 14 saver must write last_context_json from final compact_context_json, got #{value.inspect}"
+  end
+  if selector == ['conversation', 'last_answer_payload_json'] && value != ['1775000000022', 'answer_payload_json']
+    errors << "Phase 14 saver must write last_answer_payload_json from answer_payload_json, got #{value.inspect}"
+  end
+  if selector == ['conversation', 'last_context_update_json'] && value != ['1775000000022', 'context_update_json']
+    errors << "Phase 14 saver must write last_context_update_json from context_update_json, got #{value.inspect}"
+  end
+end
+legacy_reader_writer_nodes = nodes.select { |node| node.to_s.match?(/execution_plan|normalized_execution_plan|merged_rows_json|chart_echarts_markdown|echarts_option|schema_metadata_json|schema_alias_index_json/) }
+legacy_reader_writer_nodes.each do |node|
+  code = node.dig('data', 'code').to_s
+  next unless code.include?('execution_plan') || code.include?('merged_rows_json') || code.include?('chart_echarts_markdown')
+  if code.match?(/legacy|fallback|compat|BANNED_CONTEXT_KEYS|chart_payload_json|answer_payload_json/).nil?
+    warnings << "Phase 14 legacy reference in node #{node['id']} (#{node.dig('data', 'title')}) is not visibly marked compat/fallback"
+  end
+end
+
 # Non-valid validator branch must also emit stable answer/context payloads and must not enter compiler.
 validator_code = node_by_id['1778000000001']&.dig('data', 'code').to_s
 %w[answer_payload_contract context_update_contract compact_context_contract answer_payload_markdown compact_context_json].each do |token|
