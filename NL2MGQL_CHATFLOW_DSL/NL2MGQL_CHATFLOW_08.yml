@@ -1,0 +1,464 @@
+    - data:
+        code: |
+          import json, re
+
+          def _loads(v, fb):
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return fb
+              return fb
+
+          def _dumps(v): return json.dumps(v, ensure_ascii=False)
+          def _bool(v):
+              if isinstance(v, bool): return v
+              if isinstance(v, str): return v.strip().lower() in {'true','1','yes','y'}
+              return bool(v)
+          def _rows(v):
+              x=_loads(v,v)
+              if isinstance(x,dict) and isinstance(x.get('rows'),list): x=x.get('rows')
+              return [r for r in x if isinstance(r,dict)] if isinstance(x,list) else []
+          def _num(v):
+              if v is None or isinstance(v,bool): return None
+              try:
+                  if isinstance(v,str) and not v.strip(): return None
+                  return float(v)
+              except Exception: return None
+          def _numeric(rows,f):
+              vals=[r.get(f) for r in rows[:200] if r.get(f) is not None]
+              return bool(vals) and sum(1 for v in vals if _num(v) is not None)>=max(1,int(len(vals)*0.7))
+          def _fields(rows, fields):
+              out=[]
+              for f in fields or []:
+                  s=str(f or '').strip()
+                  if s and s not in out: out.append(s)
+              for r in rows[:20]:
+                  for k in r.keys():
+                      if k not in out: out.append(k)
+              return out
+          def _profile(rows, fields):
+              fs=_fields(rows, fields); nums=[f for f in fs if _numeric(rows,f)]
+              return {'preview_rows': rows[:5], 'numeric_fields': nums, 'dimension_fields': [f for f in fs if f not in nums]}
+          def _chart_req(*sources):
+              default={'enabled':False,'chart_type':'','x_field':'','y_field':'','series_name':'','title':'','field_labels':{}}
+              found={}
+              for source in sources:
+                  obj=_loads(source,{})
+                  if not isinstance(obj,dict): continue
+                  if isinstance(obj.get('execution_plan'),dict): obj=obj.get('execution_plan') or {}
+                  cand=obj.get('chart_request') if isinstance(obj.get('chart_request'),dict) else obj
+                  if isinstance(cand,dict) and any(k in cand for k in default): found=cand; break
+              out=dict(default)
+              for k in default:
+                  if k in found: out[k]=found[k]
+              out['enabled']=_bool(out.get('enabled')); out['chart_type']=str(out.get('chart_type') or '').strip().lower()
+              out['x_field']=str(out.get('x_field') or '').strip(); out['y_field']=str(out.get('y_field') or '').strip()
+              out['series_name']=str(out.get('series_name') or '').strip(); out['title']=str(out.get('title') or '').strip()
+              out['field_labels']=out.get('field_labels') if isinstance(out.get('field_labels'),dict) else {}
+              return out
+          def _query_result(query_result_json, rows_json, row_count, fields_json, merged_rows_json):
+              warnings=[]; qr=_loads(query_result_json,{})
+              if isinstance(qr,dict) and ('rows' in qr or str(qr.get('contract_version') or '') in {'query_result_contract','query_result_profile_contract'}):
+                  rows=_rows(qr.get('rows',[])) or _rows(rows_json); fields=_loads(qr.get('fields',[]),[]) or _loads(fields_json,[])
+                  profile=qr.get('profile') if isinstance(qr.get('profile'),dict) else _profile(rows,fields)
+                  return {'contract_version':'query_result_contract','success':bool(qr.get('success',True)) and not bool(qr.get('error')),'rows':rows,'row_count':int(qr.get('row_count') or len(rows)),'fields':[str(f) for f in fields] if isinstance(fields,list) else [],'profile':profile,'error':str(qr.get('error') or ''),'warnings':qr.get('warnings') if isinstance(qr.get('warnings'),list) else []}
+              rows=_rows(rows_json); fields=_loads(fields_json,[])
+              if not rows and merged_rows_json:
+                  rows=_rows(merged_rows_json); warnings.append('legacy_rows_fallback_used')
+              try: rc=int(row_count if row_count not in (None,'') else len(rows))
+              except Exception: rc=len(rows)
+              if not isinstance(fields,list) or not fields: fields=list(rows[0].keys()) if rows else []
+              return {'contract_version':'query_result_contract','success':True,'rows':rows,'row_count':rc,'fields':[str(f) for f in fields],'profile':_profile(rows,fields),'error':'','warnings':warnings}
+          def _markdown(option):
+              fence=chr(96)*3
+              return fence+'echarts\n'+json.dumps(option,ensure_ascii=False,indent=2)+'\n'+fence
+          def _title(req):
+              if req.get('title'): return str(req.get('title'))
+              labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}
+              x=labels.get(req.get('x_field')) or req.get('x_field') or '维度'; y=labels.get(req.get('y_field')) or req.get('series_name') or req.get('y_field') or '指标'
+              return ('按%s统计%s' % (x,y)) if x and y else '查询结果图表'
+          def _payload(req, qr, chart_only=False):
+              rows=qr.get('rows') if isinstance(qr.get('rows'),list) else []; fields=set(_fields(rows, qr.get('fields') if isinstance(qr.get('fields'),list) else []))
+              p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':int(qr.get('row_count') or len(rows)),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{}}
+              if not req.get('enabled'):
+                  p['warning']='chart_request disabled'; return p
+              if not qr.get('success',True):
+                  p['warning']=str(qr.get('error') or '查询执行失败，未生成图表。'); p['chart_error']=p['warning']; return p
+              if not rows:
+                  p['warning']='上一轮结果摘要不足以重新生成图表' if chart_only else '查询结果为空，未生成图表。'; return p
+              x=str(req.get('x_field') or ''); y=str(req.get('y_field') or '')
+              if not x or not y or x not in fields or y not in fields:
+                  p['warning']='图表字段不在查询结果中'; return p
+              if not _numeric(rows,y):
+                  p['warning']='图表纵轴字段不是数字，未生成图表。'; return p
+              ctype=str(req.get('chart_type') or 'bar')
+              if ctype not in {'bar','line','pie','scatter'}:
+                  p['warning']='暂不支持该图表类型'; return p
+              title=_title(req); series=req.get('series_name') or y
+              if ctype=='pie':
+                  data=[{'name':str(r.get(x) if r.get(x) is not None else '未分类'),'value':_num(r.get(y)) or 0} for r in rows[:20]]
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'series':[{'name':series,'type':'pie','data':data}]}
+                  if len(rows)>20: p['warning']='饼图分类较多，仅展示前20项。'
+              elif ctype=='scatter':
+                  if not _numeric(rows,x): p['warning']='散点图横轴字段不是数字，未生成图表。'; return p
+                  data=[[_num(r.get(x)),_num(r.get(y))] for r in rows if _num(r.get(x)) is not None and _num(r.get(y)) is not None]
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'scatter','data':data}]}
+              else:
+                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
+                  if ctype=='line' and not re.search(r'date|time|day|month|year|日期|时间|日|月|年',x,re.I): p['warning']='折线图横轴不是明显时间或有序字段。'
+              p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':'已生成%s图表，共%s条数据。' % (ctype, len(rows))})
+              return p
+
+          def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str=''):
+              req=_chart_req(normalized_plan_json, semantic_plan_json, chart_request_json)
+              qr=_query_result(query_result_json, rows_json, row_count, fields_json, merged_rows_json)
+              p=_payload(req, qr, False)
+              return {'chart_payload_json':_dumps(p),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':p.get('echarts_markdown') or '', 'chart_summary':p.get('summary') or '', 'chart_warning':p.get('warning') or '', 'chart_enabled':bool(p.get('enabled')), 'data_profile_json':_dumps(p.get('data_profile') or {}), 'chart_debug_json':_dumps(p.get('chart_debug') or {})}
+        code_language: python3
+        desc: Phase 12：chart_request_contract + query_result_contract -> chart_payload_contract；不解析
+          alias、不推断业务字段、不改查询语义、不调用 Mongo。
+        outputs:
+          chart_payload_json:
+            children:
+            type: string
+          chart_payload_contract:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          chart_summary:
+            children:
+            type: string
+          chart_warning:
+            children:
+            type: string
+          chart_enabled:
+            children:
+            type: boolean
+          data_profile_json:
+            children:
+            type: string
+          chart_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_ChartPayloadBuilder
+        type: code
+        variables:
+        - value_selector:
+          - '1778000000001'
+          - normalized_plan_json
+          value_type: string
+          variable: normalized_plan_json
+        - value_selector:
+          - '1778000000001'
+          - semantic_plan_json
+          value_type: string
+          variable: semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - chart_request_json
+          value_type: string
+          variable: chart_request_json
+        - value_selector:
+          - '1775000000007'
+          - query_result_json
+          value_type: string
+          variable: query_result_json
+        - value_selector:
+          - '1775000000007'
+          - rows_json
+          value_type: string
+          variable: rows_json
+        - value_selector:
+          - '1775000000007'
+          - row_count
+          value_type: number
+          variable: row_count
+        - value_selector:
+          - '1775000000007'
+          - fields_json
+          value_type: string
+          variable: fields_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows_json
+          value_type: string
+          variable: merged_rows_json
+      height: 80
+      id: '1781000000001'
+      position:
+        x: 15920
+        y: -120
+      positionAbsolute:
+        x: 15920
+        y: -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        assigned_variable_selector:
+        - conversation
+        - last_question
+        desc: ''
+        input_variable_selector:
+        - '1775000000007'
+        - question
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - question
+          variable_selector:
+          - conversation
+          - last_question
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          variable_selector:
+          - conversation
+          - last_normalized_semantic_plan_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          variable_selector:
+          - conversation
+          - last_normalized_execution_plan
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - query_result_json
+          variable_selector:
+          - conversation
+          - last_merged_rows
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - query_result_json
+          variable_selector:
+          - conversation
+          - last_query_result_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_request_flat_json
+          variable_selector:
+          - conversation
+          - last_chart_request_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_request_flat_json
+          variable_selector:
+          - conversation
+          - last_chart
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1781000000001'
+          - chart_summary
+          variable_selector:
+          - conversation
+          - last_chart_echarts_markdown
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - final_answer_summary
+          variable_selector:
+          - conversation
+          - last_result_summary
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - last_error
+          variable_selector:
+          - conversation
+          - last_error
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - compact_context_json
+          variable_selector:
+          - conversation
+          - last_context_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - answer_payload_json
+          variable_selector:
+          - conversation
+          - last_answer_payload_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - context_update_json
+          variable_selector:
+          - conversation
+          - last_context_update_json
+          write_mode: over-write
+        selected: false
+        title: 变量赋值_保存多轮上下文
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1775000000023'
+      position:
+        x: 16840
+        y: -120
+      positionAbsolute:
+        x: 16840
+        y: -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1775000000007'
+          - question
+          value_type: string
+          variable: last_question
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          value_type: string
+          variable: last_normalized_execution_plan
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: last_normalized_semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - last_validated_ast_json
+          value_type: string
+          variable: last_validated_ast
+        - value_selector:
+          - '1775000000022'
+          - context_update_json
+          value_type: string
+          variable: last_pipeline_json
+        - value_selector:
+          - '1775000000007'
+          - query_result_json
+          value_type: string
+          variable: last_merged_rows
+        - value_selector:
+          - '1775000000007'
+          - chart_request_flat_json
+          value_type: string
+          variable: last_chart
+        - value_selector:
+          - '1775000000022'
+          - final_answer_summary
+          value_type: string
+          variable: last_result_summary
+        - value_selector:
+          - '1775000000007'
+          - last_error
+          value_type: string
+          variable: last_error
+        - value_selector:
+          - '1781000000001'
+          - chart_summary
+          value_type: string
+          variable: last_chart_echarts_markdown
+        - value_selector:
+          - '1775000000007'
+          - query_result_json
+          value_type: string
+          variable: last_query_result_json
+        - value_selector:
+          - '1775000000022'
+          - compact_context_json
+          value_type: string
+          variable: last_result_rows_json
+        - value_selector:
+          - '1775000000022'
+          - final_answer_summary
+          value_type: string
+          variable: last_final_answer_summary
+        - value_selector:
+          - '1775000000022'
+          - last_result_fields_json
+          value_type: string
+          variable: last_result_fields_json
+        - value_selector:
+          - '1775000000022'
+          - last_updated_at
+          value_type: string
+          variable: last_updated_at
+        - value_selector:
+          - '1775000000022'
+          - has_last_context_state
+          value_type: string
+          variable: has_last_context_state
+        - value_selector:
+          - '1775000000007'
+          - chart_request_flat_json
+          value_type: string
+          variable: last_chart_request_json
+        - value_selector:
+          - '1775000000022'
+          - compact_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1775000000022'
+          - answer_payload_json
+          value_type: string
+          variable: last_answer_payload_json
+        - value_selector:
+          - '1775000000022'
+          - context_update_json
+          value_type: string
+          variable: last_context_update_json
+        selected: false
+        answer: "{{#1775000000022.answer_payload_markdown#}}\n"
+        title: Answer
+        type: answer
+      height: 270
+      id: '1773910028939'
+      position:
+        x: 17300
+        y: -120
+      positionAbsolute:
+        x: 17300
+        y: -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242

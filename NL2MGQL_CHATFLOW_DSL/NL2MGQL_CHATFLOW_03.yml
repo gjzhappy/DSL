@@ -1,0 +1,297 @@
+    - data:
+        code: |-
+          import base64
+          import json
+          import uuid
+
+          SEMANTIC_PLAN_SYSTEM_PROMPT = '【角色约束】\n你不是聊天助手。你是 schema-driven + collection-selection-aware 的 semantic_plan_contract JSON 生成器。输出会被程序直接 JSON.parse 后交给 Phase 5 semantic_plan_normalizer 归一化。\n\n【唯一输出协议】\n只输出一个 semantic_plan_contract JSON 对象，顶层 contract_version 必须是 "semantic_plan_contract"。不得输出 markdown、解释文字、代码块、schema 原文、debug 大字段、rows、ECharts option，也不得输出 Mongo pipeline / MQL / MGQL pipeline / AST / patch diff。\n\n【必须输出的顶层结构】\n{\n  "contract_version":"semantic_plan_contract",\n  "primary_collection":"",\n  "related_collections":[],\n  "execution_mode":"single_stage",\n  "answer_mode":"data",\n  "needs_chart":false,\n  "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],\n  "final_merge":{"merge_mode":"none"},\n  "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},\n  "requires_clarification":false,\n  "clarification_question":"",\n  "needs_schema_retrieval":false,\n  "warnings":[]\n}\n\n【collection-selection 约束】\nprimary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。collection_selection_json 低置信或缺失时，不要猜 collection，设置 requires_clarification=true 或 needs_schema_retrieval=true。\n\n【schema 约束】\n只能使用 schema_context / schema_metadata 摘要中存在的 collection、field、metric、relation、query_rules。字段别名必须解析成 schema canonical field name；指标别名必须解析成 schema canonical metric name；relation 必须来自 schema relations。不得发明 collection / field / metric / relation。遇到未知字段、未知指标、敏感/PII 字段或 value_alias 不明确时，优先 requires_clarification=true，并在 clarification_question 或 warnings 中说明。\n\n【compact context 约束】\ncompact_context_json 只是弱上下文。当前用户问题和 collection_selection_json 优先级更高。不要从 compact_context_json 继承用户已否定的旧字段。\n\n【refine 约束】\n如果当前问题改变 group_fields，必须输出新的 group_fields，不能保留旧 group_fields；如果用户说“不再按 X”，必须删除旧字段 X；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 canonical field；metric、filter、time_range、chart_request 也必须与当前意图同步更新。输出完整新 semantic_plan_contract，不输出 patch diff。\n\n【图表约束】\n用户要求图表时 needs_chart=true 且 chart_request.enabled=true；chart_request.x_field 必须对齐 group_fields[0] 或时间字段；chart_request.y_field 必须对齐 metric_alias。\n\n【时间约束】\n相对时间使用 time_range.mode="relative_days" 与 relative_days；不要输出 {"$date":"..."}。current_date 仅用于理解相对时间，不要因此输出 Mongo 表达式。\n\n【最终输出再强调】\n只能输出 JSON 对象；禁止 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字、代码块。'
+          SEMANTIC_PLAN_CONTRACT_SCHEMA_JSON = r'''{"type":"object","additionalProperties":true,"required":["contract_version","primary_collection","related_collections","execution_mode","answer_mode","needs_chart","stages","final_merge","chart_request","requires_clarification","clarification_question","needs_schema_retrieval","warnings"],"properties":{"contract_version":{"const":"semantic_plan_contract"},"primary_collection":{"type":"string"},"related_collections":{"type":"array","items":{"type":"string"}},"execution_mode":{"type":"string"},"answer_mode":{"type":"string"},"needs_chart":{"type":"boolean"},"stages":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":true,"required":["stage_name","stage_type","collection","intent_type","time_range","filters","group_fields","metric_function","metric_field","metric_alias","sort","limit","projection_fields"],"properties":{"stage_name":{"type":"string"},"stage_type":{"type":"string"},"collection":{"type":"string"},"intent_type":{"type":"string"},"time_range":{"type":"object"},"filters":{"type":"array","items":{"type":"object"}},"group_fields":{"type":"array","items":{"type":"string"}},"metric_function":{"type":"string"},"metric_field":{"type":"string"},"metric_alias":{"type":"string"},"sort":{"type":"array","items":{"type":"object"}},"limit":{"type":"integer"},"projection_fields":{"type":"array","items":{"type":"string"}}}}},"final_merge":{"type":"object"},"chart_request":{"type":"object"},"requires_clarification":{"type":"boolean"},"clarification_question":{"type":"string"},"needs_schema_retrieval":{"type":"boolean"},"warnings":{"type":"array","items":{"type":"string"}}}}'''
+
+
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              text = str(value or "").strip().lower()
+              return text in {"1", "true", "yes", "y", "on"}
+
+
+          def _to_int(value, default):
+              try:
+                  return int(value)
+              except Exception:
+                  return int(default)
+
+
+          def main(
+              arg1: list,
+              arg2: str,
+              arg3: str,
+              llm_token_url: str,
+              llm_chat_url: str,
+              llm_app_id: str,
+              llm_static_token: str,
+              llm_model: str,
+              llm_user: str,
+              llm_basic_auth: str,
+              llm_timeout_ms,
+              llm_temperature,
+              llm_top_p,
+              llm_max_completion_tokens,
+              llm_stream,
+              last_context_json: str = '',
+              normalized_turn_intent_json: str = '',
+              turn_intent: str = '',
+              query_refinement_json: str = '',
+              collection_selection_json: str = '',
+              compact_context_json: str = '',
+              schema_metadata_summary_json: str = '',
+              schema_alias_index_summary_json: str = '',
+              current_date: str = '',
+          ):
+              planner = json.loads(arg2) if isinstance(arg2, str) else (arg2 or {})
+              sections = []
+
+              for raw in (arg1 or []):
+                  item = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                  collection_name = str(item.get("collection_name") or "").strip()
+                  role = str(item.get("role") or "").strip()
+                  context_text = str(item.get("context_text") or "").strip()
+                  sections.append(
+                      f"## collection={collection_name}\n"
+                      f"role={role}\n"
+                      f"{context_text}"
+                  )
+              planner_json = json.dumps(planner, ensure_ascii=False, indent=2)
+              collection_selection_text = str(collection_selection_json or '{}')
+              compact_context_text = str(compact_context_json or '{}')
+              schema_metadata_summary_text = str(schema_metadata_summary_json or '{}')
+              schema_alias_index_summary_text = str(schema_alias_index_summary_json or '{}')
+              schema_context = (
+                  f"### 用户问题\n{arg3}\n\n"
+                  f"### current_date\n{current_date or ''}\n\n"
+                  f"### collection_selection_json（primary_collection 必须来自 selected_primary_collection）\n{collection_selection_text}\n\n"
+                  f"### LLM_查询规划 bootstrap 输出（弱参考，不可覆盖 collection_selection/schema）\n{planner_json}\n\n"
+                  f"### schema_metadata 裁剪摘要（字段/指标/relation/query_rules 使用 canonical name）\n{schema_metadata_summary_text}\n\n"
+                  f"### schema_alias_index 裁剪摘要（别名只能映射到 canonical name）\n{schema_alias_index_summary_text}\n\n"
+                  f"### compact_context_json（弱上下文；不得继承用户已否定字段）\n{compact_context_text}\n\n"
+                  f"### fresh schema_context（禁止使用未出现在此处或 schema_metadata 中的字段/指标/relation）\n" + "\n\n".join(sections)
+              )
+              refine_context = ''
+              if str(turn_intent or '').strip() == 'refine_query':
+                  refine_context = (
+                      "\n\n### 多轮 refine_query 要求\n"
+                      "本轮必须重新生成完整 semantic_plan_contract，不输出 patch diff。compact context 只作弱上下文；当前用户明确修改/否定的字段优先，不能继承被否定的旧字段。\n"
+                      "如果用户要求改变 group_fields，必须输出新的 group_fields；如果用户说“不再按 X”，旧 plan 中对应 X 字段必须删除；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 schema canonical field。metric/filter/time_range/chart_request 必须同步更新。\n"
+                      f"上一轮上下文JSON:\n{last_context_json}\n\n"
+                      f"本轮意图JSON:\n{normalized_turn_intent_json}\n\n"
+                      f"query_refinement_json:\n{query_refinement_json}\n"
+                  )
+              semantic_plan_user_prompt = f"用户问题:\n{arg3}\n\nSchema上下文:\n{schema_context}{refine_context}"
+              llm_config = {
+                  "tokenUrl": str(llm_token_url or "").strip(),
+                  "chatUrl": str(llm_chat_url or "").strip(),
+                  "appId": str(llm_app_id or "").strip(),
+                  "staticToken": str(llm_static_token or ""),
+                  "model": str(llm_model or "").strip(),
+                  "user": str(llm_user or "").strip(),
+                  "basic_auth": str(llm_basic_auth or "").strip(),
+                  "timeout-millis": _to_int(llm_timeout_ms, 600000),
+                  "temperature": llm_temperature if llm_temperature is not None else 0,
+                  "top_p": llm_top_p if llm_top_p is not None else 1,
+                  "max_completion_tokens": _to_int(llm_max_completion_tokens, 12288),
+                  "stream": _to_bool(llm_stream),
+              }
+
+              if not llm_config["tokenUrl"]:
+                  raise ValueError("LLM_TOKEN_URL is required")
+              if not llm_config["chatUrl"]:
+                  raise ValueError("LLM_CHAT_URL is required")
+              if not llm_config["appId"]:
+                  raise ValueError("LLM_APP_ID is required")
+              if not llm_config["staticToken"]:
+                  raise ValueError("LLM_STATIC_TOKEN is required")
+              if not llm_config["model"]:
+                  raise ValueError("LLM_MODEL is required")
+
+              token_request_body = {
+                  "appId": llm_config["appId"],
+                  "credential": base64.b64encode(str(llm_config.get("staticToken") or "").encode("utf-8")).decode("utf-8"),
+              }
+
+              return {
+                  "schema_context": schema_context,
+                  "planner_json": planner_json,
+                  "semantic_plan_system_prompt": SEMANTIC_PLAN_SYSTEM_PROMPT,
+                  "semantic_plan_user_prompt": semantic_plan_user_prompt,
+                  "semantic_plan_json_schema": SEMANTIC_PLAN_CONTRACT_SCHEMA_JSON,
+                  "token_url": llm_config["tokenUrl"],
+                  "chat_url": llm_config["chatUrl"],
+                  "llm_config_json": json.dumps(llm_config, ensure_ascii=False),
+                  "token_request_body_json": json.dumps(token_request_body, ensure_ascii=False),
+                  "request_id": f"llm_{uuid.uuid4().hex}",
+              }
+        code_language: python3
+        desc: 汇总Schema上下文，准备语义计划提示词与内部LLM调用请求
+        outputs:
+          chat_url:
+            children:
+            type: string
+          llm_config_json:
+            children:
+            type: string
+          planner_json:
+            children:
+            type: string
+          request_id:
+            children:
+            type: string
+          schema_context:
+            children:
+            type: string
+          semantic_plan_json_schema:
+            children:
+            type: string
+          semantic_plan_system_prompt:
+            children:
+            type: string
+          semantic_plan_user_prompt:
+            children:
+            type: string
+          token_request_body_json:
+            children:
+            type: string
+          token_url:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并Schema上下文并准备语义计划提示词
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000001'
+          - output
+          value_type: array[string]
+          variable: arg1
+        - value_selector:
+          - '1774083951307'
+          - planner_json
+          value_type: string
+          variable: arg2
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: arg3
+        - value_selector:
+          - env
+          - LLM_TOKEN_URL
+          value_type: string
+          variable: llm_token_url
+        - value_selector:
+          - env
+          - LLM_CHAT_URL
+          value_type: string
+          variable: llm_chat_url
+        - value_selector:
+          - env
+          - LLM_APP_ID
+          value_type: string
+          variable: llm_app_id
+        - value_selector:
+          - env
+          - LLM_STATIC_TOKEN
+          value_type: string
+          variable: llm_static_token
+        - value_selector:
+          - env
+          - LLM_MODEL
+          value_type: string
+          variable: llm_model
+        - value_selector:
+          - env
+          - LLM_USER
+          value_type: string
+          variable: llm_user
+        - value_selector:
+          - env
+          - LLM_BASIC_AUTH
+          value_type: string
+          variable: llm_basic_auth
+        - value_selector:
+          - env
+          - LLM_TIMEOUT_MS
+          value_type: number
+          variable: llm_timeout_ms
+        - value_selector:
+          - env
+          - LLM_TEMPERATURE
+          value_type: number
+          variable: llm_temperature
+        - value_selector:
+          - env
+          - LLM_TOP_P
+          value_type: number
+          variable: llm_top_p
+        - value_selector:
+          - env
+          - LLM_MAX_COMPLETION_TOKENS
+          value_type: number
+          variable: llm_max_completion_tokens
+        - value_selector:
+          - env
+          - LLM_STREAM
+          value_type: string
+          variable: llm_stream
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000004'
+          - turn_intent
+          value_type: string
+          variable: turn_intent
+        - value_selector:
+          - '1776000000004'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1774083951307'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1776000000001'
+          - compact_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1776000000001'
+          - last_schema_metadata_json
+          value_type: string
+          variable: schema_metadata_summary_json
+        - value_selector:
+          - '1776000000001'
+          - last_schema_alias_index_json
+          value_type: string
+          variable: schema_alias_index_summary_json
+      height: 96
+      id: '1775000000005'
+      position:
+        x: 6720
+        y: -620
+      positionAbsolute:
+        x: 6720
+        y: -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242

@@ -1,0 +1,938 @@
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,flags=re.S|re.I)
+              return m.group(1).strip() if m else s
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(_strip(v)); return x if isinstance(x,dict) else {}
+                  except Exception: return {}
+              return {}
+          BIG_FIELD_KEYS = {
+              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
+              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
+              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
+              'echarts_markdown','debug'
+          }
+
+          def _deepcopy_json(value):
+              try:
+                  return json.loads(json.dumps(value, ensure_ascii=False))
+              except Exception:
+                  return value if isinstance(value, dict) else {}
+
+          def _as_list(value):
+              return value if isinstance(value, list) else []
+
+          def _as_dict(value):
+              return value if isinstance(value, dict) else {}
+
+          def _clean_for_contract(value, warnings, path=''):
+              if isinstance(value, dict):
+                  cleaned = {}
+                  for k, v in value.items():
+                      key = str(k)
+                      child_path = (path + '.' + key).strip('.')
+                      if key in BIG_FIELD_KEYS or key.startswith('debug_'):
+                          warnings.append('removed_large_field:' + child_path)
+                          continue
+                      cleaned[key] = _clean_for_contract(v, warnings, child_path)
+                  return cleaned
+              if isinstance(value, list):
+                  return [_clean_for_contract(v, warnings, path + '[]') for v in value]
+              return value
+
+          def _pick_collection(plan):
+              planner = plan.get('planner') if isinstance(plan.get('planner'), dict) else {}
+              selection = plan.get('collection_selection') if isinstance(plan.get('collection_selection'), dict) else {}
+              return str(plan.get('primary_collection') or plan.get('collection') or planner.get('primary_collection') or selection.get('selected_primary_collection') or '').strip()
+
+          def _default_chart_request(chart=None):
+              chart = chart if isinstance(chart, dict) else {}
+              return {
+                  'enabled': bool(chart.get('enabled')),
+                  'chart_type': str(chart.get('chart_type') or chart.get('type') or '').strip(),
+                  'x_field': str(chart.get('x_field') or chart.get('x_axis') or '').strip(),
+                  'y_field': str(chart.get('y_field') or chart.get('y_axis') or '').strip(),
+                  'series_name': str(chart.get('series_name') or '').strip(),
+                  'title': str(chart.get('title') or '').strip(),
+              }
+
+          def _metric_from_metrics(stage):
+              metrics = stage.get('metrics') if isinstance(stage, dict) else None
+              first = metrics[0] if isinstance(metrics, list) and metrics and isinstance(metrics[0], dict) else {}
+              return {
+                  'metric_alias': first.get('metric_alias') or first.get('alias') or first.get('name') or first.get('output_field') or '',
+                  'metric_function': first.get('metric_function') or first.get('function') or '',
+                  'metric_field': first.get('metric_field') or first.get('field') or first.get('source_field') or '',
+              }
+
+          def _normalize_time_range(value):
+              tr = value if isinstance(value, dict) else {}
+              try:
+                  relative_days = int(tr.get('relative_days') or 0)
+              except Exception:
+                  relative_days = 0
+              return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
+
+          def _normalize_stage(raw_stage, idx, primary_collection):
+              stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
+              metric = _metric_from_metrics(stage)
+              collection = str(stage.get('collection') or stage.get('primary_collection') or primary_collection or '').strip()
+              stage.setdefault('stage_name', stage.get('stage_id') or 'stage' + str(idx + 1))
+              stage.setdefault('stage_type', 'primary_query')
+              stage['collection'] = collection
+              stage.setdefault('intent_type', '')
+              stage['time_range'] = _normalize_time_range(stage.get('time_range'))
+              stage['filters'] = _as_list(stage.get('filters'))
+              stage['group_fields'] = _as_list(stage.get('group_fields'))
+              stage['metric_function'] = str(stage.get('metric_function') or metric.get('metric_function') or '').strip()
+              stage['metric_field'] = str(stage.get('metric_field') or metric.get('metric_field') or '').strip()
+              stage['metric_alias'] = str(stage.get('metric_alias') or metric.get('metric_alias') or '').strip()
+              stage['sort'] = _as_list(stage.get('sort'))
+              try:
+                  stage['limit'] = int(stage.get('limit') or 0)
+              except Exception:
+                  stage['limit'] = 0
+              stage['projection_fields'] = _as_list(stage.get('projection_fields'))
+              return stage
+
+          def semantic_plan_normalizer(raw_plan, source='unknown'):
+              warnings = []
+              try:
+                  if not isinstance(raw_plan, dict) or not raw_plan:
+                      return {}, False, 'empty', '', warnings, source or 'unknown'
+                  plan = _deepcopy_json(raw_plan)
+                  for wrapper_key in ('semantic_plan_contract','semantic_plan','normalized_semantic_plan','guarded_semantic_plan','replanned_semantic_plan'):
+                      wrapped = plan.get(wrapper_key)
+                      if isinstance(wrapped, dict):
+                          plan = _deepcopy_json(wrapped)
+                          break
+                  plan = _clean_for_contract(plan, warnings)
+                  execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
+                  if isinstance(execution_plan.get('stages'), list):
+                      plan['stages'] = execution_plan.get('stages')
+                      if isinstance(execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
+                          plan['final_merge'] = execution_plan.get('final_merge')
+                      if execution_plan.get('execution_mode') and not plan.get('execution_mode'):
+                          plan['execution_mode'] = execution_plan.get('execution_mode')
+                  if not isinstance(plan.get('chart_request'), dict) and isinstance(plan.get('visualization'), dict):
+                      plan['chart_request'] = plan.get('visualization')
+                  if not isinstance(plan.get('chart_request'), dict):
+                      top_chart = {k: plan.get(k) for k in ('enabled','chart_type','x_field','y_field','series_name','title') if k in plan}
+                      plan['chart_request'] = top_chart if top_chart else {}
+                  primary_collection = _pick_collection(plan)
+                  raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+                  if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
+                      primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
+                  stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
+                  if not primary_collection and stages:
+                      primary_collection = str(stages[0].get('collection') or '').strip()
+                  chart_request = _default_chart_request(plan.get('chart_request'))
+                  needs_chart = bool(plan.get('needs_chart')) or bool(chart_request.get('enabled'))
+                  chart_request['enabled'] = bool(chart_request.get('enabled')) or needs_chart
+                  final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
+                  final_merge.setdefault('merge_mode', 'none')
+                  normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
+                  contract = {
+                      'contract_version': 'semantic_plan_contract',
+                      'primary_collection': primary_collection,
+                      'related_collections': _as_list(plan.get('related_collections')),
+                      'execution_mode': str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage',
+                      'answer_mode': str(plan.get('answer_mode') or 'data').strip() or 'data',
+                      'needs_chart': bool(needs_chart),
+                      'stages': stages,
+                      'final_merge': final_merge,
+                      'chart_request': chart_request,
+                      'requires_clarification': bool(plan.get('requires_clarification')),
+                      'clarification_question': str(plan.get('clarification_question') or '').strip(),
+                      'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
+                      'warnings': _as_list(plan.get('warnings')),
+                      'normalizer_warnings': normalizer_warnings,
+                  }
+                  route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
+                  return contract, True, route, '', normalizer_warnings, source or 'unknown'
+              except Exception as e:
+                  return {}, False, 'system_error', str(e), warnings, source or 'unknown'
+
+          def main(structured_output=None, text: str=''):
+              raw=structured_output if isinstance(structured_output,dict) and structured_output else _loads(text)
+              plan, valid, route, err, warnings, source = semantic_plan_normalizer(raw, 'refine')
+              if not raw:
+                  valid=False; route='empty'; err=err or '缺少可解析的重规划 semantic plan'
+              if isinstance(raw, dict) and raw.get('replan_error'):
+                  valid=False; route='invalid'; err=str(raw.get('replan_error') or err)
+              stages=(plan.get('stages') or []) if isinstance(plan,dict) else []
+              missing=[] if stages else ['stages']
+              if not stages and valid:
+                  valid=False; route='invalid'; err='缺失字段: stages'
+              js=json.dumps(plan,ensure_ascii=False) if valid else '{}'
+              return {
+                  'replanned_semantic_plan_json': js,
+                  'replanned_normalized_semantic_plan_json': js if valid else '',
+                  'semantic_plan_json': js,
+                  'normalized_semantic_plan_json': js if valid else '',
+                  'semantic_plan_contract_json': js,
+                  'normalizer_valid': bool(valid),
+                  'normalizer_route': route,
+                  'normalizer_error': err or '',
+                  'normalizer_warnings_json': json.dumps(warnings or [],ensure_ascii=False),
+                  'semantic_plan_source': source,
+                  'replan_valid': bool(valid),
+                  'replan_error': err or '',
+                  'replan_warning': ';'.join(warnings or []),
+                  'replan_debug_json': json.dumps({'used_structured_output':isinstance(structured_output,dict) and bool(structured_output),'missing':missing,'normalizer_route':route},ensure_ascii=False)
+              }
+        code_language: python3
+        desc: 提取 LLM structured output，fallback text，剥离代码块并规范化重规划 semantic plan。
+        outputs:
+          replanned_semantic_plan_json:
+            children:
+            type: string
+          replanned_normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_json:
+            children:
+            type: string
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_contract_json:
+            children:
+            type: string
+          normalizer_valid:
+            children:
+            type: boolean
+          normalizer_route:
+            children:
+            type: string
+          normalizer_error:
+            children:
+            type: string
+          normalizer_warnings_json:
+            children:
+            type: string
+          semantic_plan_source:
+            children:
+            type: string
+          replan_valid:
+            children:
+            type: boolean
+          replan_error:
+            children:
+            type: string
+          replan_warning:
+            children:
+            type: string
+          replan_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_提取并规范化重规划语义计划结果
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000020'
+          - structured_output
+          value_type: object
+          variable: structured_output
+        - value_selector:
+          - '1776000000020'
+          - text
+          value_type: string
+          variable: text
+      height: 80
+      id: '1776000000028'
+      position:
+        x: 9020
+        y: 520
+      positionAbsolute:
+        x: 9020
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+
+          CATALOG_VERSION = 'collection_catalog_contract'
+          SELECTION_VERSION = 'collection_selection_contract'
+
+          def _loads(value):
+              if isinstance(value, dict):
+                  return dict(value)
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return {}
+              return {}
+
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if value in (None, ''):
+                  return []
+              return [str(value).strip()]
+
+          def _uniq(items, limit=0):
+              out, seen = [], set()
+              for item in items:
+                  item = str(item or '').strip()
+                  if item and item not in seen:
+                      seen.add(item); out.append(item)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+          def _digest(obj):
+              tmp = dict(obj or {})
+              tmp.pop('catalog_digest', None)
+              return hashlib.sha256(json.dumps(tmp, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+          def _fallback_catalog():
+              catalog = {
+                  'catalog_version': CATALOG_VERSION,
+                  'catalog_digest': '',
+                  'collections': [
+                      {
+                          'collection_name': 'orders', 'collection_label': '订单', 'domain': 'commerce',
+                          'aliases': ['orders', '订单', '订单表', '销售订单', '下单记录'],
+                          'description': '订单主集合，用于订单明细、销售统计、支付状态、订单趋势分析',
+                          'default_time_field': 'created_at',
+                          'primary_metrics': ['order_count', '订单数', '单量', '订单量', 'gmv_sum', '销售额', 'GMV', 'quantity_sum'],
+                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'province', '省份', 'status', '订单状态', 'payment_status', '支付状态', 'created_at'],
+                          'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
+                          'related_collections': ['products'], 'priority': 100,
+                      },
+                      {
+                          'collection_name': 'products', 'collection_label': '商品', 'domain': 'commerce',
+                          'aliases': ['products', '商品', '商品表', '产品', '产品表', '货品'],
+                          'description': '商品主数据集合，用于商品明细、品牌、类目、上下架状态和商品数量统计',
+                          'default_time_field': 'updated_at',
+                          'primary_metrics': ['product_count', '商品数', '产品数', 'sku_count'],
+                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'status', '商品状态', 'product_name', '商品名称'],
+                          'supported_intents': ['detail', 'aggregate_summary', 'ranking', 'enrich'],
+                          'related_collections': [], 'priority': 80,
+                      },
+                  ],
+                  'warnings': ['使用内置 C-MVP collection catalog fallback。'],
+              }
+              catalog['catalog_digest'] = _digest(catalog)
+              return catalog
+
+          def _catalog_from_schema(schema_metadata_json, manual_catalog_json):
+              manual = _loads(manual_catalog_json)
+              if manual.get('catalog_version') == CATALOG_VERSION:
+                  manual.setdefault('warnings', [])
+                  manual.setdefault('collections', [])
+                  manual['catalog_digest'] = manual.get('catalog_digest') or _digest(manual)
+                  return manual
+              meta = _loads(schema_metadata_json)
+              collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
+              if not collections:
+                  return _fallback_catalog()
+              out = []
+              for idx, name in enumerate(sorted(collections.keys())):
+                  coll = collections.get(name) or {}
+                  fields = coll.get('fields') if isinstance(coll.get('fields'), dict) else {}
+                  metrics = coll.get('metrics') if isinstance(coll.get('metrics'), dict) else {}
+                  aliases = _uniq([name, coll.get('collection_label')] + _list(coll.get('collection_aliases')), 24)
+                  metric_terms = []
+                  for mname, m in metrics.items():
+                      m = m or {}
+                      metric_terms.extend([mname, m.get('label')] + _list(m.get('aliases')))
+                  dim_terms = []
+                  for fname, f in fields.items():
+                      f = f or {}
+                      if f.get('groupable') or f.get('filterable') or f.get('chartable') or f.get('role') in ['dimension', 'time'] or f.get('semantic_type') in ['dimension', 'time']:
+                          dim_terms.extend([fname, f.get('label')] + _list(f.get('aliases')))
+                  related = []
+                  for rel in coll.get('relations') or []:
+                      target = str((rel or {}).get('target_collection') or '').strip()
+                      if target and target not in related:
+                          related.append(target)
+                  out.append({
+                      'collection_name': name,
+                      'collection_label': str(coll.get('collection_label') or name),
+                      'domain': str(coll.get('domain') or ''),
+                      'aliases': aliases,
+                      'description': str(coll.get('description') or ''),
+                      'default_time_field': str(coll.get('default_time_field') or ''),
+                      'primary_metrics': _uniq(metric_terms, 24),
+                      'primary_dimensions': _uniq(dim_terms, 32),
+                      'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
+                      'related_collections': related[:8],
+                      'priority': 100 if name == 'orders' else (80 if name == 'products' else max(10, 60 - idx)),
+                  })
+              catalog = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': out, 'warnings': []}
+              catalog['catalog_digest'] = _digest(catalog)
+              return catalog
+
+          def _default_selection():
+              return {
+                  'contract_version': SELECTION_VERSION,
+                  'selected_primary_collection': '',
+                  'selected_related_collections': [],
+                  'confidence': 0,
+                  'needs_schema_retrieval': True,
+                  'primary_candidates': [],
+                  'related_candidates': [],
+                  'low_confidence': False,
+                  'requires_clarification': False,
+                  'clarification_question': '',
+                  'warnings': [],
+              }
+
+          def main(question: str, turn_intent_json: str = '', compact_context_json: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', planner=None):
+              catalog = _catalog_from_schema(schema_metadata_json, collection_catalog_json)
+              selection = _default_selection()
+              selection['collection_catalog_digest'] = catalog.get('catalog_digest', '')
+              q = str(question or '')
+              ctx = _loads(compact_context_json)
+              turn = _loads(turn_intent_json)
+              planner = _loads(planner)
+              intent = str(turn.get('turn_intent') or '').strip()
+              last_primary = str(ctx.get('last_primary_collection') or '').strip()
+              warnings, candidates = [], []
+              for coll in catalog.get('collections') or []:
+                  cname = str(coll.get('collection_name') or '').strip()
+                  if not cname:
+                      continue
+                  score, matched, reasons = 0.0, [], []
+                  for term in _uniq(_list(coll.get('aliases')) + [coll.get('collection_label'), cname], 48):
+                      if term and term in q:
+                          score += 0.55; matched.append(term)
+                  for term in _uniq(_list(coll.get('primary_metrics')), 48):
+                      if term and term in q:
+                          score += 0.22; matched.append(term)
+                  for term in _uniq(_list(coll.get('primary_dimensions')), 64):
+                      if term and term in q:
+                          score += 0.14; matched.append(term)
+                  if intent in _list(coll.get('supported_intents')):
+                      score += 0.05
+                  if last_primary and cname == last_primary and intent in ['refine_query', 'fix_result', 'continue_previous']:
+                      score += 0.35 if not matched else 0.12
+                      reasons.append('使用 compact_context.last_primary_collection prior')
+                  score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
+                  if matched:
+                      reasons.append('命中 ' + '、'.join(_uniq(matched, 8)))
+                  candidates.append({'collection': cname, 'score': round(min(score, 1.0), 4), 'reason': '；'.join(reasons), 'matched_aliases': _uniq(matched, 12)})
+              candidates.sort(key=lambda x: (-x['score'], x['collection']))
+              selection['primary_candidates'] = [x for x in candidates if x['score'] > 0][:3]
+              top = selection['primary_candidates'][0] if selection['primary_candidates'] else None
+              second = selection['primary_candidates'][1] if len(selection['primary_candidates']) > 1 else None
+              if top and top['score'] >= 0.5:
+                  selection['selected_primary_collection'] = top['collection']
+                  selection['confidence'] = top['score']
+              elif top:
+                  selection['confidence'] = top['score']
+                  selection['low_confidence'] = True
+                  selection['requires_clarification'] = True
+                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
+                  warnings.append('collection selector low confidence')
+              else:
+                  selection['low_confidence'] = True
+                  selection['requires_clarification'] = True
+                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
+                  warnings.append('没有命中 collection catalog 候选')
+              if top and second and top['score'] - second['score'] < 0.12:
+                  warnings.append('primary collection 候选分数接近，存在歧义')
+              cmap = {c.get('collection_name'): c for c in catalog.get('collections') or []}
+              selected = selection['selected_primary_collection']
+              related = []
+              if selected:
+                  for rname in cmap.get(selected, {}).get('related_collections') or []:
+                      rc = cmap.get(rname) or {}
+                      terms = _uniq([rname, rc.get('collection_label')] + _list(rc.get('aliases')) + _list(rc.get('primary_metrics')) + _list(rc.get('primary_dimensions')), 80)
+                      matched = [t for t in terms if t and t in q]
+                      if matched:
+                          related.append(rname)
+                          selection['related_candidates'].append({'collection': rname, 'score': 0.72, 'reason': '命中 related collection 语义：' + '、'.join(matched[:6]), 'matched_aliases': matched[:8]})
+              selection['selected_related_collections'] = related[:3]
+              if not selection['selected_primary_collection']:
+                  legacy = str(planner.get('primary_collection') or '').strip()
+                  if legacy and legacy != 'unknown':
+                      selection['primary_candidates'].append({'collection': legacy, 'score': 0.45, 'reason': '兼容 fallback：旧 planner primary_collection', 'matched_aliases': []})
+                      warnings.append('selector 未高置信命中，保留旧 planner collection 候选')
+              selection['warnings'] = warnings
+              return {
+                  'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                  'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                  'selected_primary_collection': selection['selected_primary_collection'],
+                  'selected_related_collections': selection['selected_related_collections'],
+                  'selection_confidence': float(selection.get('confidence') or 0),
+                  'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+              }
+        code_language: python3
+        desc: refine full_replan 前基于 compact context prior 选择 collection；use_patch/chart_only
+          不经过本节点。
+        outputs:
+          collection_catalog_json:
+            children:
+            type: string
+          collection_selection_json:
+            children:
+            type: string
+          selected_primary_collection:
+            children:
+            type: string
+          selected_related_collections:
+            children:
+            type: array[string]
+          selection_confidence:
+            children:
+            type: number
+          selector_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_CollectionCatalog候选选择
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: turn_intent_json
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1776000000001'
+          - last_schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+      height: 80
+      id: '1777000000002'
+      position:
+        x: 4600
+        y: 520
+      positionAbsolute:
+        x: 4600
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: refine-plan-system
+          role: system
+          text: 你是复杂 refine_query/fix_result/continue_previous 的 Schema 检索规划器。你只规划
+            schema 检索任务，不生成 semantic plan，不生成 Mongo pipeline。必须只输出符合 structured output
+            schema 的 JSON；不得输出 markdown、解释文字或代码块。
+        - id: refine-plan-user
+          role: user
+          text: |-
+            当前用户问题：
+            {{#sys.query#}}
+
+            上一轮 old normalized semantic plan：
+            {{#1776000000001.old_normalized_semantic_plan_json#}}
+
+            query_refinement_json：
+            {{#1776000000004.query_refinement_json#}}
+
+            确定性 patch 失败原因：
+            {{#1776000000019.patch_reason#}}
+
+            changed_fields：
+            {{#1776000000019.changed_fields#}}
+
+            上一轮上下文摘要（包含结果字段、chart_request 等）：
+            {{#1776000000001.last_context_json#}}
+
+            当前 turn_intent：{{#1776000000004.turn_intent#}}
+            route_debug_json：{{#1776000000013.route_debug_json#}}
+
+            规划规则：
+            1. 必须优先检索 old_plan 中的 primary_collection。
+            2. 必须保留 old_plan 涉及的 collection 作为候选。
+            3. 用户引入“真实厂商/供应商/退款订单/高价值客户/产品线”等业务词时，必须加入 business_terms 和 retrieval_tasks.query。
+            4. 如果可能引入新 collection，需要加入 collection_hints。
+            5. 无法判断具体 collection 时，至少基于 old primary_collection 和业务关键词做 schema 检索。
+            6. 不要轻易 clarify，应优先尝试检索 schema。
+            7. 只输出检索规划 JSON，不输出 semantic plan 或 Mongo pipeline。
+        selected: false
+        structured_output_enabled: true
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - refine_planning_valid
+            - requires_schema_retrieval
+            - primary_collection_hint
+            - collection_hints
+            - field_hints
+            - business_terms
+            - old_plan_fields
+            - possible_new_concepts
+            - retrieval_tasks
+            - planning_reason
+            - clarify_needed
+            - clarify_question
+            properties:
+              refine_planning_valid:
+                type: boolean
+              requires_schema_retrieval:
+                type: boolean
+              primary_collection_hint:
+                type: string
+              collection_hints:
+                type: array
+                items:
+                  type: string
+              field_hints:
+                type: array
+                items:
+                  type: string
+              business_terms:
+                type: array
+                items:
+                  type: string
+              old_plan_fields:
+                type: array
+                items:
+                  type: string
+              possible_new_concepts:
+                type: array
+                items:
+                  type: string
+              retrieval_tasks:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - collection_hint
+                  - query
+                  - reason
+                  properties:
+                    collection_hint:
+                      type: string
+                    query:
+                      type: string
+                    reason:
+                      type: string
+              planning_reason:
+                type: string
+              clarify_needed:
+                type: boolean
+              clarify_question:
+                type: string
+        title: LLM_Refine查询规划
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776000000030'
+      position:
+        x: 5060
+        y: 520
+      positionAbsolute:
+        x: 5060
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: ''
+        error_handle_mode: terminated
+        height: 360
+        is_parallel: false
+        iterator_selector:
+        - '1776000000025'
+        - refine_collection_tasks
+        output_selector:
+        - '1776000000035'
+        - output
+        output_type: array[string]
+        parallel_nums: 10
+        selected: false
+        start_node_id: 1776000000032start
+        title: 遍历Collections检索Schema_Refine
+        type: iteration
+        width: 980
+      height: 360
+      id: '1776000000032'
+      position:
+        x: 5980
+        y: 520
+      positionAbsolute:
+        x: 5980
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 980
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1776000000032start
+      parentId: '1776000000032'
+      position:
+        x: 40
+        y: 90
+      positionAbsolute:
+        x: 6020
+        y: 610
+      selectable: false
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+
+          def main(item):
+              data = item
+              if isinstance(data, str):
+                  data = json.loads(data)
+
+              collection_name = str((data or {}).get("collection_name") or "").strip()
+              role = str((data or {}).get("role") or "").strip()
+              query_text = str((data or {}).get("query_text") or "").strip()
+
+              return {
+                  "collection_name": collection_name,
+                  "role": role,
+                  "query_text": query_text
+              }
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        isIterationStart: true
+        iteration_id: '1776000000032'
+        outputs:
+          collection_name:
+            children:
+            type: string
+          query_text:
+            children:
+            type: string
+          role:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_解析当前任务
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000032'
+          - item
+          variable: item
+      height: 52
+      id: '1776000000033'
+      parentId: '1776000000032'
+      position:
+        x: 380
+        y: 90
+      positionAbsolute:
+        x: 6360
+        y: 610
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1001
+    - data:
+        dataset_ids:
+        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
+        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        isInIteration: true
+        iteration_id: '1776000000032'
+        metadata_filtering_conditions:
+          conditions:
+          - comparison_operator: is
+            id: ca7255e8-5829-4063-9def-1e9ec392f49b
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1776000000033.collection_name#}}"
+          logical_operator: and
+        metadata_filtering_mode: manual
+        multiple_retrieval_config:
+          reranking_enable: false
+          reranking_mode: weighted_score
+          top_k: 4
+          weights:
+            keyword_setting:
+              keyword_weight: 0.3
+            vector_setting:
+              embedding_model_name: nomic-embed-text:v1.5
+              embedding_provider_name: langgenius/ollama/ollama
+              vector_weight: 0.7
+            weight_type: customized
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1776000000033'
+        - query_text
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索_当前CollectionSchema
+        type: knowledge-retrieval
+      height: 90
+      id: '1776000000034'
+      parentId: '1776000000032'
+      position:
+        x: 800
+        y: 90
+      positionAbsolute:
+        x: 6780
+        y: 610
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+
+          def main(collection_name: str, role: str, docs):
+              docs = docs or []
+              parts = []
+              for idx, item in enumerate(docs):
+                  title = str((item or {}).get("title") or "").strip()
+                  content = str((item or {}).get("content") or "").strip()
+                  metadata = (item or {}).get("metadata") or {}
+                  score = metadata.get("score", "")
+                  chunk = f"[{idx+1}] title={title} score={score}\n{content}".strip()
+                  if chunk:
+                      parts.append(chunk)
+
+              payload = {
+                  "collection_name": collection_name,
+                  "role": role,
+                  "context_text": "\n\n".join(parts)
+              }
+
+              return {
+                  "output": json.dumps(payload, ensure_ascii=False)
+              }
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        iteration_id: '1776000000032'
+        outputs:
+          output:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_打包Schema结果
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000033'
+          - collection_name
+          value_type: string
+          variable: collection_name
+        - value_selector:
+          - '1776000000033'
+          - role
+          value_type: string
+          variable: role
+        - value_selector:
+          - '1776000000034'
+          - result
+          value_type: array[object]
+          variable: docs
+      height: 52
+      id: '1776000000035'
+      parentId: '1776000000032'
+      position:
+        x: 1220
+        y: 90
+      positionAbsolute:
+        x: 7200
+        y: 610
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        cases:
+        - case_id: schema_ready
+          conditions:
+          - comparison_operator: is
+            id: schema-runtime-ready
+            value: true
+            varType: boolean
+            variable_selector:
+            - '1779000000001'
+            - schema_context_ready
+          id: schema_ready
+          logical_operator: and
+        - case_id: schema_hydration_needed
+          conditions:
+          - comparison_operator: is
+            id: schema-runtime-hydration-needed
+            value: true
+            varType: boolean
+            variable_selector:
+            - '1779000000001'
+            - schema_hydration_needed
+          id: schema_hydration_needed
+          logical_operator: and
+        desc: Phase 10 schema runtime route：schema ready 直接进入 validator；需要 hydration
+          时只走 schema retrieval，不调用 planner；否则仍进入 validator 生成 non-valid 回答。
+        selected: false
+        title: 条件分支_schema_runtime_context判断
+        type: if-else
+      height: 198
+      id: '1780000000001'
+      position:
+        x: 12240
+        y: 120
+      positionAbsolute:
+        x: 12240
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
