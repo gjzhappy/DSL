@@ -83,6 +83,66 @@ def _result(route: str, plan: Dict[str, Any] | None, errors=None, warnings=None,
     }
 
 
+
+def _field_ref_collections(value: Any) -> List[str]:
+    refs: List[str] = []
+    if isinstance(value, dict):
+        for v in value.values():
+            refs.extend(_field_ref_collections(v))
+    elif isinstance(value, list):
+        for v in value:
+            refs.extend(_field_ref_collections(v))
+    elif isinstance(value, str):
+        for match in re.findall(r"\b([A-Za-z_][\w-]*)\.[A-Za-z_][\w-]*\b", value):
+            if match not in refs:
+                refs.append(match)
+    return refs
+
+
+def _related_collection_used(plan: Dict[str, Any], related: str) -> bool:
+    stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+    for stage in stages:
+        if isinstance(stage, dict) and _str(stage.get("collection")) == related:
+            return True
+    final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
+    if _str(final_merge.get("merge_mode") or "none") != "none":
+        if related in _field_ref_collections(final_merge) or related in [_str(x) for x in _list(final_merge.get("collections") or final_merge.get("related_collections") or final_merge.get("merge_collections"))]:
+            return True
+        if related in json.dumps(final_merge, ensure_ascii=False):
+            return True
+    for key in ("joins", "join", "relations", "relation", "enrich", "enrichments", "lookup", "lookups"):
+        if related in _field_ref_collections(plan.get(key)) or (isinstance(plan.get(key), (dict, list)) and related in json.dumps(plan.get(key), ensure_ascii=False)):
+            return True
+    for key in ("filters", "group_fields", "projection_fields", "sort"):
+        for stage in stages:
+            if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                return True
+    chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+    if related in _field_ref_collections([chart.get("x_field"), chart.get("y_field")]):
+        return True
+    for key in ("output_fields", "return_fields", "select_fields"):
+        if related in _field_ref_collections(plan.get(key)):
+            return True
+        for stage in stages:
+            if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                return True
+    return False
+
+
+def _prune_unused_related_collections(plan: Dict[str, Any], autofixes: List[Dict[str, Any]]) -> List[str]:
+    related = [_str(x) for x in _list(plan.get("related_collections"))]
+    kept = [rc for rc in related if _related_collection_used(plan, rc)]
+    removed = [rc for rc in related if rc not in kept]
+    if removed:
+        plan["related_collections"] = kept
+        autofixes.append({
+            "type": "unused_related_collection_prune",
+            "from": removed,
+            "to": kept,
+            "reason": "declared related collection is not referenced by stages/final_merge/fields/chart",
+        })
+    return kept
+
 def _field_alias(raw: str, schema: Dict[str, Any], collection: str) -> Tuple[str, str, List[Dict[str, Any]]]:
     raw = _str(raw)
     coll = (schema.get("collections") or {}).get(collection) or {}
@@ -268,7 +328,7 @@ def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", 
         if confidence and confidence < 0.6:
             return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
         errors.append(msg)
-    related = [_str(x) for x in _list(plan.get("related_collections"))]
+    related = _prune_unused_related_collections(plan, autofixes)
     for rc in related:
         if rc not in collections:
             errors.append(f"related_collection={rc} 不存在于 schema metadata。")
@@ -603,7 +663,8 @@ def run_selftests() -> List[Tuple[str, bool, str]]:
     p=copy.deepcopy(base); p["stages"][0]["limit"]=10000; check("limit over max", p, "valid", lambda r: r["normalized_plan"]["stages"][0]["limit"]==100)
     p=copy.deepcopy(base); p["stages"][0]["group_fields"]=["status"]; p["chart_request"]={"enabled":True,"chart_type":"bar","x_field":"brand","y_field":"order_count"}; check("chart x align", p, "valid", lambda r: r["normalized_plan"]["chart_request"]["x_field"]=="status")
     p=copy.deepcopy(base); check("negative residue", p, "needs_replan", extra={"patch_result_json":json.dumps({"negative_fields":["brand"]}, ensure_ascii=False)})
-    p=copy.deepcopy(base); p["related_collections"]=["products"]; schema3=copy.deepcopy(schema); schema3["collections"]["products"]={"collection_name":"products","fields":{},"metrics":{},"relations":[],"query_rules":{}}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema3),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("invalid relation", r["validator_route"] in {"blocked","needs_replan"}, r["validator_route"]))
+    p=copy.deepcopy(base); p["related_collections"]=["products"]; schema3=copy.deepcopy(schema); schema3["collections"]["products"]={"collection_name":"products","fields":{},"metrics":{},"relations":[],"query_rules":{}}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema3),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("unused related collection prune", r["validator_route"]=="valid" and r["normalized_plan"].get("related_collections")==[] and any(a.get("type")=="unused_related_collection_prune" for a in r.get("autofixes",[])), r["validator_route"]+" "+json.dumps(r.get("autofixes"), ensure_ascii=False)))
+    p=copy.deepcopy(base); p["related_collections"]=["products"]; p["stages"].append({"collection":"products","intent_type":"aggregate_summary","time_range":{},"filters":[],"group_fields":["brand"],"metric_alias":"product_count","sort":[],"limit":10,"projection_fields":[]}); schema4=copy.deepcopy(schema); schema4["collections"]["orders"]["relations"]=[{"target_collection":"products","join_keys":[{"source_field":"brand","target_field":"brand"}]}]; schema4["collections"]["products"]={"collection_name":"products","fields":{"brand":{"name":"brand","groupable":True,"filterable":True,"sortable":True,"projectable":True,"returnable":True}},"metrics":{"product_count":{"name":"product_count","function":"count","field":"brand","allowed_dimensions":["brand"]}},"relations":[],"query_rules":{}}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema4),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("used related collection kept", r["validator_route"]=="valid" and r["normalized_plan"].get("related_collections")==["products"], r["validator_route"]+" "+json.dumps(r.get("errors"), ensure_ascii=False)))
     return cases
 
 

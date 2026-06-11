@@ -85,6 +85,66 @@
               }
 
 
+          def _field_ref_collections(value: Any) -> List[str]:
+              refs: List[str] = []
+              if isinstance(value, dict):
+                  for v in value.values():
+                      refs.extend(_field_ref_collections(v))
+              elif isinstance(value, list):
+                  for v in value:
+                      refs.extend(_field_ref_collections(v))
+              elif isinstance(value, str):
+                  for match in re.findall(r"\b([A-Za-z_][\w-]*)\.[A-Za-z_][\w-]*\b", value):
+                      if match not in refs:
+                          refs.append(match)
+              return refs
+
+
+          def _related_collection_used(plan: Dict[str, Any], related: str) -> bool:
+              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+              for stage in stages:
+                  if isinstance(stage, dict) and _str(stage.get("collection")) == related:
+                      return True
+              final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
+              if _str(final_merge.get("merge_mode") or "none") != "none":
+                  if related in _field_ref_collections(final_merge) or related in [_str(x) for x in _list(final_merge.get("collections") or final_merge.get("related_collections") or final_merge.get("merge_collections"))]:
+                      return True
+                  if related in json.dumps(final_merge, ensure_ascii=False):
+                      return True
+              for key in ("joins", "join", "relations", "relation", "enrich", "enrichments", "lookup", "lookups"):
+                  if related in _field_ref_collections(plan.get(key)) or (isinstance(plan.get(key), (dict, list)) and related in json.dumps(plan.get(key), ensure_ascii=False)):
+                      return True
+              for key in ("filters", "group_fields", "projection_fields", "sort"):
+                  for stage in stages:
+                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                          return True
+              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+              if related in _field_ref_collections([chart.get("x_field"), chart.get("y_field")]):
+                  return True
+              for key in ("output_fields", "return_fields", "select_fields"):
+                  if related in _field_ref_collections(plan.get(key)):
+                      return True
+                  for stage in stages:
+                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                          return True
+              return False
+
+
+          def _prune_unused_related_collections(plan: Dict[str, Any], autofixes: List[Dict[str, Any]]) -> List[str]:
+              related = [_str(x) for x in _list(plan.get("related_collections"))]
+              kept = [rc for rc in related if _related_collection_used(plan, rc)]
+              removed = [rc for rc in related if rc not in kept]
+              if removed:
+                  plan["related_collections"] = kept
+                  autofixes.append({
+                      "type": "unused_related_collection_prune",
+                      "from": removed,
+                      "to": kept,
+                      "reason": "declared related collection is not referenced by stages/final_merge/fields/chart",
+                  })
+              return kept
+
+
           def _field_alias(raw: str, schema: Dict[str, Any], collection: str) -> Tuple[str, str, List[Dict[str, Any]]]:
               raw = _str(raw)
               coll = (schema.get("collections") or {}).get(collection) or {}
@@ -270,7 +330,7 @@
                   if confidence and confidence < 0.6:
                       return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
                   errors.append(msg)
-              related = [_str(x) for x in _list(plan.get("related_collections"))]
+              related = _prune_unused_related_collections(plan, autofixes)
               for rc in related:
                   if rc not in collections:
                       errors.append(f"related_collection={rc} 不存在于 schema metadata。")

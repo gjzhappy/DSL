@@ -92,6 +92,28 @@ def _compact_cols(ctx: Dict[str, Any]) -> List[str]:
     return out
 
 
+
+def _parsed_collection_names(schema: Dict[str, Any]) -> List[str]:
+    collections = schema.get("collections") if isinstance(schema, dict) else {}
+    return [str(k).strip() for k in collections.keys() if str(k).strip()] if isinstance(collections, dict) else []
+
+
+def _prune_ref_to_parsed(ref: Dict[str, Any], schema: Dict[str, Any], warnings: List[Any]) -> Dict[str, Any]:
+    out = dict(ref or {})
+    parsed = set(_parsed_collection_names(schema))
+    requested = [str(c or "").strip() for c in _list(out.get("collections")) if str(c or "").strip()]
+    if parsed and requested:
+        kept = [c for c in requested if c in parsed]
+        removed = [c for c in requested if c not in parsed]
+        if removed:
+            warnings.append({
+                "type": "schema_context_ref_pruned_to_parsed_collections",
+                "removed": removed,
+                "reason": "requested collection was not parsed into schema_metadata.collections",
+            })
+        out["collections"] = kept
+    return out
+
 def build_hydration_retrieval_tasks(
     schema_runtime_context_json: Any = "{}",
     semantic_plan_json: Any = "{}",
@@ -182,11 +204,12 @@ def merge_hydrated_schema_context(
     version = str(meta.get("schema_version") or ref.get("schema_version") or "").strip()
     catalog_digest = str(ref.get("catalog_digest") or "").strip()
     context_ref = {
-        "collections": list((meta.get("collections") or {}).keys()),
+        "collections": wanted or list((meta.get("collections") or {}).keys()),
         "schema_digest": meta.get("schema_digest") or "",
         "schema_version": version,
         "catalog_digest": catalog_digest,
     }
+    context_ref = _prune_ref_to_parsed(context_ref, meta, warnings)
     return {
         "hydrated_schema_metadata_json": _dumps(meta),
         "hydrated_schema_alias_index_json": _dumps(alias),
@@ -214,6 +237,7 @@ def prepare_hydrated_validator_runtime_schema_context(
     meta = _loads(hydrated_schema_metadata_json, {}) or {}
     alias = _loads(hydrated_schema_alias_index_json, {}) or {}
     ref = _loads(hydrated_schema_context_ref_json, {}) or {}
+    ref = _prune_ref_to_parsed(ref, meta, warnings)
     ready = bool(hydration_success and meta.get("collections") and alias)
     ctx = {
         "contract_version": "schema_runtime_context_contract",
@@ -240,6 +264,11 @@ def select_final_validator_runtime_schema_context(base_schema_runtime_context_js
     base = _loads(base_schema_runtime_context_json, {}) or {}
     hydrated = _loads(hydrated_schema_runtime_context_json, {}) or {}
     ctx = hydrated if hydrated.get("schema_context_ready") else base
+    warnings = ctx.get("warnings") if isinstance(ctx.get("warnings"), list) else []
+    meta = _loads(ctx.get("schema_metadata_json"), {}) or {}
+    if isinstance(ctx.get("schema_context_ref"), dict):
+        ctx["schema_context_ref"] = _prune_ref_to_parsed(ctx.get("schema_context_ref"), meta, warnings)
+        ctx["warnings"] = warnings
     ctx.setdefault("contract_version", "schema_runtime_context_contract")
     ctx["schema_runtime_context_json"] = _dumps(ctx)
     return ctx

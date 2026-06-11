@@ -489,6 +489,22 @@
               payload = json.dumps(clone, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
               return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
+          def _as_ref_list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
+              return []
+          def _prune_ref_to_parsed(ref, meta, warnings):
+              ref = dict(ref or {})
+              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
+              requested = _as_ref_list(ref.get('collections'))
+              if parsed and requested:
+                  kept = [c for c in requested if c in parsed]
+                  removed = [c for c in requested if c not in parsed]
+                  if removed:
+                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
+                  ref['collections'] = kept
+              return ref
+
           def main(hydrated_schema_results=None, hydration_collections=None, compact_context_json='{}', hydration_warnings_json='[]'):
               warnings = _loads(hydration_warnings_json, []) or []
               errors = []
@@ -518,7 +534,8 @@
                   warnings.append('hydrated_schema_digest_mismatch_with_compact_ref')
               version = str(meta.get('schema_version') or ref.get('schema_version') or '').strip()
               catalog_digest = str(ref.get('catalog_digest') or '').strip()
-              context_ref = {'collections': list(collections.keys()), 'schema_digest': meta['schema_digest'], 'schema_version': version, 'catalog_digest': catalog_digest}
+              context_ref = {'collections': wanted or list(collections.keys()), 'schema_digest': meta['schema_digest'], 'schema_version': version, 'catalog_digest': catalog_digest}
+              context_ref = _prune_ref_to_parsed(context_ref, meta, warnings)
               return {
                   'hydrated_schema_metadata_json': _dumps(meta),
                   'hydrated_schema_alias_index_json': _dumps(alias),
@@ -605,12 +622,29 @@
                   except Exception: return default
               return default
           def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def _as_ref_list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
+              return []
+          def _prune_ref_to_parsed(ref, meta, warnings):
+              ref = dict(ref or {})
+              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
+              requested = _as_ref_list(ref.get('collections'))
+              if parsed and requested:
+                  kept = [c for c in requested if c in parsed]
+                  removed = [c for c in requested if c not in parsed]
+                  if removed:
+                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
+                  ref['collections'] = kept
+              return ref
+
           def main(hydrated_schema_metadata_json='{}', hydrated_schema_alias_index_json='{}', hydrated_schema_digest='', hydrated_schema_version='', hydrated_schema_context_ref_json='{}', hydration_success=False, hydration_warnings_json='[]', hydration_errors_json='[]'):
               warnings = _loads(hydration_warnings_json, []) or []
               errors = _loads(hydration_errors_json, []) or []
               meta = _loads(hydrated_schema_metadata_json, {}) or {}
               alias = _loads(hydrated_schema_alias_index_json, {}) or {}
               ref = _loads(hydrated_schema_context_ref_json, {}) or {}
+              ref = _prune_ref_to_parsed(ref, meta, warnings)
               ready = bool(hydration_success and meta.get('collections') and alias)
               ctx = {
                   'contract_version': 'schema_runtime_context_contract',
@@ -751,10 +785,31 @@
                   except Exception: return default
               return default
           def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def _as_ref_list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
+              return []
+          def _prune_ref_to_parsed(ref, meta, warnings):
+              ref = dict(ref or {})
+              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
+              requested = _as_ref_list(ref.get('collections'))
+              if parsed and requested:
+                  kept = [c for c in requested if c in parsed]
+                  removed = [c for c in requested if c not in parsed]
+                  if removed:
+                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
+                  ref['collections'] = kept
+              return ref
+
           def main(base_schema_runtime_context_json='{}', hydrated_schema_runtime_context_json='{}'):
               base = _loads(base_schema_runtime_context_json, {}) or {}
               hydrated = _loads(hydrated_schema_runtime_context_json, {}) or {}
               ctx = hydrated if hydrated.get('schema_context_ready') else base
+              warnings = ctx.get('warnings') if isinstance(ctx.get('warnings'), list) else []
+              meta = _loads(ctx.get('schema_metadata_json'), {}) or {}
+              if isinstance(ctx.get('schema_context_ref'), dict):
+                  ctx['schema_context_ref'] = _prune_ref_to_parsed(ctx.get('schema_context_ref'), meta, warnings)
+                  ctx['warnings'] = warnings
               ctx.setdefault('contract_version', 'schema_runtime_context_contract')
               ctx['schema_runtime_context_json'] = _dumps(ctx)
               return {

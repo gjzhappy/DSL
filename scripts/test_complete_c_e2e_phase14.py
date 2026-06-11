@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from scripts.chart_payload_builder_phase12 import build_chart_payload  # noqa: E402
 from scripts.schema_hydration_phase10 import build_hydration_retrieval_tasks  # noqa: E402
-from scripts.schema_metadata_c_mvp_lib import build_alias_index, compute_schema_digest  # noqa: E402
+from scripts.schema_metadata_c_mvp_lib import build_alias_index, compute_schema_digest, select_collections  # noqa: E402
 from scripts.schema_runtime_context_phase9 import prepare_validator_schema_context  # noqa: E402
 from scripts.semantic_plan_validator_phase8 import semantic_plan_validator  # noqa: E402
 from scripts.test_phase13_answer_context_contracts import load_node  # noqa: E402
@@ -336,6 +336,48 @@ def run_hydration_failure() -> Dict[str, Any]:
     return compact
 
 
+
+def run_generic_collection_contract_regressions() -> None:
+    schema = copy.deepcopy(SCHEMA)
+    schema["collections"]["orders"]["relations"] = [{"target_collection": "products", "join_keys": [{"source_field": "brand", "target_field": "brand"}]}]
+    schema["collections"]["products"] = {
+        "collection_name": "products",
+        "collection_label": "商品",
+        "collection_aliases": ["产品"],
+        "fields": {"brand": {"name": "brand", "label": "厂商", "aliases": ["厂商"], "groupable": True, "filterable": True, "sortable": True, "projectable": True, "returnable": True}},
+        "metrics": {"product_count": {"name": "product_count", "label": "商品数", "function": "count", "field": "brand", "allowed_dimensions": ["brand"]}},
+        "relations": [],
+        "query_rules": {},
+    }
+    selection = select_collections("过去一个月所有订单按厂商统计", schema_metadata=schema)
+    assert selection["selected_primary_collection"] == "orders"
+    assert selection["selected_related_collections"] == []
+    assert any(c.get("collection") == "products" and "primary collection already covers" in c.get("reason", "") for c in selection.get("related_candidates", []))
+
+    plan = base_plan()
+    plan["related_collections"] = ["products"]
+    result = validate_plan("过去一个月所有订单按厂商统计", plan, schema=schema, alias=build_alias_index(schema), compact={})
+    assert result["validator_route"] == "valid"
+    assert result["normalized_plan"]["related_collections"] == []
+    assert any(a.get("type") == "unused_related_collection_prune" for a in result.get("autofixes", []))
+
+    used = base_plan()
+    used["related_collections"] = ["products"]
+    used["stages"].append({"collection": "products", "intent_type": "aggregate_summary", "time_range": {}, "filters": [], "group_fields": ["brand"], "metric_alias": "product_count", "sort": [], "limit": 100, "projection_fields": []})
+    result = validate_plan("订单关联商品按厂商统计", used, schema=schema, alias=build_alias_index(schema), compact={})
+    assert result["validator_route"] == "valid"
+    assert result["normalized_plan"]["related_collections"] == ["products"]
+
+    runtime = prepare_validator_schema_context(
+        semantic_plan_json=dumps({"primary_collection": "primary_a", "related_collections": ["related_b"], "stages": [{"collection": "primary_a"}]}),
+        schema_metadata_json=dumps({"collections": {"primary_a": {}}, "schema_digest": "d1", "schema_version": "v1"}),
+        schema_alias_index_json=dumps({"field_aliases": {"primary_a": {}}}),
+        compact_context_json=dumps({"schema_context_ref": {"collections": ["primary_a", "related_b"]}}),
+        collection_selection_json=dumps({"selected_primary_collection": "primary_a", "selected_related_collections": ["related_b"]}),
+    )
+    assert runtime["schema_context_ref"]["collections"] == ["primary_a"]
+    assert any(isinstance(w, dict) and w.get("type") == "schema_context_ref_pruned_to_parsed_collections" and w.get("removed") == ["related_b"] for w in runtime.get("warnings", []))
+
 def main() -> None:
     merge = load_node("1775000000022")
     chart_adapter = load_node("1776000000006")
@@ -349,9 +391,10 @@ def main() -> None:
     contexts.append(run_empty_result(merge))
     contexts.append(run_execution_error(merge))
     contexts.append(run_hydration_failure())
+    run_generic_collection_contract_regressions()
     for ctx in contexts:
         assert_compact_boundary(ctx)
-    print("PASS Phase 14 complete-C mock E2E fixtures: 10 scenarios including global compact boundary checks")
+    print("PASS Phase 14 complete-C mock E2E fixtures: 11 scenarios including global compact boundary checks")
 
 
 if __name__ == "__main__":
