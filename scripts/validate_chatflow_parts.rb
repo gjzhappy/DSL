@@ -194,7 +194,15 @@ edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s,
   ['1775000000013', 'source', '1775000000020'] => 'extraction must enter plan_valid gate',
   ['1775000000020', 'true', '1776000000024'] => 'valid new-query plans must enter unified Mongo input preparation',
   ['1776000000024', 'source', '1779000000001'] => 'prepared normalized plans must enter Phase 9 runtime schema context before validator',
-  ['1779000000001', 'source', '1778000000001'] => 'Phase 9 runtime schema context must enter validator',
+  ['1779000000001', 'source', '1780000000001'] => 'Phase 10 runtime schema context must enter schema ready/hydration route',
+  ['1780000000001', 'schema_ready', '1780000000009'] => 'schema ready route must select final validator runtime context',
+  ['1780000000001', 'schema_hydration_needed', '1780000000002'] => 'schema hydration route must build validator schema hydration retrieval tasks',
+  ['1780000000001', 'false', '1780000000009'] => 'missing/invalid schema context route must still enter validator through final runtime context',
+  ['1780000000002', 'source', '1780000000003'] => 'hydration retrieval tasks must enter schema retrieval iteration',
+  ['1780000000003', 'source', '1780000000007'] => 'hydrated schema retrieval output must be merged and parsed before validator',
+  ['1780000000007', 'source', '1780000000008'] => 'hydrated schema metadata/alias must be prepared as validator runtime context',
+  ['1780000000008', 'source', '1780000000009'] => 'hydrated runtime context must enter final validator runtime selector',
+  ['1780000000009', 'source', '1778000000001'] => 'final validator runtime schema context must enter validator',
   ['1778000000001', 'source', '1778000000002'] => 'validator result must enter validator route branch',
   ['1778000000002', 'valid', '1775000000007'] => 'only validator valid branch may enter compiler',
   ['1778000000002', 'requires_clarification', '1778000000004'] => 'validator clarification branch must save context without compiler',
@@ -214,7 +222,10 @@ if edge_pairs.include?(['1775000000020', 'true', '1775000000007'])
   errors << '1775000000020 true branch still bypasses unified preparation and enters compiler directly'
 end
 if edge_pairs.include?(['1776000000024', 'source', '1778000000001'])
-  errors << '1776000000024 still connects directly to validator without Phase 9 runtime schema context'
+  errors << '1776000000024 still connects directly to validator without Phase 9/10 runtime schema context'
+end
+if edge_pairs.include?(['1779000000001', 'source', '1778000000001'])
+  errors << '1779000000001 still connects directly to validator without Phase 10 schema ready/hydration route'
 end
 # Phase 9 guardrails: full schema/alias may be carried at runtime but must not be
 # persisted back into compact conversation context or validator non-valid context updates.
@@ -232,7 +243,104 @@ unless nonvalid_ctx_item && nonvalid_ctx_item['value'] == ['1778000000001', 'con
   errors << "1778000000004 last_context_update_json must use validator context_update_json minimal summary, got #{nonvalid_ctx_item&.dig('value').inspect}"
 end
 
-#{insert}
+
+# Phase 10 schema hydration static guardrails.
+phase10_nodes = {
+  '1780000000001' => '条件分支_schema_runtime_context判断',
+  '1780000000002' => '代码执行_构建ValidatorSchemaHydration检索任务',
+  '1780000000003' => '遍历Collections检索Schema_Hydration',
+  '1780000000007' => '代码执行_合并HydratedSchema上下文并解析metadata',
+  '1780000000008' => '代码执行_准备HydratedValidator运行时Schema上下文',
+  '1780000000009' => '代码执行_选择最终Validator运行时Schema上下文'
+}
+phase10_nodes.each do |id, title|
+  node = node_by_id[id]
+  errors << "required Phase 10 node #{id} is missing" if node.nil?
+  errors << "#{id} title is #{node.dig('data', 'title').inspect}, expected #{title}" if node && node.dig('data', 'title') != title
+end
+
+{
+  'hydration_collection_tasks' => 'array[object]',
+  'hydration_collections' => 'array[string]',
+  'hydration_reason' => 'string',
+  'hydration_task_valid' => 'boolean',
+  'retrieval_mode' => 'string'
+}.each do |field, type|
+  actual_type = outputs_by_id.dig('1780000000002', field, 'type')
+  errors << "1780000000002 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
+end
+{
+  'hydrated_schema_metadata_json' => 'string',
+  'hydrated_schema_alias_index_json' => 'string',
+  'hydrated_schema_digest' => 'string',
+  'hydrated_schema_version' => 'string',
+  'hydrated_schema_context_ref_json' => 'string',
+  'hydration_success' => 'boolean'
+}.each do |field, type|
+  actual_type = outputs_by_id.dig('1780000000007', field, 'type')
+  errors << "1780000000007 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
+end
+%w[1780000000008 1780000000009].each do |id|
+  %w[schema_runtime_context_json schema_metadata_json schema_alias_index_json schema_source].each do |field|
+    actual_type = outputs_by_id.dig(id, field, 'type')
+    errors << "#{id} output #{field} is missing" unless actual_type
+  end
+end
+
+validator_vars = validator_node&.dig('data', 'variables') || []
+{
+  'schema_metadata_json' => ['1780000000009', 'schema_metadata_json'],
+  'schema_alias_index_json' => ['1780000000009', 'schema_alias_index_json'],
+  'schema_runtime_context_json' => ['1780000000009', 'schema_runtime_context_json']
+}.each do |var, expected|
+  actual = validator_vars.find { |v| v['variable'] == var }&.dig('value_selector')
+  errors << "1778000000001 #{var} selector is #{actual.inspect}, expected #{expected.inspect}" unless actual == expected
+end
+
+adj = Hash.new { |h, k| h[k] = [] }
+edges.each { |edge| adj[edge['source'].to_s] << [edge['target'].to_s, edge['sourceHandle'].to_s] }
+reachable = lambda do |start, forbidden_handles = Set.new|
+  seen = Set.new
+  queue = [start]
+  until queue.empty?
+    cur = queue.shift
+    next if seen.include?(cur)
+    seen << cur
+    adj[cur].each do |target, handle|
+      next if forbidden_handles.include?([cur, handle])
+      queue << target unless seen.include?(target)
+    end
+  end
+  seen
+end
+hydration_reachable = reachable.call('1780000000002')
+%w[1773975766025 1776000000020 1777000000002].each do |planner_id|
+  errors << "Phase 10 hydration path can reach planner node #{planner_id}, forbidden" if hydration_reachable.include?(planner_id)
+end
+errors << 'Phase 10 hydration path cannot reach validator' unless hydration_reachable.include?('1778000000001')
+compiler_predecessors = edges.select { |edge| edge['target'].to_s == '1775000000007' }.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s] }
+unless compiler_predecessors == [['1778000000002', 'valid']]
+  errors << "compiler predecessors are #{compiler_predecessors.inspect}, expected only validator valid"
+end
+nonvalid_handles = %w[requires_clarification blocked needs_replan false]
+nonvalid_handles.each do |handle|
+  if edge_pairs.include?(['1778000000002', handle, '1775000000007'])
+    errors << "validator non-valid handle #{handle} enters compiler, forbidden"
+  end
+end
+
+forbidden_persist_fields = %w[schema_metadata_json schema_alias_index_json hydrated_schema_metadata_json hydrated_schema_alias_index_json schema_runtime_context_json]
+nodes.each do |node|
+  title = node.dig('data', 'title').to_s
+  next unless title.include?('保存多轮上下文') || node.dig('data', 'type').to_s == 'assigner'
+  serialized = node.to_s
+  forbidden_persist_fields.each do |field|
+    if serialized.include?(field) && serialized.include?('conversation')
+      errors << "#{node['id']} appears to persist full runtime schema field #{field} into conversation/compact context"
+    end
+  end
+end
+
 incoming_counts = Hash.new(0)
 outgoing_counts = Hash.new(0)
 edges.each do |edge|
