@@ -37,6 +37,21 @@ REQUIRED_VALIDATOR_OUTPUTS = {
   'final_answer_markdown' => 'string',
   'context_update_json' => 'string'
 }.freeze
+REQUIRED_COMPILER_OUTPUTS = {
+  'contract_version' => 'string',
+  'compile_success' => 'boolean',
+  'execution_success' => 'boolean',
+  'primary_collection' => 'string',
+  'pipeline_json' => 'string',
+  'request_body_json' => 'string',
+  'query_result_json' => 'string',
+  'rows_json' => 'string',
+  'row_count' => 'number',
+  'fields_json' => 'string',
+  'compile_warnings_json' => 'string',
+  'execution_error' => 'string',
+  'compiler_debug_json' => 'string'
+}.freeze
 
 errors = []
 warnings = []
@@ -181,8 +196,28 @@ end
 compile_node = node_by_id['1775000000007']
 compile_vars = compile_node&.dig('data', 'variables') || []
 compile_semantic_selector = compile_vars.find { |var| var['variable'] == 'semantic_plan' }&.dig('value_selector')
-unless compile_semantic_selector == ['1778000000001', 'normalized_semantic_plan_json']
-  errors << "1775000000007 semantic_plan selector is #{compile_semantic_selector.inspect}, expected ['1778000000001', 'normalized_semantic_plan_json']"
+unless compile_semantic_selector == ['1778000000001', 'normalized_plan_json']
+  errors << "1775000000007 semantic_plan selector is #{compile_semantic_selector.inspect}, expected ['1778000000001', 'normalized_plan_json']"
+end
+compile_validator_route_selector = compile_vars.find { |var| var['variable'] == 'validator_route' }&.dig('value_selector')
+unless compile_validator_route_selector == ['1778000000001', 'validator_route']
+  errors << "1775000000007 validator_route selector is #{compile_validator_route_selector.inspect}, expected ['1778000000001', 'validator_route']"
+end
+compile_validator_result_selector = compile_vars.find { |var| var['variable'] == 'validator_result_json' }&.dig('value_selector')
+unless compile_validator_result_selector == ['1778000000001', 'validator_result_json']
+  errors << "1775000000007 validator_result_json selector is #{compile_validator_result_selector.inspect}, expected ['1778000000001', 'validator_result_json']"
+end
+compiler_outputs = outputs_by_id['1775000000007'] || {}
+REQUIRED_COMPILER_OUTPUTS.each do |field, type|
+  actual_type = compiler_outputs.dig(field, 'type')
+  errors << "1775000000007 output #{field} type is #{actual_type.inspect}, expected #{type.inspect}" unless actual_type == type
+end
+compiler_code = compile_node&.dig('data', 'code').to_s
+unless compiler_code.include?("validator_route") && compiler_code.include?("normalized_plan_json") && compiler_code.include?("legacy_unvalidated_plan_fallback")
+  errors << '1775000000007 must select validator normalized plan first and expose legacy_unvalidated_plan_fallback debug marker'
+end
+if compiler_code.include?("stage_time_range = _force_relative_month_time_range(question") || compiler_code.include?("intent = _detect_visualization_intent(question")
+  errors << '1775000000007 compiler path still performs question-based time/chart semantic inference'
 end
 
 edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s, edge['target'].to_s] }.to_set
@@ -339,6 +374,17 @@ nodes.each do |node|
       errors << "#{node['id']} appears to persist full runtime schema field #{field} into conversation/compact context"
     end
   end
+end
+
+compact_saver = nodes.find { |node| node.dig('data', 'code').to_s.include?('BANNED_CONTEXT_KEYS') && node.dig('data', 'code').to_s.include?('compact_context_contract') }
+compact_code = compact_saver&.dig('data', 'code').to_s
+%w[pipeline_json request_body_json compiler_debug_json schema_metadata schema_alias_index schema_context full_rows].each do |token|
+  unless compact_code.include?(token)
+    errors << "compact context saver BANNED_CONTEXT_KEYS must include #{token}"
+  end
+end
+if compact_code.include?("'last_pipeline_json'") || compact_code.include?("last_pipeline_json") && !compact_code.include?('BANNED_CONTEXT_KEYS')
+  errors << 'compact context saver appears to persist last_pipeline_json/full pipeline'
 end
 
 incoming_counts = Hash.new(0)
