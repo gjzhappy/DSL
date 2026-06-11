@@ -56,45 +56,69 @@ def reachable(edges, start, blocked=None):
     return seen
 
 
-def fixture_catalog_doc():
-    catalog = {
-        'catalog_version': 'collection_catalog_contract',
-        'catalog_digest': 'fixture-digest',
-        'collections': [
-            {
-                'collection_name': 'orders',
-                'collection_label': '订单',
-                'aliases': ['订单', '所有订单'],
-                'description': '订单事实表',
-                'default_time_field': 'created_at',
-                'primary_metrics': ['订单数', 'order_count'],
-                'primary_dimensions': ['厂商', 'vendor'],
-                'supported_intents': ['aggregate_summary', 'ranking', 'trend'],
-                'related_collections': [],
-                'priority': 90,
-            },
-            {
-                'collection_name': 'products',
-                'collection_label': '商品',
-                'aliases': ['商品'],
-                'description': '商品主数据',
-                'default_time_field': 'created_at',
-                'primary_metrics': ['商品数'],
-                'primary_dimensions': ['品牌'],
-                'supported_intents': ['aggregate_summary'],
-                'related_collections': [],
-                'priority': 10,
-            },
-        ],
-        'warnings': [],
-    }
-    return [{'title': 'collection catalog fixture', 'content': json.dumps(catalog, ensure_ascii=False), 'metadata': {'score': 1.0}}]
+def candidate_docs():
+    orders = """```yaml
+metadata_type: mongo_schema
+schema_version: v1
+collection_name: orders
+collection_label: 订单
+collection_aliases:
+  - 所有订单
+default_time_field: created_at
+priority: 90
+fields:
+  - name: vendor
+    label: 厂商
+    role: dimension
+    aliases: [供应商]
+    groupable: true
+    filterable: true
+  - name: created_at
+    label: 创建时间
+    role: time
+    groupable: true
+    filterable: true
+metrics:
+  - name: order_count
+    label: 订单数
+    aliases: [订单量]
+    function: count
+    field: _id
+relations: []
+query_rules:
+  max_limit: 100
+```"""
+    products = """```yaml
+metadata_type: mongo_schema
+schema_version: v1
+collection_name: products
+collection_label: 商品
+collection_aliases:
+  - 产品
+default_time_field: created_at
+priority: 10
+fields:
+  - name: brand
+    label: 品牌
+    role: dimension
+    groupable: true
+    filterable: true
+metrics:
+  - name: product_count
+    label: 商品数
+    function: count
+    field: _id
+relations: []
+query_rules:
+  max_limit: 100
+```"""
+    return [{'title': 'orders.md', 'content': orders}, {'title': 'products.md', 'content': products}]
 
 
 def test_first_turn_catalog_bootstrap(nodes):
-    pack = by_title(nodes, '代码执行_打包CollectionCatalog')
+    pack = by_title(nodes, '代码执行_打包CandidateSchemas并派生Catalog')
     selector = by_title(nodes, '代码执行_CollectionCatalog候选选择')
-    packed = run_code(pack, docs=fixture_catalog_doc())
+    packed = run_code(pack, docs=candidate_docs())
     selection = run_code(
         selector,
         question='过去一个月所有订单, 按厂商进行分组统计,做一个柱状图进行对比',
@@ -108,7 +132,7 @@ def test_first_turn_catalog_bootstrap(nodes):
 
 
 def test_missing_catalog_safe_stop_topology(nodes, edges):
-    pack = by_title(nodes, '代码执行_打包CollectionCatalog')
+    pack = by_title(nodes, '代码执行_打包CandidateSchemas并派生Catalog')
     selector = by_title(nodes, '代码执行_CollectionCatalog候选选择')
     safe = by_title(nodes, '代码执行_CollectionSelectionSafeStop')
     branch = by_title(nodes, '条件分支_CollectionSelection结果判断')
@@ -129,11 +153,10 @@ def test_missing_catalog_safe_stop_topology(nodes, edges):
         collection_selection_json=selection['collection_selection_json'],
         collection_catalog_json=selection['collection_catalog_json'],
     )
-    assert 'collection catalog 不可用' in answer['final_answer_markdown'], answer
+    assert '未检索到可用 schema' in answer['final_answer_markdown'], answer
     safe_reachable = reachable(edges, branch['id'], blocked={(str(branch['id']), 'has_primary')})
     forbidden = {
         by_title(nodes, 'LLM_查询规划')['id'],
-        by_title(nodes, '代码执行_构建检索任务')['id'],
         by_title(nodes, '代码执行_semantic_plan_validator')['id'],
     }
     assert not {str(x) for x in forbidden}.intersection(safe_reachable), safe_reachable
@@ -160,16 +183,19 @@ def test_non_valid_does_not_pollute_success_context(nodes):
     assert conversation['last_context_json'] == '{success context}', conversation
 
 
-def test_schema_retrieval_after_selector(nodes, edges):
-    pack = by_title(nodes, '代码执行_打包CollectionCatalog')
+def test_no_schema_retrieval_after_selector(nodes, edges):
+    pack = by_title(nodes, '代码执行_打包CandidateSchemas并派生Catalog')
     selector = by_title(nodes, '代码执行_CollectionCatalog候选选择')
+    trim = by_title(nodes, '代码执行_裁剪SelectedSchema上下文')
+    merge = by_title(nodes, '代码执行_合并Schema上下文并准备语义计划提示词')
     schema = by_title(nodes, '遍历Collections检索Schema')
     pack_reached = reachable(edges, pack['id'])
     selector_reached = reachable(edges, selector['id'])
-    schema_reached = reachable(edges, schema['id'])
+    trim_reached = reachable(edges, trim['id'])
     assert str(selector['id']) in pack_reached, pack_reached
-    assert str(schema['id']) in selector_reached, selector_reached
-    assert str(selector['id']) not in schema_reached, schema_reached
+    assert str(trim['id']) in selector_reached, selector_reached
+    assert str(merge['id']) in trim_reached, trim_reached
+    assert str(schema['id']) not in selector_reached, selector_reached
 
 
 def main():
@@ -177,7 +203,7 @@ def main():
     test_first_turn_catalog_bootstrap(nodes)
     test_missing_catalog_safe_stop_topology(nodes, edges)
     test_non_valid_does_not_pollute_success_context(nodes)
-    test_schema_retrieval_after_selector(nodes, edges)
+    test_no_schema_retrieval_after_selector(nodes, edges)
     print('PASS collection catalog bootstrap phase16')
 
 

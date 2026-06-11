@@ -245,7 +245,7 @@ else
   else
     source_id = catalog_var.dig('value_selector', 0).to_s
     source_title = node_by_id.dig(source_id, 'data', 'title').to_s
-    legal_source = ['CollectionCatalog', 'collection catalog', '打包CollectionCatalog', '解析CollectionCatalog', '检索 collection catalog'].any? { |token| source_title.include?(token) }
+    legal_source = ['CandidateSchemas', 'CollectionCatalog', 'collection catalog', '打包CollectionCatalog', '解析CollectionCatalog', '检索 collection catalog'].any? { |token| source_title.include?(token) }
     forbidden_source = source_id == selector_id || source_id == 'conversation' || source_title.match?(/semantic_plan_validator|schema retrieval pack|Schema结果|Schema_Hydration|当前CollectionSchema/i)
     errors << "selector collection_catalog_json source #{source_id}(#{source_title}) is not a legal collection catalog pack/retrieval node" unless legal_source
     errors << "selector collection_catalog_json source #{source_id}(#{source_title}) is forbidden" if forbidden_source
@@ -571,8 +571,18 @@ nonvalid_handles.each do |handle|
   end
 end
 
-# Collection catalog bootstrap / selector routing guardrails.
-catalog_pack_node = nodes.find { |node| node.dig('data', 'title').to_s.include?('打包CollectionCatalog') || node.dig('data', 'title').to_s.include?('解析CollectionCatalog') }
+# CandidateSchemas bootstrap / selector routing guardrails.
+required_candidate_titles = [
+  '代码执行_构建CandidateSchemas检索查询',
+  '知识检索_CandidateSchemas',
+  '代码执行_打包CandidateSchemas并派生Catalog',
+  '代码执行_CollectionCatalog候选选择',
+  '代码执行_裁剪SelectedSchema上下文'
+]
+required_candidate_titles.each do |title|
+  errors << "required CandidateSchemas main-chain node #{title} is missing" unless nodes.any? { |node| node.dig('data', 'title').to_s == title }
+end
+catalog_pack_node = nodes.find { |node| node.dig('data', 'title').to_s.include?('打包CandidateSchemas并派生Catalog') || node.dig('data', 'title').to_s.include?('打包CollectionCatalog') || node.dig('data', 'title').to_s.include?('解析CollectionCatalog') }
 main_selector_node = nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_CollectionCatalog候选选择' }
 schema_retrieval_node = nodes.find { |node| node.dig('data', 'title').to_s == '遍历Collections检索Schema' }
 if catalog_pack_node && main_selector_node
@@ -584,8 +594,23 @@ end
 if main_selector_node && schema_retrieval_node
   selector_id = main_selector_node['id'].to_s
   schema_id = schema_retrieval_node['id'].to_s
-  errors << 'schema retrieval must be after collection selector' unless reachable.call(selector_id).include?(schema_id)
+  if reachable.call(selector_id).include?(schema_id)
+    errors << 'normal CandidateSchemas main path must not reach 遍历Collections检索Schema after selector'
+  end
   errors << 'schema retrieval must not reach collection selector' if reachable.call(schema_id).include?(selector_id)
+end
+trim_node = nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_裁剪SelectedSchema上下文' }
+merge_schema_node = nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_合并Schema上下文并准备语义计划提示词' }
+if main_selector_node && trim_node
+  errors << 'collection selector must reach selected schema trim node' unless reachable.call(main_selector_node['id'].to_s).include?(trim_node['id'].to_s)
+end
+if trim_node && merge_schema_node
+  errors << 'selected schema trim node must reach schema merge prompt node' unless reachable.call(trim_node['id'].to_s).include?(merge_schema_node['id'].to_s)
+  merge_vars = (merge_schema_node.dig('data', 'variables') || [])
+  %w[schema_context schema_metadata_json schema_alias_index_json schema_context_ref_json].each do |field|
+    bound = merge_vars.any? { |var| var.dig('value_selector') == [trim_node['id'].to_s, field] }
+    errors << "schema merge node must bind #{field} from selected schema trim node" unless bound
+  end
 end
 selection_branch = nodes.find { |node| node.dig('data', 'title').to_s == '条件分支_CollectionSelection结果判断' }
 if selection_branch
@@ -594,6 +619,7 @@ if selection_branch
   {
     '1773975766025' => 'LLM_查询规划',
     '1774083951307' => '代码执行_构建检索任务',
+    '1775000000001' => '遍历Collections检索Schema',
     '1778000000001' => '代码执行_semantic_plan_validator'
   }.each do |target_id, label|
     errors << "selector clarification/default branch must not reach #{label}" if safe_reachable.include?(target_id)
@@ -866,10 +892,11 @@ nodes.each do |node|
   parent_id = node['parentId'].to_s
   inside_iteration = iteration_parent_ids.include?(parent_id)
   next if inside_iteration || type == 'iteration-start'
-  if incoming_counts[id].zero? && !start_like_types.include?(type)
+  retained_fallback = ['代码执行_构建检索任务', '遍历Collections检索Schema'].include?(node.dig('data', 'title').to_s)
+  if incoming_counts[id].zero? && !start_like_types.include?(type) && !retained_fallback
     errors << "node #{id} (#{node.dig('data', 'title')}) has no incoming edge"
   end
-  if outgoing_counts[id].zero? && !terminal_types.include?(type)
+  if outgoing_counts[id].zero? && !terminal_types.include?(type) && !retained_fallback
     errors << "node #{id} (#{node.dig('data', 'title')}) has no outgoing edge"
   end
 end
@@ -958,12 +985,27 @@ node_layout.values.combination(2) do |a, b|
     layout_overlaps << pair
   end
 end
-warnings << "layout overlap pairs: #{layout_overlaps.join('; ')}" unless layout_overlaps.empty?
+unless layout_overlaps.empty?
+  warnings << "layout overlap pairs: #{layout_overlaps.join('; ')}"
+  critical_layout_titles = Set.new([
+    '代码执行_构建CandidateSchemas检索查询',
+    '知识检索_CandidateSchemas',
+    '代码执行_打包CandidateSchemas并派生Catalog',
+    '代码执行_CollectionCatalog候选选择',
+    '条件分支_CollectionSelection结果判断',
+    '代码执行_裁剪SelectedSchema上下文',
+    '代码执行_合并Schema上下文并准备语义计划提示词'
+  ])
+  critical_overlaps = layout_overlaps.select do |pair|
+    critical_layout_titles.any? { |title| pair.include?(title) }
+  end
+  errors << "critical CandidateSchemas layout overlaps: #{critical_overlaps.join('; ')}" unless critical_overlaps.empty?
+end
 errors << "iteration internal layout overlaps: #{iteration_internal_overlaps.join('; ')}" unless iteration_internal_overlaps.empty?
 
 phase15_lane_sequences = {
   'turn_intent' => %w[1773909192919 1776000000001 1776000000002 1776000000003 1776000000004 1776000000013 1776000000005],
-  'new_query' => %w[1777000000001 1773975766025 1774083951307 1775000000001 1775000000005 1775000000014 1775000000013 1775000000020],
+  'new_query' => %w[1777099999998 1777099999999 1777100000000 1777000000001 1777100000001 1777100000005 1777100000004 1775000000005 1773975766025 1775000000014 1775000000013 1775000000020],
   'refine_full_replan' => %w[1777000000002 1776000000030 1776000000025 1776000000032 1776000000026 1776000000027 1776000000020 1776000000028 1776000000021],
   'runtime_validator_success' => %w[1776000000024 1779000000001 1780000000001 1780000000009 1778000000001 1778000000002 1775000000007 1781000000001 1775000000022 1775000000023 1773910028939],
   'chart_only' => %w[1776000000014 1776000000015 1776000000016 1776000000006 1776000000009],

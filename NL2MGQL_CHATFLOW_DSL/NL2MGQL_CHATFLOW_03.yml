@@ -23,7 +23,7 @@
 
 
           def main(
-              arg1: list,
+              arg1,
               arg2: str,
               arg3: str,
               llm_token_url: str,
@@ -49,18 +49,21 @@
               current_date: str = '',
           ):
               planner = json.loads(arg2) if isinstance(arg2, str) else (arg2 or {})
-              sections = []
-
-              for raw in (arg1 or []):
-                  item = json.loads(raw) if isinstance(raw, str) else (raw or {})
-                  collection_name = str(item.get("collection_name") or "").strip()
-                  role = str(item.get("role") or "").strip()
-                  context_text = str(item.get("context_text") or "").strip()
-                  sections.append(
-                      f"## collection={collection_name}\n"
-                      f"role={role}\n"
-                      f"{context_text}"
-                  )
+              if isinstance(arg1, str):
+                  fresh_schema_context = arg1
+              else:
+                  sections = []
+                  for raw in (arg1 or []):
+                      item = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                      collection_name = str(item.get("collection_name") or "").strip()
+                      role = str(item.get("role") or "").strip()
+                      context_text = str(item.get("context_text") or "").strip()
+                      sections.append(
+                          f"## collection={collection_name}\n"
+                          f"role={role}\n"
+                          f"{context_text}"
+                      )
+                  fresh_schema_context = "\n\n".join(sections)
               planner_json = json.dumps(planner, ensure_ascii=False, indent=2)
               collection_selection_text = str(collection_selection_json or '{}')
               compact_context_text = str(compact_context_json or '{}')
@@ -74,7 +77,7 @@
                   f"### schema_metadata 裁剪摘要（字段/指标/relation/query_rules 使用 canonical name）\n{schema_metadata_summary_text}\n\n"
                   f"### schema_alias_index 裁剪摘要（别名只能映射到 canonical name）\n{schema_alias_index_summary_text}\n\n"
                   f"### compact_context_json（弱上下文；不得继承用户已否定字段）\n{compact_context_text}\n\n"
-                  f"### fresh schema_context（禁止使用未出现在此处或 schema_metadata 中的字段/指标/relation）\n" + "\n\n".join(sections)
+                  f"### fresh schema_context（禁止使用未出现在此处或 schema_metadata 中的字段/指标/relation）\n{fresh_schema_context}"
               )
               refine_context = ''
               if str(turn_intent or '').strip() == 'refine_query':
@@ -168,13 +171,13 @@
         type: code
         variables:
         - value_selector:
-          - '1775000000001'
-          - output
-          value_type: array[string]
+          - '1777100000005'
+          - schema_context
+          value_type: string
           variable: arg1
         - value_selector:
-          - '1774083951307'
-          - planner_json
+          - '1777000000001'
+          - collection_selection_json
           value_type: string
           variable: arg2
         - value_selector:
@@ -263,7 +266,7 @@
           value_type: string
           variable: query_refinement_json
         - value_selector:
-          - '1774083951307'
+          - '1777000000001'
           - collection_selection_json
           value_type: string
           variable: collection_selection_json
@@ -273,23 +276,28 @@
           value_type: string
           variable: compact_context_json
         - value_selector:
-          - '1776000000001'
-          - last_schema_metadata_json
+          - '1777100000005'
+          - schema_metadata_json
           value_type: string
           variable: schema_metadata_summary_json
         - value_selector:
-          - '1776000000001'
-          - last_schema_alias_index_json
+          - '1777100000005'
+          - schema_alias_index_json
           value_type: string
           variable: schema_alias_index_summary_json
+        - value_selector:
+          - '1777100000005'
+          - schema_context_ref_json
+          value_type: string
+          variable: schema_context_ref_json
       height: 96
       id: '1775000000005'
       position:
-        x: 6720
-        y: -620
+        x: 5710
+        "y": -620
       positionAbsolute:
-        x: 6720
-        y: -620
+        x: 5710
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
