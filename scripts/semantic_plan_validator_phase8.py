@@ -503,24 +503,64 @@ def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
     route = res.get("validator_route")
     if route == "valid":
         text = ""
+        answer_type = res.get("answer_type") or "query_only"
+        should_save = False
     elif route == "requires_clarification":
         text = res.get("clarification_question") or "我需要确认一下查询字段后再执行。"
-    elif route == "blocked":
-        text = res.get("blocked_reason") or "这个查询不符合安全策略，未执行。"
-    elif route == "needs_replan":
-        text = "当前问题需要重新规划，请补充或调整字段、指标、集合或时间范围后再试。"
+        answer_type = "clarification"
+        should_save = False
+    elif route in {"blocked", "needs_replan"}:
+        reason = res.get("blocked_reason") or "; ".join(_list(res.get("errors"))) or "语义计划未通过校验。"
+        text = "当前查询无法执行：" + reason
+        answer_type = "validation_error"
+        should_save = False
     else:
-        text = "语义计划校验失败，未进入 Mongo 编译执行。请补充查询对象、字段、指标或时间范围后重试。"
+        text = "系统在处理该查询时出现异常，请调整问题后重试。"
+        answer_type = "system_error"
+        should_save = False
+    res["answer_type"] = answer_type
     res["final_answer_markdown"] = text
+    res["answer_payload_markdown"] = text
     schema_ref = {}
     dbg = res.get("debug") if isinstance(res.get("debug"), dict) else {}
     if isinstance(dbg.get("schema_context_ref"), dict):
         schema_ref = dbg.get("schema_context_ref")
-    res["answer_payload_json"] = json.dumps({"answer_type": res.get("answer_type"), "answer": text, "validator_route": route}, ensure_ascii=False)
-    res["context_update_json"] = json.dumps({"last_question": _str(dbg.get("question")), "answer_summary": text[:200], "validator_route": route, "schema_context_ref": schema_ref}, ensure_ascii=False)
+    compact = {
+        "context_version": "compact_context_contract",
+        "has_last_context": False,
+        "last_question": _str(dbg.get("question")),
+        "last_turn_intent": {"validator_route": route or "invalid", "answer_type": answer_type},
+        "last_primary_collection": "",
+        "last_related_collections": [],
+        "last_plan_summary": {},
+        "last_resolved_fields": [],
+        "last_resolved_metrics": [],
+        "last_chart_request": {},
+        "last_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
+        "schema_context_ref": schema_ref or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
+        "answer_summary": text[:800],
+        "size_guard": {},
+        "context_warnings": [],
+    }
+    compact_json = json.dumps(compact, ensure_ascii=False)
+    answer_payload = {
+        "contract_version": "answer_payload_contract",
+        "answer_type": answer_type,
+        "answer_text": text,
+        "chart_echarts_markdown": "",
+        "result_summary": text[:800],
+        "message": "",
+        "chart_payload": {},
+        "query_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
+        "state_update": {"should_save_context": should_save, "context_summary": compact},
+        "debug_summary": {"validator_route": route or "invalid"},
+    }
+    context_update = {"contract_version": "context_update_contract", "should_save_context": should_save, "compact_context": compact, "last_context_json": compact_json, "warnings": [], "clear_fields": []}
+    res["answer_payload_json"] = json.dumps(answer_payload, ensure_ascii=False)
+    res["context_update_json"] = json.dumps(context_update, ensure_ascii=False)
+    res["compact_context_json"] = compact_json
     res["validator_result_json"] = json.dumps({k: v for k, v in res.items() if k not in {"validator_result_json"}}, ensure_ascii=False)
     return res
-
 
 def main(**kwargs: Any) -> Dict[str, Any]:
     return semantic_plan_validator(**kwargs)

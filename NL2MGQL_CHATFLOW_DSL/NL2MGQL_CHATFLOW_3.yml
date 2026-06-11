@@ -1,1318 +1,3 @@
-              return bool(lower_exception and any(marker in lower_exception for marker in transient_markers))
-
-
-          def _format_error_message(prefix, status_code, body_text, headers, retry_count, exception_message=''):
-              parts = [prefix]
-              if status_code:
-                  parts.append('status=%s' % status_code)
-              message = _extract_error_message(body_text) or _to_text(exception_message)
-              tracer_id = _extract_tracer_id(body_text, headers)
-              if message:
-                  parts.append('message=%s' % message)
-              if tracer_id:
-                  parts.append('tracer_id=%s' % tracer_id)
-              parts.append('retry_count=%s' % retry_count)
-              return ' '.join(parts)
-
-
-          def _post_json_once(url, data, auth, timeout_sec):
-              req = urllib.request.Request(
-                  url,
-                  data=data,
-                  headers={
-                      'Content-Type': 'application/json',
-                      'Authorization': auth
-                  },
-                  method='POST'
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-                      text = resp.read().decode('utf-8', errors='replace')
-                      status_code = int(getattr(resp, 'status', 0) or 0)
-                      return status_code, text, dict(resp.headers.items()), ''
-              except urllib.error.HTTPError as e:
-                  text = e.read().decode('utf-8', errors='replace')
-                  headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
-                  return int(getattr(e, 'code', 0) or 0), text, headers, ''
-              except Exception as e:
-                  return 0, '', {}, str(e)
-
-
-          def _post_json_with_retry(url, data, auth, timeout_sec):
-              retry_count = 0
-              last_status_code = 0
-              last_body = ''
-              last_headers = {}
-              last_exception_message = ''
-              for attempt in range(MAX_RETRY + 1):
-                  status_code, body_text, headers, exception_message = _post_json_once(url, data, auth, timeout_sec)
-                  last_status_code = status_code
-                  last_body = body_text
-                  last_headers = headers
-                  last_exception_message = exception_message
-                  if 200 <= status_code < 300:
-                      return status_code, body_text, headers, retry_count, ''
-                  if attempt >= MAX_RETRY or not _is_retryable_error(status_code, body_text, exception_message):
-                      break
-                  time.sleep(RETRY_SLEEP_SECONDS[attempt])
-                  retry_count += 1
-              prefix = 'HTTP_ERROR' if last_status_code else 'NETWORK_ERROR'
-              error_message = _format_error_message(prefix, last_status_code, last_body, last_headers, retry_count, last_exception_message)
-              return last_status_code, last_body, last_headers, retry_count, error_message
-
-
-          def main(chat_url: str, authorization_value: str, llm_request_body_json: str) -> dict:
-              timeout_sec = 70
-              result = {
-                  'status_code': 0,
-                  'ok': False,
-                  'body': '',
-                  'body_preview': '',
-                  'headers_json': '{}',
-                  'error_message': '',
-                  'request_debug': {},
-                  'retry_count': 0,
-                  'tracer_id': '',
-                  'last_status_code': 0,
-                  'last_error_message': ''
-              }
-
-              try:
-                  body_obj = _safe_json_loads(llm_request_body_json)
-              except Exception as e:
-                  result['error_message'] = 'REQUEST_BUILD_FAILED: ' + str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-
-              messages = body_obj.get('messages') or []
-              response_format = body_obj.get('response_format') if isinstance(body_obj.get('response_format'), dict) else {}
-              json_schema = response_format.get('json_schema') if isinstance(response_format.get('json_schema'), dict) else {}
-              auth = _to_text(authorization_value)
-              auth_scheme = auth.split(' ', 1)[0] if ' ' in auth else ('unknown' if auth else '')
-
-              result['request_debug'] = {
-                  'url': _to_text(chat_url),
-                  'auth_present': bool(auth),
-                  'auth_scheme': auth_scheme,
-                  'auth_len': len(auth),
-                  'model': body_obj.get('model'),
-                  'body_keys': list(body_obj.keys()),
-                  'messages_count': len(messages) if isinstance(messages, list) else 0,
-                  'prompt_length': _extract_prompt_length(messages),
-                  'response_format_enabled': 'response_format' in body_obj,
-                  'response_format_type': response_format.get('type') if isinstance(response_format, dict) else None,
-                  'schema_name': _to_text(json_schema.get('name')) if isinstance(json_schema, dict) else '',
-                  'timeout_sec': timeout_sec
-              }
-
-              data = json.dumps(body_obj, ensure_ascii=False).encode('utf-8')
-              try:
-                  status_code, text, headers, retry_count, error_message = _post_json_with_retry(_to_text(chat_url), data, auth, timeout_sec)
-                  result['status_code'] = status_code
-                  result['ok'] = 200 <= status_code < 300
-                  result['body'] = text
-                  result['body_preview'] = text[:4000]
-                  result['headers_json'] = json.dumps(headers, ensure_ascii=False)
-                  result['error_message'] = '' if result['ok'] else error_message
-                  result['retry_count'] = retry_count
-                  result['tracer_id'] = _extract_tracer_id(text, headers)
-                  result['last_status_code'] = status_code
-                  result['last_error_message'] = '' if result['ok'] else error_message
-                  return result
-              except Exception as e:
-                  result['status_code'] = 0
-                  result['ok'] = False
-                  result['error_message'] = str(e)
-                  result['last_error_message'] = str(e)
-                  result['body_preview'] = traceback.format_exc()[:4000]
-                  return result
-        code_language: python3
-        desc: 调用内部满血版LLM并保留非2xx响应体用于诊断
-        outputs:
-          status_code:
-            type: number
-          ok:
-            type: boolean
-          body:
-            type: string
-          body_preview:
-            type: string
-          headers_json:
-            type: string
-          error_message:
-            type: string
-          request_debug:
-            type: object
-          retry_count:
-            type: number
-          tracer_id:
-            type: string
-          last_status_code:
-            type: number
-          last_error_message:
-            type: string
-        selected: false
-        title: 代码执行_调用满血LLM并保留错误响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000011'
-          - chat_url
-          value_type: string
-          variable: chat_url
-        - value_selector:
-          - '1775000000011'
-          - authorization_value
-          value_type: string
-          variable: authorization_value
-        - value_selector:
-          - '1775000000011'
-          - llm_request_body_json
-          value_type: string
-          variable: llm_request_body_json
-      height: 139
-      id: '1775000000012'
-      position:
-        x: 7200
-        "y": -520
-      positionAbsolute:
-        x: 7200
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import re
-
-
-          def _truncate_text(text, limit=2000):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def _read_json_text(text):
-              if text is None:
-                  return None
-              if isinstance(text, (dict, list)):
-                  return text
-              raw = str(text).strip()
-              if not raw:
-                  return None
-              return json.loads(raw)
-
-
-          def _content_to_text(content):
-              if isinstance(content, str):
-                  return content.strip()
-              if isinstance(content, list):
-                  parts = []
-                  for item in content:
-                      if isinstance(item, str) and item.strip():
-                          parts.append(item.strip())
-                      elif isinstance(item, dict):
-                          text = str(item.get('text') or item.get('content') or '').strip()
-                          if text:
-                              parts.append(text)
-                  return '\n'.join(parts).strip()
-              return ''
-
-
-          def _extract_chat_text(resp_json):
-              if not isinstance(resp_json, dict):
-                  return ''
-              choices = resp_json.get('choices')
-              if isinstance(choices, list) and choices:
-                  first = choices[0] or {}
-                  if isinstance(first, dict):
-                      msg = first.get('message') or {}
-                      if isinstance(msg, dict):
-                          text = _content_to_text(msg.get('content'))
-                          if text:
-                              return text
-                      text = _content_to_text(first.get('text'))
-                      if text:
-                          return text
-              output = resp_json.get('output')
-              text = _content_to_text(output)
-              if text:
-                  return text
-              if isinstance(output, list):
-                  for item in output:
-                      if isinstance(item, dict):
-                          text = _content_to_text(item.get('content'))
-                          if text:
-                              return text
-              for key in ('result', 'text', 'content', 'answer'):
-                  text = _content_to_text(resp_json.get(key))
-                  if text:
-                      return text
-              data = resp_json.get('data')
-              if isinstance(data, dict):
-                  for key in ('result', 'text', 'content', 'answer'):
-                      text = _content_to_text(data.get(key))
-                      if text:
-                          return text
-              return ''
-
-
-          def _strip_code_fence(text):
-              raw = str(text or '').strip()
-              full_match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)
-              if full_match:
-                  return full_match.group(1).strip()
-              return raw
-
-
-          def _remove_think_blocks(text):
-              raw = str(text or '')
-              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
-              return raw.strip()
-
-
-          def _ast_candidate_score(obj):
-              if not isinstance(obj, dict):
-                  return -1
-              score = 0
-              keys = set(obj.keys())
-              if 'execution_plan' in keys:
-                  score += 10
-              stages = (obj.get('execution_plan') or {}).get('stages') if isinstance(obj.get('execution_plan'), dict) else None
-              if isinstance(stages, list) and stages:
-                  score += 10
-              if keys:
-                  score += 1
-              return score
-
-
-          def _try_decode_object(raw):
-              try:
-                  decoder = json.JSONDecoder()
-                  obj, end = decoder.raw_decode(raw)
-                  if isinstance(obj, dict):
-                      return obj, raw[:end], raw[end:].strip()
-              except Exception:
-                  return None
-              return None
-
-
-          def _extract_json_object_text(text):
-              raw = _remove_think_blocks(_strip_code_fence(text))
-
-              if not raw:
-                  raise ValueError('LLM返�内容为空')
-              direct = _try_decode_object(raw)
-              if direct and not direct[2]:
-                  return direct[1]
-              candidates = []
-              for block in re.findall(r'```(?:json)?\s*(.*?)```', raw, flags=re.IGNORECASE | re.DOTALL):
-                  parsed = _try_decode_object(block.strip())
-                  if parsed:
-                      obj, obj_text, tail = parsed
-                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
-              seen_positions = set()
-              for match in re.finditer(r'\{', raw):
-                  pos = match.start()
-
-                  if pos in seen_positions:
-                      continue
-                  seen_positions.add(pos)
-                  parsed = _try_decode_object(raw[pos:])
-                  if parsed:
-                      obj, obj_text, tail = parsed
-                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
-              if candidates:
-                  candidates.sort(key=lambda item: (-item[0], item[1], -len(item[2])))
-                  return candidates[0][2]
-              raise ValueError(f'LLM返�内容不是合法JSON对象: {_truncate_text(raw, 1200)}')
-
-
-          def _pick_response(full_status_code, full_body, local_status_code, local_body):
-              local_body_text = '' if local_body is None else str(local_body).strip()
-              if local_body_text:
-                  return int(local_status_code or 0), local_body, 'local_llm'
-              return int(full_status_code or 0), full_body, 'full_llm'
-
-
-          def _contains_chart_intent(question: str):
-              q = str(question or '')
-              return any(k in q for k in ['柱状图', '折线图', '饼图', '图表', '可视化'])
-
-
-          def _detect_relative_days(question_text):
-              q = str(question_text or '')
-              if any(t in q for t in ['近7天', '最近7天']):
-                  return 7
-              if any(t in q for t in ['过去一个月', '近一个月', '最近一个月', '最近30天', '近30天']):
-                  return 30
-              return 0
-
-
-          def _is_abs_date_between_filter(item):
-              if not isinstance(item, dict):
-                  return False
-              if str(item.get('field') or '').strip() != 'created_at':
-                  return False
-              if str(item.get('op') or '').strip() != 'between':
-                  return False
-              value = item.get('value')
-              if not isinstance(value, list) or len(value) != 2:
-                  return False
-              return all(isinstance(v, dict) and '$date' in v for v in value)
-
-
-          BIG_FIELD_KEYS = {
-              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
-              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
-              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
-              'echarts_markdown','debug'
-          }
-
-          def _deepcopy_json(value):
-              try:
-                  return json.loads(json.dumps(value, ensure_ascii=False))
-              except Exception:
-                  return value if isinstance(value, dict) else {}
-
-          def _as_list(value):
-              return value if isinstance(value, list) else []
-
-          def _as_dict(value):
-              return value if isinstance(value, dict) else {}
-
-          def _clean_for_contract(value, warnings, path=''):
-              if isinstance(value, dict):
-                  cleaned = {}
-                  for k, v in value.items():
-                      key = str(k)
-                      child_path = (path + '.' + key).strip('.')
-                      if key in BIG_FIELD_KEYS or key.startswith('debug_'):
-                          warnings.append('removed_large_field:' + child_path)
-                          continue
-                      cleaned[key] = _clean_for_contract(v, warnings, child_path)
-                  return cleaned
-              if isinstance(value, list):
-                  return [_clean_for_contract(v, warnings, path + '[]') for v in value]
-              return value
-
-          def _pick_collection(plan):
-              planner = plan.get('planner') if isinstance(plan.get('planner'), dict) else {}
-              selection = plan.get('collection_selection') if isinstance(plan.get('collection_selection'), dict) else {}
-              return str(plan.get('primary_collection') or plan.get('collection') or planner.get('primary_collection') or selection.get('selected_primary_collection') or '').strip()
-
-          def _default_chart_request(chart=None):
-              chart = chart if isinstance(chart, dict) else {}
-              return {
-                  'enabled': bool(chart.get('enabled')),
-                  'chart_type': str(chart.get('chart_type') or chart.get('type') or '').strip(),
-                  'x_field': str(chart.get('x_field') or chart.get('x_axis') or '').strip(),
-                  'y_field': str(chart.get('y_field') or chart.get('y_axis') or '').strip(),
-                  'series_name': str(chart.get('series_name') or '').strip(),
-                  'title': str(chart.get('title') or '').strip(),
-              }
-
-          def _metric_from_metrics(stage):
-              metrics = stage.get('metrics') if isinstance(stage, dict) else None
-              first = metrics[0] if isinstance(metrics, list) and metrics and isinstance(metrics[0], dict) else {}
-              return {
-                  'metric_alias': first.get('metric_alias') or first.get('alias') or first.get('name') or first.get('output_field') or '',
-                  'metric_function': first.get('metric_function') or first.get('function') or '',
-                  'metric_field': first.get('metric_field') or first.get('field') or first.get('source_field') or '',
-              }
-
-          def _normalize_time_range(value):
-              tr = value if isinstance(value, dict) else {}
-              try:
-                  relative_days = int(tr.get('relative_days') or 0)
-              except Exception:
-                  relative_days = 0
-              return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
-
-          def _normalize_stage(raw_stage, idx, primary_collection):
-              stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
-              metric = _metric_from_metrics(stage)
-              collection = str(stage.get('collection') or stage.get('primary_collection') or primary_collection or '').strip()
-              stage.setdefault('stage_name', stage.get('stage_id') or 'stage' + str(idx + 1))
-              stage.setdefault('stage_type', 'primary_query')
-              stage['collection'] = collection
-              stage.setdefault('intent_type', '')
-              stage['time_range'] = _normalize_time_range(stage.get('time_range'))
-              stage['filters'] = _as_list(stage.get('filters'))
-              stage['group_fields'] = _as_list(stage.get('group_fields'))
-              stage['metric_function'] = str(stage.get('metric_function') or metric.get('metric_function') or '').strip()
-              stage['metric_field'] = str(stage.get('metric_field') or metric.get('metric_field') or '').strip()
-              stage['metric_alias'] = str(stage.get('metric_alias') or metric.get('metric_alias') or '').strip()
-              stage['sort'] = _as_list(stage.get('sort'))
-              try:
-                  stage['limit'] = int(stage.get('limit') or 0)
-              except Exception:
-                  stage['limit'] = 0
-              stage['projection_fields'] = _as_list(stage.get('projection_fields'))
-              return stage
-
-          def semantic_plan_normalizer(raw_plan, source='unknown'):
-              warnings = []
-              try:
-                  if not isinstance(raw_plan, dict) or not raw_plan:
-                      return {}, False, 'empty', '', warnings, source or 'unknown'
-                  plan = _deepcopy_json(raw_plan)
-                  for wrapper_key in ('semantic_plan_contract','semantic_plan','normalized_semantic_plan','guarded_semantic_plan','replanned_semantic_plan'):
-                      wrapped = plan.get(wrapper_key)
-                      if isinstance(wrapped, dict):
-                          plan = _deepcopy_json(wrapped)
-                          break
-                  plan = _clean_for_contract(plan, warnings)
-                  execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
-                  if isinstance(execution_plan.get('stages'), list):
-                      plan['stages'] = execution_plan.get('stages')
-                      if isinstance(execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
-                          plan['final_merge'] = execution_plan.get('final_merge')
-                      if execution_plan.get('execution_mode') and not plan.get('execution_mode'):
-                          plan['execution_mode'] = execution_plan.get('execution_mode')
-                  if not isinstance(plan.get('chart_request'), dict) and isinstance(plan.get('visualization'), dict):
-                      plan['chart_request'] = plan.get('visualization')
-                  if not isinstance(plan.get('chart_request'), dict):
-                      top_chart = {k: plan.get(k) for k in ('enabled','chart_type','x_field','y_field','series_name','title') if k in plan}
-                      plan['chart_request'] = top_chart if top_chart else {}
-                  primary_collection = _pick_collection(plan)
-                  raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
-                  if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
-                      primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
-                  stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
-                  if not primary_collection and stages:
-                      primary_collection = str(stages[0].get('collection') or '').strip()
-                  chart_request = _default_chart_request(plan.get('chart_request'))
-                  needs_chart = bool(plan.get('needs_chart')) or bool(chart_request.get('enabled'))
-                  chart_request['enabled'] = bool(chart_request.get('enabled')) or needs_chart
-                  final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
-                  final_merge.setdefault('merge_mode', 'none')
-                  normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
-                  contract = {
-                      'contract_version': 'semantic_plan_contract',
-                      'primary_collection': primary_collection,
-                      'related_collections': _as_list(plan.get('related_collections')),
-                      'execution_mode': str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage',
-                      'answer_mode': str(plan.get('answer_mode') or 'data').strip() or 'data',
-                      'needs_chart': bool(needs_chart),
-                      'stages': stages,
-                      'final_merge': final_merge,
-                      'chart_request': chart_request,
-                      'requires_clarification': bool(plan.get('requires_clarification')),
-                      'clarification_question': str(plan.get('clarification_question') or '').strip(),
-                      'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
-                      'warnings': _as_list(plan.get('warnings')),
-                      'normalizer_warnings': normalizer_warnings,
-                  }
-                  route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
-                  return contract, True, route, '', normalizer_warnings, source or 'unknown'
-              except Exception as e:
-                  return {}, False, 'system_error', str(e), warnings, source or 'unknown'
-
-          def main(full_status_code, full_body, local_status_code, local_body, question=''):
-              code, body, source = _pick_response(full_status_code, full_body, local_status_code, local_body)
-              payload = None
-              result = ''
-              try:
-                  if code < 200 or code >= 300:
-                      result = _truncate_text(body, 4000)
-                  elif not body:
-                      result = ''
-                  else:
-                      resp_json = _read_json_text(body)
-                      payload = resp_json
-                      result = (_extract_chat_text(resp_json) if resp_json else '') or _truncate_text(body, 4000)
-              except Exception as e:
-                  result = _truncate_text(f"{body}\n\nexception={e}", 4000)
-              semantic_plan_raw_text = result
-              parsed = None
-              json_parse_ok = False
-              parse_error = ''
-              try:
-                  semantic_plan_text = _extract_json_object_text(result)
-                  semantic_plan_raw_text = semantic_plan_text or result
-                  parsed = json.loads(semantic_plan_text)
-                  json_parse_ok = True
-              except Exception as e:
-                  parse_error = str(e)
-              parsed_keys = list(parsed.keys()) if isinstance(parsed, dict) else []
-              semantic_source = 'fallback' if source == 'local_llm' else 'planner'
-              normalized, plan_valid, normalizer_route, normalizer_error, normalizer_warnings, semantic_source = semantic_plan_normalizer(parsed if isinstance(parsed, dict) else {}, semantic_source)
-              if not json_parse_ok:
-                  normalized = {}
-                  plan_valid = False
-                  normalizer_route = 'invalid'
-                  normalizer_error = parse_error or 'LLM返回内容不是合法JSON对象'
-              warning = ';'.join(normalizer_warnings)
-              stages = (normalized.get('stages') or []) if isinstance(normalized, dict) else []
-              content_preview = str(semantic_plan_raw_text or '')[:1000]
-              debug_summary = {
-                  'source': source,
-                  'http_status_code': code,
-                  'body_type': type(payload).__name__ if payload is not None else 'none',
-                  'content_extracted': bool(result),
-                  'content_length': len(str(semantic_plan_raw_text or '')),
-                  'content_preview': content_preview,
-                  'json_parse_ok': json_parse_ok,
-                  'parsed_type': type(parsed).__name__ if parsed is not None else 'none',
-                  'parsed_keys': parsed_keys,
-                  'plan_valid': plan_valid,
-                  'has_execution_plan': isinstance(parsed, dict) and isinstance(parsed.get('execution_plan'), dict),
-                  'has_stages': bool(stages),
-                  'contract_version': normalized.get('contract_version') if isinstance(normalized, dict) else '',
-                  'normalizer_route': normalizer_route,
-                  'normalizer_warnings': normalizer_warnings,
-                  'semantic_plan_source': semantic_source,
-                  'stages_count': len(stages),
-                  'normalized': plan_valid,
-                  'normalizer_warning': warning,
-                  'normalizer_error': normalizer_error,
-                  'content_protocol': 'semantic_execution_plan',
-                  'error': parse_error,
-              }
-              answer_mode = ''
-              needs_chart = False
-              chart_request = {}
-              if isinstance(normalized, dict):
-                  answer_mode = str(normalized.get('answer_mode') or '').strip()
-                  needs_chart = bool(normalized.get('needs_chart'))
-                  chart_request = normalized.get('chart_request') if isinstance(normalized.get('chart_request'), dict) else {}
-              if isinstance(parsed, dict):
-                  answer_mode = answer_mode or str(parsed.get('answer_mode') or '').strip()
-                  needs_chart = needs_chart or bool(parsed.get('needs_chart'))
-                  if not chart_request and isinstance(parsed.get('chart_request'), dict):
-                      chart_request = parsed.get('chart_request')
-              return {
-                  'semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
-                  'normalized_semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
-                  'semantic_plan_contract_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
-                  'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
-                  'plan_valid': plan_valid,
-                  'normalizer_valid': plan_valid,
-                  'normalizer_route': normalizer_route,
-                  'legacy_ast_detected': False,
-                  'normalizer_warning': warning,
-                  'normalizer_error': normalizer_error,
-                  'normalizer_warnings_json': json.dumps(normalizer_warnings, ensure_ascii=False),
-                  'semantic_plan_source': semantic_source,
-                  'parse_error': parse_error,
-                  'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
-                  'answer_mode': answer_mode,
-                  'needs_chart': needs_chart,
-                  'chart_request_json': json.dumps(chart_request, ensure_ascii=False),
-              }
-        code_language: python3
-        desc: 统一解析满血/本地LLM响应并规范化为 execution_plan.stages
-        outputs:
-          semantic_plan_json:
-            children:
-            type: string
-          normalized_semantic_plan_json:
-            children:
-            type: string
-          semantic_plan_contract_json:
-            children:
-            type: string
-          normalizer_valid:
-            children:
-            type: boolean
-          normalizer_route:
-            children:
-            type: string
-          normalizer_warnings_json:
-            children:
-            type: string
-          semantic_plan_source:
-            children:
-            type: string
-          plan_valid:
-            children:
-            type: boolean
-          legacy_ast_detected:
-            children:
-            type: boolean
-          normalizer_warning:
-            children:
-            type: string
-          normalizer_error:
-            children:
-            type: string
-          debug_summary_json:
-            children:
-            type: string
-          semantic_plan_raw_text:
-            children:
-            type: string
-          parse_error:
-            children:
-            type: string
-          answer_mode:
-            children:
-            type: string
-          needs_chart:
-            children:
-            type: boolean
-          chart_request_json:
-            children:
-            type: string
-        selected: true
-        title: 代码执行_提取语义计划结果
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000012'
-          - status_code
-          value_type: number
-          variable: full_status_code
-        - value_selector:
-          - '1775000000012'
-          - body
-          value_type: string
-          variable: full_body
-        - value_selector:
-          - '1775000000019'
-          - status_code
-          value_type: number
-          variable: local_status_code
-        - value_selector:
-          - '1775000000019'
-          - body
-          value_type: string
-          variable: local_body
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-      height: 96
-      id: '1775000000013'
-      position:
-        x: 8400
-        "y": -300
-      positionAbsolute:
-        x: 8400
-        "y": -300
-      selected: true
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: e9d1dd42-24bd-49fd-a935-c52d4737ce24
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1775000000013'
-            - plan_valid
-          id: 'true'
-          logical_operator: and
-        desc: 仅当语义计划规范化成功且 execution_plan.stages 非空时进入编译执行
-        selected: false
-        title: 条件分支_语义计划是否有效
-        type: if-else
-      height: 148
-      id: '1775000000020'
-      position:
-        x: 8800
-        "y": -300
-      positionAbsolute:
-        x: 8800
-        "y": -300
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        answer: "{{#1776000000012.final_answer_markdown#}}"
-        desc: 语义计划无效时直接返回错误，避免空计划进入编译节点
-        selected: false
-        title: Answer_语义计划无效
-        type: answer
-        variables: []
-      height: 140
-      id: '1775000000021'
-      position:
-        x: 9600
-        "y": 80
-      positionAbsolute:
-        x: 9600
-        "y": 80
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 19f817f4-cd31-49fb-a97e-9aebd2531262
-            value: 'true'
-            varType: string
-            variable_selector:
-            - env
-            - ENABLE_FULL_LLM
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_是否启用满血LLM
-        type: if-else
-      height: 124
-      id: '1775000000014'
-      position:
-        x: 5600
-        "y": -300
-      positionAbsolute:
-        x: 5600
-        "y": -300
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: ad4255b8-c185-494f-a717-76ba66eb92c5
-            value: 'true'
-            varType: string
-            variable_selector:
-            - '1775000000011'
-            - request_enabled
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_满血请求是否可用
-        type: if-else
-      height: 148
-      id: '1775000000015'
-      position:
-        x: 6800
-        "y": -520
-      positionAbsolute:
-        x: 6800
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          def _truncate_text(text, limit=1200):
-              text = '' if text is None else str(text)
-              return text if len(text) <= limit else text[:limit] + '...'
-
-
-          def main(status_code, body):
-              code = int(status_code or 0)
-              body_text = '' if body is None else str(body).strip()
-              ok = 200 <= code < 300 and bool(body_text)
-              return {
-                  'full_http_ok': 'true' if ok else 'false',
-                  'full_http_error': '' if ok else f"status={code}, body={_truncate_text(body, 1200)}",
-              }
-        code_language: python3
-        desc: 根据满血LLM HTTP状态决定是否�退本地LLM
-        outputs:
-          full_http_error:
-            children:
-            type: string
-          full_http_ok:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_判断满血LLM状态
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000012'
-          - status_code
-          value_type: number
-          variable: status_code
-        - value_selector:
-          - '1775000000012'
-          - body
-          value_type: string
-          variable: body
-      height: 96
-      id: '1775000000016'
-      position:
-        x: 7600
-        "y": -520
-      positionAbsolute:
-        x: 7600
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 8a92198b-df4d-4bcf-8338-fa4f5b701933
-            value: 'true'
-            varType: string
-            variable_selector:
-            - '1775000000016'
-            - full_http_ok
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_满血LLM是否成功
-        type: if-else
-      height: 148
-      id: '1775000000017'
-      position:
-        x: 8000
-        "y": -520
-      positionAbsolute:
-        x: 8000
-        "y": -520
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        desc: 满血LLM关闭或失败时，使用本地模型保守生成 semantic_plan_contract
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 8192
-            temperature: 0
-            think: false
-          mode: chat
-          name: qwen3.5:35b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: local-plan-system
-          role: system
-          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
-        - id: local-plan-user
-          role: user
-          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            additionalProperties: true
-            required:
-            - contract_version
-            - primary_collection
-            - related_collections
-            - execution_mode
-            - answer_mode
-            - needs_chart
-            - stages
-            - final_merge
-            - chart_request
-            - requires_clarification
-            - clarification_question
-            - needs_schema_retrieval
-            - warnings
-            properties:
-              contract_version:
-                const: semantic_plan_contract
-              primary_collection:
-                type: string
-              related_collections:
-                type: array
-                items:
-                  type: string
-              execution_mode:
-                type: string
-              answer_mode:
-                type: string
-              needs_chart:
-                type: boolean
-              stages:
-                type: array
-                minItems: 1
-                items:
-                  type: object
-                  additionalProperties: true
-                  required:
-                  - stage_name
-                  - stage_type
-                  - collection
-                  - intent_type
-                  - time_range
-                  - filters
-                  - group_fields
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - sort
-                  - limit
-                  - projection_fields
-                  properties:
-                    stage_name:
-                      type: string
-                    stage_type:
-                      type: string
-                    collection:
-                      type: string
-                    intent_type:
-                      type: string
-                    time_range:
-                      type: object
-                    filters:
-                      type: array
-                      items:
-                        type: object
-                    group_fields:
-                      type: array
-                      items:
-                        type: string
-                    metric_function:
-                      type: string
-                    metric_field:
-                      type: string
-                    metric_alias:
-                      type: string
-                    sort:
-                      type: array
-                      items:
-                        type: object
-                    limit:
-                      type: integer
-                    projection_fields:
-                      type: array
-                      items:
-                        type: string
-              final_merge:
-                type: object
-              chart_request:
-                type: object
-              requires_clarification:
-                type: boolean
-              clarification_question:
-                type: string
-              needs_schema_retrieval:
-                type: boolean
-              warnings:
-                type: array
-                items:
-                  type: string
-        structured_output_enabled: true
-        title: LLM_本地兜底生成语义计划
-        type: llm
-        vision:
-          enabled: false
-      height: 132
-      id: '1775000000018'
-      position:
-        x: 7200
-        "y": -120
-      positionAbsolute:
-        x: 7200
-        "y": -120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-
-
-          def main(text: str):
-              raw = str(text or '').strip()
-              if not raw:
-                  raise ValueError('本地LLM返�为空')
-              body = {
-                  'choices': [
-                      {
-                          'message': {
-                              'content': raw,
-                          }
-                      }
-                  ]
-              }
-              return {
-                  'status_code': 200,
-                  'body': json.dumps(body, ensure_ascii=False),
-              }
-        code_language: python3
-        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
-        outputs:
-          body:
-            children:
-            type: string
-          status_code:
-            children:
-            type: number
-        selected: false
-        title: 代码执行_包装本地LLM响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000018'
-          - text
-          value_type: string
-          variable: text
-      height: 96
-      id: '1775000000019'
-      position:
-        x: 8000
-        "y": -120
-      positionAbsolute:
-        x: 8000
-        "y": -120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |-
-          import json
-          from datetime import datetime, timezone
-          import re
-
-          # schema metadata C contract helpers
-          import copy
-          import hashlib
-          import json
-          import re
-
-
-          CONTRACT_VERSION = 'schema_metadata_contract'
-          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
-          NON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors', 'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}
-
-
-          def default_query_rules():
-              return {
-                  'require_time_range_for_aggregate': True,
-                  'max_limit': 100,
-                  'allowed_operations': ['find', 'aggregate'],
-                  'aggregate_required_when': [],
-                  'find_allowed_when': [],
-                  'sensitive_field_policy': 'deny_return_group_sort',
-                  'default_limit': 100,
-                  'max_time_range_days': 366,
-              }
-
-
-          def _strip_quotes(v):
-              v = str(v or '').strip()
-              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
-                  return v[1:-1]
-              return v
-
-
-          def _split_inline_list(body):
-              # Simple comma split that keeps quoted Chinese/ASCII aliases intact for the schema docs used here.
-              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
-
-
-          def _parse_scalar(v):
-              v = str(v or '').strip()
-              if not v:
-                  return ''
-              if v in {'|', '>', '|-', '>-'}:
-                  return ''
-              if v in {'true', 'True'}:
-                  return True
-              if v in {'false', 'False'}:
-                  return False
-              if v in {'null', 'Null', 'NULL', '~'}:
-                  return None
-              if v.startswith('[') and v.endswith(']'):
-                  return _split_inline_list(v[1:-1].strip())
-              if v.startswith('{') and v.endswith('}'):
-                  try:
-                      return json.loads(v)
-                  except Exception:
-                      return _strip_quotes(v)
-              if re.match(r'^-?\d+$', v):
-                  try:
-                      return int(v)
-                  except Exception:
-                      pass
-              if re.match(r'^-?\d+\.\d+$', v):
-                  try:
-                      return float(v)
-                  except Exception:
-                      pass
-              return _strip_quotes(v)
-
-
-          def _parse_simple_yaml(text):
-              root = {}
-              stack = [(-1, root)]
-              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
-              i = 0
-              while i < len(lines):
-                  raw = lines[i]
-                  if not raw.strip() or raw.lstrip().startswith('#'):
-                      i += 1
-                      continue
-                  indent = len(raw) - len(raw.lstrip(' '))
-                  s = raw.strip()
-                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
-                  if mblock:
-                      key = mblock.group(1)
-                      parts = []
-                      base = None
-                      j = i + 1
-                      while j < len(lines):
-                          nr = lines[j]
-                          if nr.strip():
-                              ni = len(nr) - len(nr.lstrip(' '))
-                              if ni <= indent:
-                                  break
-                              if base is None:
-                                  base = ni
-                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
-                          else:
-                              parts.append('')
-                          j += 1
-                      while stack and indent <= stack[-1][0]:
-                          stack.pop()
-                      parent = stack[-1][1]
-                      if isinstance(parent, dict):
-                          parent[key] = '\n'.join(parts).strip()
-                      i = j
-                      continue
-                  while stack and indent <= stack[-1][0]:
-                      stack.pop()
-                  parent = stack[-1][1]
-                  if s.startswith('- '):
-                      item = s[2:].strip()
-                      if not isinstance(parent, list):
-                          i += 1
-                          continue
-                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
-                          k, v = item.split(':', 1)
-                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
-                          parent.append(obj)
-                          stack.append((indent, obj))
-                          if not v.strip():
-                              stack.append((indent + 2, obj[k.strip()]))
-                      else:
-                          parent.append(_parse_scalar(item))
-                      i += 1
-                      continue
-                  if ':' in s:
-                      k, v = s.split(':', 1)
-                      key = k.strip()
-                      val = v.strip()
-                      if isinstance(parent, dict):
-                          if val:
-                              parent[key] = _parse_scalar(val)
-                              i += 1
-                              continue
-                          j = i + 1
-                          nxt = ''
-                          while j < len(lines):
-                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
-                                  nxt = lines[j].strip()
-                                  break
-                              j += 1
-                          container = [] if nxt.startswith('- ') else {}
-                          parent[key] = container
-                          stack.append((indent, container))
-                  i += 1
-              return root
-
-
-          def _json_loads_maybe(text):
-              text = str(text or '').strip()
-              if not text:
-                  raise ValueError('empty JSON text')
-              return json.loads(text)
-
-
-          def _parse_metadata_block(block):
-              block = str(block or '').strip()
-              if not block:
-                  return {}
-              if block.startswith('{') or block.startswith('['):
-                  return json.loads(block)
-              return _parse_simple_yaml(block)
-
-
-          def extract_schema_metadata_blocks(text):
-              raw = str(text or '')
-              blocks = []
-              # Prefer explicit Schema Metadata fenced blocks, YAML or JSON.
-              pattern = re.compile(r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```', re.I | re.S)
-              blocks.extend(m.group(2) for m in pattern.finditer(raw))
-              if blocks:
-                  return blocks
-              # Then accept any fenced YAML/JSON block that declares mongo/schema contract metadata.
-              pattern2 = re.compile(r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"|"contract_version"\s*:\s*"schema_metadata_contract").*?)\n```', re.I | re.S)
-              blocks.extend(m.group(1) for m in pattern2.finditer(raw))
-              return blocks
-
-
-          def _as_list(value):
-              if value is None or value == '':
-                  return []
-              if isinstance(value, list):
-                  return [x for x in value if x is not None and str(x).strip()]
-              return [x for x in _split_inline_list(value) if str(x).strip()]
-
-
-          def _as_str_list(value):
-              return [str(x).strip() for x in _as_list(value) if str(x).strip()]
-
-
-          def _as_dict(value):
-              return value if isinstance(value, dict) else {}
-
-
-          def _normalize_named_map(value, kind, warnings, collection_name):
-              result = {}
-              if value is None or value == '':
-                  return result
-              if isinstance(value, dict):
-                  iterable = []
-                  for name, item in value.items():
-                      if isinstance(item, dict):
-                          merged = dict(item)
-                          merged.setdefault('name', name)
-                          iterable.append(merged)
-                      else:
-                          warnings.append(f'{collection_name}.{kind}.{name} 不是对象，已忽略。')
-                  source_shape = 'dict'
-              elif isinstance(value, list):
-                  iterable = value
-                  source_shape = 'list'
-              else:
-                  warnings.append(f'{collection_name}.{kind} 不是 list/dict，已按空对象处理。')
-                  return result
-              for item in iterable:
-                  if not isinstance(item, dict):
-                      warnings.append(f'{collection_name}.{kind} 中存在非对象条目，已忽略。')
-                      continue
-                  name = str(item.get('name') or '').strip()
-                  if not name:
-                      warnings.append(f'{collection_name}.{kind} 中存在缺少 name 的条目，已忽略。')
-                      continue
                   normalized = copy.deepcopy(item)
                   normalized['name'] = name
                   result[name] = normalized
@@ -1744,606 +429,472 @@
               return ('按' + x + '统计' + y if x and y else (x + ' 与 ' + y + ' 对比')).strip(), 'schema_label'
           # end schema metadata C-MVP helpers
 
+          SGT = timezone(timedelta(hours=8))
+          DEFAULT_TIMEOUT_SECONDS = 60
+
+          FORBIDDEN_MONGO_TOKENS = {'$out','$merge','$function','$where','drop','delete','update','insert'}
+          MAX_RETURN_ROWS = 200
+          MAX_RESULT_JSON_CHARS = 200000
 
 
-          INTENT_WORDS = ('描述', '分析', '总结', '说明', '对比')
+          def _safe_json_dumps(value, max_chars=75000):
+              try:
+                  text = json.dumps(value, ensure_ascii=False)
+              except Exception as e:
+                  text = json.dumps({'error': str(e)}, ensure_ascii=False)
+              if len(text) > max_chars:
+                  return text[:max_chars] + '...TRUNCATED'
+              return text
 
 
-          def _loads_obj(value):
-              if isinstance(value, dict):
+          def _read_json_text(value):
+              if value is None:
+                  return None
+              if isinstance(value, (dict, list)):
                   return value
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(value)
-                      return parsed if isinstance(parsed, dict) else {}
-                  except Exception:
-                      return {}
-              return {}
+              raw = str(value).strip()
+              if not raw:
+                  return None
+              return json.loads(raw)
 
 
-          def _rows(value):
-              if isinstance(value, list):
-                  return [row for row in value if isinstance(row, dict)]
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(value)
-                      if isinstance(parsed, list):
-                          return [row for row in parsed if isinstance(row, dict)]
-                  except Exception:
-                      return []
-              return []
-
-
-          def _answer_mode(explicit_mode, normalized_plan, semantic_plan):
-              return (
-                  str(explicit_mode or '').strip()
-                  or str(normalized_plan.get('answer_mode') or '').strip()
-                  or str(semantic_plan.get('answer_mode') or '').strip()
-              )
-
-
-          def _needs_analysis(question, answer_mode):
-              q = str(question or '')
-              return answer_mode == 'data_with_analysis' or any(word in q for word in INTENT_WORDS)
-
-
-          def _execution_stages(plan):
-              if not isinstance(plan, dict):
-                  return []
-              stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or [])
-              return stages if isinstance(stages, list) else []
-
-
-          def _first_stage(plan):
-              stages = _execution_stages(plan)
-              return stages[0] if stages and isinstance(stages[0], dict) else {}
-
-
-          def _chart_request(plan):
-              if not isinstance(plan, dict):
+          def _ensure_obj(value, name):
+              obj = _read_json_text(value)
+              if obj is None:
                   return {}
-              chart = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
-              viz = plan.get('visualization') if isinstance(plan.get('visualization'), dict) else {}
-              merged = dict(chart)
-              merged.update({k: v for k, v in viz.items() if v not in (None, '')})
-              return merged
+              if not isinstance(obj, dict):
+                  raise ValueError(f'{name} must be a JSON object')
+              return obj
 
 
-          def _validated_ast(plan):
-              if not isinstance(plan, dict):
-                  return {}
-              ast = plan.get('validated_ast')
-              if isinstance(ast, dict):
-                  return ast
-              for stage in _execution_stages(plan):
-                  if isinstance(stage, dict) and isinstance(stage.get('validated_ast'), dict):
-                      return stage.get('validated_ast')
-              return {}
-
-
-          def _field_from_ast_group(ast):
-              groups = ast.get('group_by') if isinstance(ast, dict) else []
-              if not isinstance(groups, list):
-                  return ''
-              for item in groups:
-                  if isinstance(item, dict):
-                      field = str(item.get('alias') or item.get('field') or '').strip()
-                      if field:
-                          return field
-                  elif isinstance(item, str) and item.strip():
-                      return item.strip()
-              return ''
-
-
-          def _field_from_ast_metric(ast):
-              aggs = ast.get('aggregations') if isinstance(ast, dict) else []
-              if not isinstance(aggs, list):
-                  return ''
-              for item in aggs:
-                  if isinstance(item, dict):
-                      field = str(item.get('alias') or item.get('field') or '').strip()
-                      if field:
-                          return field
-                  elif isinstance(item, str) and item.strip():
-                      return item.strip()
-              return ''
-
-
-          def _pick_group_field(rows, normalized_plan=None):
-              normalized_plan = normalized_plan or {}
-              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
-              row_key_set = set(row_keys)
-              for stage in _execution_stages(normalized_plan):
-                  group_fields = stage.get('group_fields') if isinstance(stage, dict) else []
-                  if isinstance(group_fields, list) and group_fields:
-                      group = str(group_fields[0] or '').strip()
-                      if group and (not row_keys or group in row_key_set):
-                          return group
-              ast_group = _field_from_ast_group(_validated_ast(normalized_plan))
-              if ast_group and (not row_keys or ast_group in row_key_set):
-                  return ast_group
-              chart_x = str(_chart_request(normalized_plan).get('x_field') or _chart_request(normalized_plan).get('x_axis') or '').strip()
-              if chart_x and (not row_keys or chart_x in row_key_set):
-                  return chart_x
-              if rows:
-                  for key in row_keys:
-                      if not isinstance(rows[0].get(key), (int, float)) or isinstance(rows[0].get(key), bool):
-                          return key
-              return row_keys[0] if row_keys else ''
-
-
-          def _pick_metric_field(rows, group_field, normalized_plan=None):
-              normalized_plan = normalized_plan or {}
-              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
-              row_key_set = set(row_keys)
-              for stage in _execution_stages(normalized_plan):
-                  metric_alias = str((stage or {}).get('metric_alias') or '').strip() if isinstance(stage, dict) else ''
-                  if metric_alias and (not row_keys or metric_alias in row_key_set):
-                      return metric_alias
-              ast_metric = _field_from_ast_metric(_validated_ast(normalized_plan))
-              if ast_metric and (not row_keys or ast_metric in row_key_set):
-                  return ast_metric
-              chart_y = str(_chart_request(normalized_plan).get('y_field') or _chart_request(normalized_plan).get('y_axis') or '').strip()
-              if chart_y and (not row_keys or chart_y in row_key_set):
-                  return chart_y
-              if rows:
-                  for key in row_keys:
-                      value = rows[0].get(key)
-                      if key != group_field and isinstance(value, (int, float)) and not isinstance(value, bool):
-                          return key
-              for key in row_keys:
-                  if key != group_field:
-                      return key
-              return ''
-
-
-          def _prettify(field):
-              text = str(field or '').strip()
+          def _ensure_non_empty_string(value, name):
+              text = str(value or '').strip()
               if not text:
-                  return '字段'
-              return text.replace('_', ' ')
+                  raise ValueError(f'{name} is required')
+              return text
 
 
-          def _schema_metadata_from_plan(plan):
-              if not isinstance(plan, dict):
-                  return {'collections': {}, 'warnings': []}
-              meta = plan.get('schema_metadata') or plan.get('schema_metadata_json')
-              if isinstance(meta, str) and meta.strip():
-                  try:
-                      meta = json.loads(meta)
-                  except Exception:
-                      meta = None
-              if isinstance(meta, dict) and isinstance(meta.get('collections'), dict):
-                  return meta
-              schema = plan.get('schema_context')
-              if isinstance(schema, str) and schema.strip():
-                  return extract_schema_metadata(schema)
-              return {'collections': {}, 'warnings': []}
+          def _ensure_string_list(value, name):
+              if value is None:
+                  return []
+              if not isinstance(value, list):
+                  raise ValueError(f'{name} must be an array')
+              result = []
+              for idx, item in enumerate(value):
+                  text = str(item or '').strip()
+                  if not text:
+                      raise ValueError(f'{name}[{idx}] must be a non-empty string')
+                  result.append(text)
+              return result
 
 
-          def _collection_from_plan(plan):
-              stages = _execution_stages(plan)
-              stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}
-              return str(plan.get('primary_collection') or stage0.get('primary_collection') or stage0.get('collection') or '').strip() if isinstance(plan, dict) else ''
-
-
-          def _schema_label_map(plan):
-              labels = {}
-              meta = _schema_metadata_from_plan(plan)
-              collection_name = _collection_from_plan(plan)
-              for cname, coll in (meta.get('collections') or {}).items():
-                  if collection_name and cname != collection_name:
-                      continue
-                  for fname, field in (coll.get('fields') or {}).items():
-                      label = str(field.get('label') or '').strip()
-                      if label:
-                          labels[fname] = label
-                  for mname, metric in (coll.get('metrics') or {}).items():
-                      label = str(metric.get('label') or '').strip()
-                      if label:
-                          labels[mname] = label
-              return labels
-
-
-          def _ast_alias_map(plan):
-              aliases = {}
-              ast = _validated_ast(plan)
-              for item in (ast.get('group_by') or []) if isinstance(ast, dict) else []:
-                  if isinstance(item, dict):
-                      field = str(item.get('field') or '').strip()
-                      alias = str(item.get('alias') or '').strip()
-                      if field and alias:
-                          aliases[field] = alias
-              for item in (ast.get('aggregations') or []) if isinstance(ast, dict) else []:
-                  if isinstance(item, dict):
-                      field = str(item.get('field') or item.get('alias') or '').strip()
-                      alias = str(item.get('alias') or '').strip()
-                      if field and alias:
-                          aliases[field] = alias
-              return aliases
-
-
-          def _field_label(field, normalized_plan=None, role=''):
-              field = str(field or '').strip()
-              if not field:
-                  return '字段'
-              meta = _schema_metadata_from_plan(normalized_plan or {})
-              collection_name = _collection_from_plan(normalized_plan or {})
-              if role == 'metric':
-                  metric_label = resolve_metric_label(field, meta, collection_name)
-                  if metric_label and metric_label != _prettify(field):
-                      return metric_label
-              else:
-                  field_label = resolve_field_label(field, meta, collection_name)
-                  if field_label and field_label != _prettify(field):
-                      return field_label
-              labels = _schema_label_map(normalized_plan or {})
-              if field in labels:
-                  return labels[field]
-              aliases = _ast_alias_map(normalized_plan or {})
-              if field in aliases:
-                  return aliases[field]
-              chart = _chart_request(normalized_plan or {})
-              axis_key = 'x_label' if role == 'group' else 'y_label'
-              axis_label = str(chart.get(axis_key) or chart.get(role + '_label') or '').strip()
-              if axis_label:
-                  return axis_label
-              return _prettify(field)
-
-
-          def _fmt(value):
-              if isinstance(value, float):
-                  if value.is_integer():
-                      return str(int(value))
-                  return ('%.2f' % value).rstrip('0').rstrip('.')
-              return str(value)
-
-
-          def _summary(question, rows, normalized_plan=None):
-              row_count = len(rows)
-              group_field = _pick_group_field(rows, normalized_plan)
-              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
-              group_label = _field_label(group_field, normalized_plan, 'group')
-              metric_label = _field_label(metric_field, normalized_plan, 'metric')
-              title = '结果摘要'
-              if not rows:
-                  return title + '：\n- 当前筛选条件下未查询到符合条件的数据记录。'
-
-              bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
-              if group_field and metric_field:
-                  sorted_rows = sorted(rows, key=lambda row: row.get(metric_field) if isinstance(row.get(metric_field), (int, float)) else 0, reverse=True)
-                  top = sorted_rows[0]
-                  top_name = top.get(group_field, '未知')
-                  top_value = top.get(metric_field, '')
-                  bullets.append(f'- 按 {group_label} 分组后，{top_name} 的 {metric_label} 最高，为 {_fmt(top_value)}。')
-                  if row_count > 1:
-                      tail = sorted_rows[-1]
-                      bullets.append(f'- 排名靠后的分组是 {tail.get(group_field, "未知")}，{metric_label} 为 {_fmt(tail.get(metric_field, ""))}。')
-                  preview = '、'.join([f'{row.get(group_field, "未知")}({_fmt(row.get(metric_field, ""))})' for row in sorted_rows[:5]])
-                  if preview:
-                      bullets.append(f'- 主要分组数据：{preview}。')
-              return title + '：\n' + '\n'.join(bullets)
-
-
-          def _analysis(rows, normalized_plan=None, chart_available=False):
-              if not rows:
-                  return '简单分析：\n- 当前筛选条件下没有可用于对比的数据记录，建议放宽时间范围或检查筛选条件。'
-              group_field = _pick_group_field(rows, normalized_plan)
-              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
-              group_label = _field_label(group_field, normalized_plan, 'group')
-              metric_label = _field_label(metric_field, normalized_plan, 'metric')
-              if not group_field or not metric_field:
-                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合统计结果查看整体分布。'
-              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float)) and not isinstance(row.get(metric_field), bool)]
-              if len(numeric) < 2:
-                  return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
-              sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
-              top, second = sorted_rows[0], sorted_rows[1]
-              gap = top.get(metric_field) - second.get(metric_field)
-              prefix = '从图表看' if chart_available else '从统计结果看'
-              return (
-                  '简单分析：\n'
-                  f'- {prefix}，{top.get(group_field, "未知")} 的 {metric_label} 最高，比第二名 '
-                  f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
-                  f'- 可优先关注排名靠前的分组（{top.get(group_field, "未知")}、{second.get(group_field, "未知")}）以及排名靠后的分组，继续分析不同 {group_label} 的差异情况。'
-              )
-
-
-          def _result_fields_json(rows):
-              seen = []
-              for row in rows[:10]:
-                  for key in row.keys():
-                      if key not in seen:
-                          seen.append(key)
-              return json.dumps(seen, ensure_ascii=False)
-
-
-          def _plan_needs_chart(normalized_plan, semantic_plan, question):
-              viz = normalized_plan.get('visualization') if isinstance(normalized_plan.get('visualization'), dict) else {}
-              chart_request = normalized_plan.get('chart_request') if isinstance(normalized_plan.get('chart_request'), dict) else {}
-              text = str(question or '')
-              asked = any(k in text for k in ['图', '柱状图', '折线图', '饼图', '图表', '做图', '可视化'])
-              return bool(normalized_plan.get('needs_chart') or semantic_plan.get('needs_chart') or viz.get('enabled') or chart_request.get('enabled') or asked)
-
-
-          def _first_stage_for_context(plan):
-              stages = _execution_stages(plan if isinstance(plan, dict) else {})
-              return stages[0] if stages and isinstance(stages[0], dict) else {}
-
-
-          COMPACT_CONTEXT_TARGET_BYTES = 12000
-          COMPACT_CONTEXT_HARD_BYTES = 60000
-          MAX_PREVIEW_ROWS = 5
-          MAX_PREVIEW_FIELDS = 20
-          MAX_PREVIEW_STRING = 200
-
-
-          def _safe_int_value(value, default=0):
-              try:
-                  return int(value)
-              except Exception:
-                  return default
-
-
-          def _dedupe_values(values, limit=50):
-              out = []
-              for value in values or []:
-                  text = str(value or '').strip()
-                  if text and text not in out:
-                      out.append(text)
-                      if limit and len(out) >= limit:
-                          break
-              return out
-
-
-          def _compact_value(value, max_len=MAX_PREVIEW_STRING):
-              if isinstance(value, str):
-                  return value[:max_len]
-              if isinstance(value, (int, float, bool)) or value is None:
+          def _parse_scalar(value):
+              if value is None:
+                  return None
+              if isinstance(value, (int, float, bool, list)):
                   return value
-              try:
-                  return json.dumps(value, ensure_ascii=False, default=str)[:max_len]
-              except Exception:
-                  return str(value)[:max_len]
+              text = str(value).strip()
+              if text.lower() == 'true':
+                  return True
+              if text.lower() == 'false':
+                  return False
+              if re.fullmatch(r'-?\d+', text):
+                  return int(text)
+              if re.fullmatch(r'-?\d+\.\d+', text):
+                  return float(text)
+              return text
 
 
-          def _normalize_time_range(value):
-              value = value if isinstance(value, dict) else {}
+          def _parse_query_urls(raw_value):
+              text = str(raw_value or '').strip()
+              if not text:
+                  return []
+              parts = []
+              for chunk in text.replace('\r', '\n').split('\n'):
+                  for item in chunk.split(','):
+                      url = str(item or '').strip()
+                      if url:
+                          parts.append(url)
+              return parts
+
+
+          def _build_match_expr(path, operator, value):
+              parsed = _parse_scalar(value)
+              if operator == 'eq':
+                  return {path: parsed}
+              if operator == 'in':
+                  values = parsed if isinstance(parsed, list) else [parsed]
+                  return {path: {'$in': values}}
+              mongo_op = {'gt': '$gt', 'gte': '$gte', 'lt': '$lt', 'lte': '$lte', 'regex': '$regex'}.get(operator)
+              if not mongo_op:
+                  raise ValueError(f'unsupported operator: {operator}')
+              return {path: {mongo_op: parsed}}
+
+
+          def _merge_match(parts):
+              parts = [p for p in parts if p]
+              if not parts:
+                  return None
+              if len(parts) == 1:
+                  return parts[0]
+              return {'$and': parts}
+
+
+          def _extract_returnable_fields(schema_context, collection_name):
+              text = str(schema_context or '')
+              pattern = rf'## collection={re.escape(collection_name)}\n.*?(?=(\n## collection=|\Z))'
+              m = re.search(pattern, text, flags=re.DOTALL)
+              section = m.group(0) if m else ''
+              if not section:
+                  return []
+              lines = section.splitlines()
+              fields = []
+              i = 0
+              name_re = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+              while i < len(lines):
+                  line = lines[i].strip()
+                  next_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
+                  if name_re.fullmatch(line) and next_line.startswith('- type:'):
+                      field_name = line
+                      block = []
+                      j = i + 1
+                      while j < len(lines):
+                          cur = lines[j].strip()
+                          nxt = lines[j + 1].strip() if j + 1 < len(lines) else ''
+                          if j > i + 1 and cur and name_re.fullmatch(cur) and nxt.startswith('- type:'):
+                              break
+                          if cur.startswith('## collection='):
+                              break
+                          block.append(cur)
+                          j += 1
+                      block_text = '\n'.join(block)
+                      if 'returnable: true' in block_text and 'sensitive: true' not in block_text:
+                          fields.append(field_name)
+                      i = j
+                      continue
+                  i += 1
+              return fields
+
+
+          def _normalize_time_range(value, collection_name, default_field=''):
+              if not isinstance(value, dict):
+                  return {
+                      'collection': collection_name,
+                      'field': default_field,
+                      'mode': 'none',
+                      'relative_days': 0,
+                      'start': '',
+                      'end': '',
+                  }
+              mode = str(value.get('mode') or 'none').strip() or 'none'
+              if mode not in {'none', 'relative_days', 'absolute'}:
+                  mode = 'none'
+              field = str(value.get('field') or default_field).strip()
+              if mode != 'none' and not field:
+                  raise ValueError('validator-normalized time_range.field is required when time_range.mode is not none')
+              relative_days = max(int(value.get('relative_days') or 0), 0)
+              start = str(value.get('start') or '').strip()
+              end = str(value.get('end') or '').strip()
+              if mode != 'absolute':
+                  start = ''
+                  end = ''
+              if mode == 'absolute' and not start and not end:
+                  mode = 'none'
               return {
-                  'field': str(value.get('field') or ''),
-                  'mode': str(value.get('mode') or ''),
-                  'relative_days': _safe_int_value(value.get('relative_days'), 0),
-                  'start': str(value.get('start') or ''),
-                  'end': str(value.get('end') or ''),
+                  'collection': collection_name,
+                  'field': field,
+                  'mode': mode,
+                  'relative_days': relative_days,
+                  'start': start,
+                  'end': end,
               }
 
 
-          def _compact_rows_profile(rows):
-              fields = []
-              numeric_fields = []
-              dimension_fields = []
-              preview_rows = []
+          def _force_relative_month_time_range(question_text, time_range, collection_name, default_field='created_at'):
+              text = str(question_text or '').strip()
+              if not text:
+                  return time_range
+              month_tokens = ['过去一个月', '近一个月', '最近一个月', '近30天', '最近30天']
+              if not any(token in text for token in month_tokens):
+                  return time_range
+              fixed = dict(time_range or {})
+              fixed['collection'] = collection_name
+              fixed['field'] = str(fixed.get('field') or default_field).strip() or default_field
+              fixed['mode'] = 'relative_days'
+              fixed['relative_days'] = 30
+              fixed['start'] = ''
+              fixed['end'] = ''
+              return fixed
+
+
+          def _sanitize_stage_filters(filters, time_range):
+              if not isinstance(filters, list):
+                  return []
+              normalized = []
+              dedup = set()
+              time_mode = str((time_range or {}).get('mode') or 'none').strip()
+              time_field = str((time_range or {}).get('field') or '').strip()
+              for item in filters:
+                  if not isinstance(item, dict):
+                      continue
+                  field = str(item.get('field') or '').strip()
+                  operator = str(item.get('operator') or '').strip()
+                  if not field or not operator:
+                      continue
+                  if time_mode != 'none' and field == time_field:
+                      continue
+                  value = item.get('value')
+                  key = (field, operator, json.dumps(value, ensure_ascii=False, sort_keys=True))
+                  if key in dedup:
+                      continue
+                  dedup.add(key)
+                  normalized.append({'field': field, 'operator': operator, 'value': value})
+              return normalized
+
+
+          def _normalize_stage_field_ref(text):
+              raw = str(text or '').strip()
+              if not raw:
+                  return ''
+              raw = raw.lstrip('$')
+              if '.' in raw:
+                  return raw.split('.')[-1].strip()
+              return raw
+
+
+          def _sanitize_stage_for_compile(stage):
+              if not isinstance(stage, dict):
+                  return {}
+              cleaned = dict(stage)
+              time_range = _normalize_time_range(cleaned.get('time_range'), str(cleaned.get('collection') or '').strip() or 'unknown')
+              cleaned['time_range'] = time_range
+              raw_filters = cleaned.get('filters') or []
+              cleaned['filters'] = _sanitize_stage_filters(raw_filters, time_range)
+              dropped_stage_ref_filters = 0
+              if str(cleaned.get('intent_type') or '').strip() == 'enrich_related':
+                  cleaned['join_source_field'] = _normalize_stage_field_ref(cleaned.get('join_source_field'))
+                  kept_filters = []
+                  for f in cleaned.get('filters') or []:
+                      value = (f or {}).get('value')
+                      if isinstance(value, str) and value.strip().startswith('$stage'):
+                          dropped_stage_ref_filters += 1
+                          continue
+                      kept_filters.append(f)
+                  cleaned['filters'] = kept_filters
+              cleaned['sanitize_report'] = {
+                  'original_filter_count': len(raw_filters) if isinstance(raw_filters, list) else 0,
+                  'effective_filter_count': len(cleaned['filters']),
+                  'time_mode': time_range.get('mode'),
+                  'dropped_stage_ref_filters': dropped_stage_ref_filters,
+              }
+              return cleaned
+
+
+          def _apply_time_range(time_range):
+              mode = str((time_range or {}).get('mode') or 'none').strip()
+              if mode == 'none':
+                  return None
+              field = str((time_range or {}).get('field') or '').strip()
+              if not field:
+                  raise ValueError('validator-normalized time_range.field is required')
+              if mode == 'relative_days':
+                  days = int((time_range or {}).get('relative_days') or 0)
+                  start_dt = datetime.now(SGT) - timedelta(days=days)
+                  return {field: {'$gte': start_dt.isoformat()}}
+              if mode == 'absolute':
+                  cond = {}
+                  start = str((time_range or {}).get('start') or '').strip()
+                  end = str((time_range or {}).get('end') or '').strip()
+                  if start:
+                      cond['$gte'] = start
+                  if end:
+                      cond['$lte'] = end
+                  return {field: cond} if cond else None
+              raise ValueError(f'unsupported time_range.mode: {mode}')
+
+
+          def _collect_expected_row_fields(stage=None, validated_ast=None, normalized_plan=None):
+              fields = set()
+
+              def add(value):
+                  if isinstance(value, str) and value.strip():
+                      fields.add(value.strip())
+
+              def add_many(values):
+                  if isinstance(values, list):
+                      for value in values:
+                          if isinstance(value, dict):
+                              add(value.get('alias') or value.get('field'))
+                          else:
+                              add(value)
+
+              for src in [stage or {}]:
+                  if not isinstance(src, dict):
+                      continue
+                  add_many(src.get('group_fields'))
+                  add(src.get('metric_alias'))
+                  add(src.get('metric_field'))
+                  add(src.get('x_field'))
+                  add(src.get('y_field'))
+
+              ast = validated_ast if isinstance(validated_ast, dict) else {}
+              add_many(ast.get('group_by'))
+              add_many(ast.get('aggregations'))
+
+              plan = normalized_plan if isinstance(normalized_plan, dict) else {}
+              visualization = plan.get('visualization') if isinstance(plan.get('visualization'), dict) else {}
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              for src in (visualization, chart_request):
+                  add(src.get('x_field') or src.get('x_axis'))
+                  add(src.get('y_field') or src.get('y_axis'))
+
+              return fields
+
+
+          def _is_scalar_value(value):
+              return value is None or isinstance(value, (str, int, float, bool))
+
+
+          def _find_best_rows(obj, expected_fields=None):
+              expected_fields = set(expected_fields or [])
+              preferred_path_keys = {'rows', 'merged_rows', 'records', 'items', 'list', 'docs'}
+              container_path_keys = {'data', 'result', 'payload'}
+              metadata_path_keys = {'debug', 'headers', 'raw_response', 'trace', 'pipeline', 'request', 'metadata'}
+              best = []
+              best_score = -1
+
+              def score_rows(rows, path):
+                  if not isinstance(rows, list) or not rows:
+                      return -1
+                  sample = rows[:20]
+                  dict_items = [item for item in sample if isinstance(item, dict)]
+                  if not dict_items:
+                      return -1
+
+                  score = min(len(rows), 100)
+                  dict_ratio = len(dict_items) / float(len(sample))
+                  if dict_ratio < 0.8:
+                      score -= 30
+                  score += int(dict_ratio * 20)
+
+                  field_counts = {}
+                  numeric_fields = set()
+                  dimension_fields = set()
+                  for item in dict_items:
+                      for key, value in item.items():
+                          field = str(key or '').strip()
+                          if not field:
+                              continue
+                          field_counts[field] = field_counts.get(field, 0) + 1
+                          if isinstance(value, (int, float)) and not isinstance(value, bool):
+                              numeric_fields.add(field)
+                          elif _is_scalar_value(value):
+                              dimension_fields.add(field)
+
+                  if not field_counts:
+                      return -1
+
+                  stable_threshold = max(1, int(len(dict_items) * 0.6))
+                  stable_fields = {field for field, count in field_counts.items() if count >= stable_threshold}
+                  score += min(len(stable_fields), 20) * 2
+
+                  avg_field_count = sum(len(item.keys()) for item in dict_items) / float(len(dict_items))
+                  if 1 <= avg_field_count <= 50:
+                      score += 10
+                  elif avg_field_count > 80:
+                      score -= 20
+
+                  expected_hits = stable_fields & expected_fields
+                  score += len(expected_hits) * 8
+                  if dimension_fields:
+                      score += 12
+                  if numeric_fields:
+                      score += 12
+                  if dimension_fields and numeric_fields:
+                      score += 10
+
+                  path_keys = {str(part or '').lower() for part in path}
+                  if path_keys & preferred_path_keys:
+                      score += 30
+                  if path_keys & container_path_keys:
+                      score += 8
+                  if path_keys & metadata_path_keys:
+                      score -= 40
+
+                  return score
+
+              def visit(node, path=()):
+                  nonlocal best, best_score
+                  if isinstance(node, list):
+                      s = score_rows(node, path)
+                      if s > best_score:
+                          best, best_score = node, s
+                      for idx, item in enumerate(node[:20]):
+                          visit(item, path + (str(idx),))
+                  elif isinstance(node, dict):
+                      ordered_keys = ('rows', 'merged_rows', 'records', 'items', 'list', 'docs', 'data', 'result', 'payload')
+                      visited = set()
+                      for key in ordered_keys:
+                          if key in node:
+                              visited.add(key)
+                              visit(node.get(key), path + (key,))
+                      for key, value in node.items():
+                          if key not in visited:
+                              visit(value, path + (str(key),))
+
+              visit(obj)
+              return best
+
+
+          def _unique_values(rows, field):
+              values = []
+              seen = set()
               for row in rows or []:
                   if not isinstance(row, dict):
                       continue
-                  for key, value in row.items():
-                      name = str(key)
-                      if name not in fields:
-                          fields.append(name)
-                      if isinstance(value, (int, float)) and not isinstance(value, bool):
-                          if name not in numeric_fields:
-                              numeric_fields.append(name)
-                      elif isinstance(value, (str, bool)) or value is None:
-                          if name not in dimension_fields:
-                              dimension_fields.append(name)
-                  if len(preview_rows) < MAX_PREVIEW_ROWS:
-                      compact = {}
-                      for key, value in row.items():
-                          if len(compact) >= MAX_PREVIEW_FIELDS:
-                              break
-                          compact[str(key)] = _compact_value(value)
-                      preview_rows.append(compact)
-              return {
-                  'row_count': len(rows or []),
-                  'fields': fields[:80],
-                  'numeric_fields': numeric_fields[:40],
-                  'dimension_fields': dimension_fields[:40],
-                  'preview_rows': preview_rows,
-              }
+                  value = row.get(field)
+                  if isinstance(value, list):
+                      for item in value:
+                          text = str(item or '').strip()
+                          if text and text not in seen:
+                              seen.add(text)
+                              values.append(text)
+                  else:
+                      text = str(value or '').strip()
+                      if text and text not in seen:
+                          seen.add(text)
+                          values.append(text)
+              return values
 
 
-          def _compact_chart_request(chart_request):
-              chart_request = chart_request if isinstance(chart_request, dict) else {}
-              return {
-                  'enabled': bool(chart_request.get('enabled') or chart_request.get('chart_type') or chart_request.get('type')),
-                  'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or ''),
-                  'x_field': str(chart_request.get('x_field') or chart_request.get('x') or ''),
-                  'y_field': str(chart_request.get('y_field') or chart_request.get('y') or ''),
-                  'series_name': str(chart_request.get('series_name') or chart_request.get('series') or ''),
-                  'title': str(chart_request.get('title') or '')[:200],
-              }
+          def _detect_visualization_intent(query_text):
+              text = str(query_text or '').strip()
+
+              if not text:
+                  return {'enabled': False, 'chart_type': ''}
+              has_generic = any(k in text for k in ['图表', '可视化'])
+              has_bar = any(k in text for k in ['柱状图', '条形图', '对比图'])
+              has_line = any(k in text for k in ['折线图', '趋势图'])
+              has_pie = '饼图' in text
+              enabled = has_generic or has_bar or has_line or has_pie
+              chart_type = ''
+              if has_bar:
+                  chart_type = 'bar'
+              elif has_line:
+                  chart_type = 'line'
+              elif has_pie:
+                  chart_type = 'pie'
+              elif has_generic:
+                  chart_type = 'bar'
+              return {'enabled': enabled, 'chart_type': chart_type}
 
 
-          def _schema_context_ref(collections, schema_metadata_json='', collection_catalog_json='', collection_selection_json=''):
-              warnings = []
-              meta = _loads_obj(schema_metadata_json)
-              catalog = _loads_obj(collection_catalog_json)
-              selection = _loads_obj(collection_selection_json)
-              selected = []
-              for item in [selection.get('selected_primary_collection')] + list(selection.get('selected_related_collections') or []) + list(collections or []):
-                  item = str(item or '').strip()
-                  if item and item not in selected:
-                      selected.append(item)
-              digest = str(meta.get('schema_digest') or '')
-              if digest and not digest.startswith('sha256:'):
-                  digest = 'sha256:' + digest
-              catalog_digest = str(catalog.get('catalog_digest') or selection.get('collection_catalog_digest') or '')
-              if catalog_digest and not catalog_digest.startswith('sha256:'):
-                  catalog_digest = 'sha256:' + catalog_digest
-              if not digest:
-                  warnings.append('schema_context_ref.schema_digest 缺失；compact context 仅保存引用摘要，不写入完整 schema。')
-              if not catalog_digest:
-                  warnings.append('schema_context_ref.catalog_digest 缺失；下一轮需要重新确认 collection catalog。')
-              return {
-                  'ref': {
-                      'collections': selected,
-                      'schema_digest': digest,
-                      'schema_version': str(meta.get('schema_version') or ''),
-                      'catalog_digest': catalog_digest,
-                  },
-                  'warnings': warnings,
-              }
-
-
-          def _first_stage_summary(stage, primary, related):
-              stage = stage if isinstance(stage, dict) else {}
-              return {
-                  'primary_collection': primary or str(stage.get('collection') or ''),
-                  'related_collections': related if isinstance(related, list) else [],
-                  'intent_type': str(stage.get('intent_type') or ''),
-                  'time_range': _normalize_time_range(stage.get('time_range')),
-                  'filters': stage.get('filters') if isinstance(stage.get('filters'), list) else [],
-                  'group_fields': stage.get('group_fields') if isinstance(stage.get('group_fields'), list) else [],
-                  'metric_alias': str(stage.get('metric_alias') or ''),
-                  'metric_function': str(stage.get('metric_function') or ''),
-                  'metric_field': str(stage.get('metric_field') or ''),
-                  'sort': stage.get('sort') if isinstance(stage.get('sort'), list) else [],
-                  'limit': _safe_int_value(stage.get('limit'), 0),
-                  'projection_fields': stage.get('projection_fields') if isinstance(stage.get('projection_fields'), list) else [],
-              }
-
-
-          def _dump_compact_context(compact):
-              compact['answer_summary'] = str(compact.get('answer_summary') or '')[:800]
-              compact.setdefault('context_warnings', [])
-              compact['size_guard'] = {'max_bytes': COMPACT_CONTEXT_TARGET_BYTES, 'actual_bytes': 0, 'truncated': False, 'truncate_reason': ''}
-              text = json.dumps(compact, ensure_ascii=False)
-              compact['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
-              if compact['size_guard']['actual_bytes'] > COMPACT_CONTEXT_TARGET_BYTES:
-                  compact['last_result_profile']['preview_rows'] = compact['last_result_profile'].get('preview_rows', [])[:3]
-                  compact['answer_summary'] = compact.get('answer_summary', '')[:400]
-                  compact['size_guard']['truncated'] = True
-                  compact['size_guard']['truncate_reason'] = 'compact_context 超过 12000 bytes，裁剪 preview_rows 与 answer_summary。'
-                  compact['context_warnings'].append(compact['size_guard']['truncate_reason'])
-                  text = json.dumps(compact, ensure_ascii=False)
-                  compact['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
-              if compact['size_guard']['actual_bytes'] > COMPACT_CONTEXT_HARD_BYTES:
-                  compact['last_result_profile']['preview_rows'] = []
-                  compact['answer_summary'] = compact.get('answer_summary', '')[:200]
-                  compact['size_guard']['truncated'] = True
-                  compact['size_guard']['truncate_reason'] = 'compact_context 超过 60000 bytes 硬上限，清空 preview_rows。'
-                  compact['context_warnings'].append(compact['size_guard']['truncate_reason'])
-                  text = json.dumps(compact, ensure_ascii=False)
-                  compact['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
-              return json.dumps(compact, ensure_ascii=False)
-
-
-          def _compact_context_contract(question, normalized_plan, chart_request, rows, answer_summary, schema_metadata_json='', collection_catalog_json='', collection_selection_json=''):
-              stage = _first_stage_for_context(normalized_plan)
-              primary = str((normalized_plan or {}).get('primary_collection') or stage.get('primary_collection') or stage.get('collection') or '').strip()
-              collections = _dedupe_values([primary] + list((normalized_plan or {}).get('related_collections') or []))
-              if not collections and stage.get('collection'):
-                  collections.append(str(stage.get('collection')).strip())
-              related = [c for c in collections if c and c != primary]
-              plan_summary = _first_stage_summary(stage, primary, related)
-              result_profile = _compact_rows_profile(rows)
-              chart = _compact_chart_request(chart_request)
-              schema_ref_payload = _schema_context_ref(collections, schema_metadata_json, collection_catalog_json, collection_selection_json)
-              warnings = list(schema_ref_payload.get('warnings') or [])
-              compact = {
-                  'context_version': 'compact_context_contract',
-                  'has_last_context': bool(question and (primary or plan_summary.get('group_fields') or plan_summary.get('metric_alias') or result_profile.get('row_count') or answer_summary)),
-                  'last_question': str(question or '')[:1000],
-                  'last_turn_intent': {'turn_intent': '', 'refine_type': ''},
-                  'last_primary_collection': primary,
-                  'last_related_collections': related,
-                  'last_plan_summary': plan_summary,
-                  'last_resolved_fields': _dedupe_values(plan_summary.get('group_fields') + plan_summary.get('projection_fields') + [plan_summary.get('metric_field')], 80),
-                  'last_resolved_metrics': _dedupe_values([plan_summary.get('metric_alias'), plan_summary.get('metric_field')], 40),
-                  'last_chart_request': chart,
-                  'last_result_profile': result_profile,
-                  'schema_context_ref': schema_ref_payload.get('ref') or {'collections': [], 'schema_digest': '', 'schema_version': '', 'catalog_digest': ''},
-                  'answer_summary': str(answer_summary or '')[:800],
-                  'size_guard': {'max_bytes': COMPACT_CONTEXT_TARGET_BYTES, 'actual_bytes': 0, 'truncated': False, 'truncate_reason': ''},
-                  'context_warnings': warnings,
-              }
-              return compact
-
-
-
-          def main(question: str, semantic_plan_json: str, normalized_semantic_plan_json: str, rows, chart_echarts_markdown: str, chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = ''):
-              semantic_plan = _loads_obj(semantic_plan_json)
-              normalized_plan = _loads_obj(normalized_semantic_plan_json)
-              mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
-              result_rows = _rows(rows)
-              chart_payload = _loads_obj(chart_payload_json)
-              chart = str((chart_payload.get('echarts_markdown') if isinstance(chart_payload, dict) else '') or chart_echarts_markdown or '').strip()
-              chart_enabled = bool((chart_payload.get('enabled') if isinstance(chart_payload, dict) else False))
-              chart_available = bool(chart_enabled and chart)
-              needs_text = _needs_analysis(question, mode)
-
-              parts = []
-              if chart_available:
-                  parts.append(chart)
-              if chart_available or needs_text or not chart_available or not result_rows:
-                  parts.append(_summary(question, result_rows, normalized_plan))
-                  parts.append(_analysis(result_rows, normalized_plan, chart_available))
-              if _plan_needs_chart(normalized_plan, semantic_plan, question) and not chart_available and result_rows:
-                  warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or (((normalized_plan.get('visualization') or {}).get('warning')) if isinstance(normalized_plan.get('visualization'), dict) else '') or '图表字段未匹配或图表配置不可用'
-                  parts.append('图表说明：\n- 本次查询已返回可统计数据，但图表未生成，原因：' + str(warning))
-              if not parts:
-                  parts.append('当前筛选条件下未查询到符合条件的数据记录。')
-
-              answer = '\n\n'.join(part for part in parts if part)
-              if not chart_available:
-                  for phrase in ['从柱状图看', '从图表看', '如图所示']:
-                      answer = answer.replace(phrase, '从统计结果看')
-              answer_text = ('\n\n'.join(part for part in parts if part and part != chart))[:4000]
-              if not answer_text:
-                  answer_text = answer[:4000]
-              chart_payload_markdown = chart if chart_available else ''
-              answer_type = 'query_with_chart' if chart_available else ('empty_result' if not result_rows else 'query_only')
-              chart_profile = chart_payload.get('data_profile') if isinstance(chart_payload, dict) and isinstance(chart_payload.get('data_profile'), dict) else {}
-              compact_rows = chart_profile.get('preview_rows') if isinstance(chart_profile.get('preview_rows'), list) else result_rows[:5]
-              compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
-              if chart_profile:
-                  compact_context['last_result_profile'].update({k: chart_profile[k] for k in ('row_count','fields','preview_rows') if k in chart_profile})
-              if isinstance(chart_payload, dict) and chart_payload.get('summary'):
-                  compact_context['last_chart_summary'] = str(chart_payload.get('summary') or '')[:400]
-              compact_context_json = _dump_compact_context(compact_context)
-              context_update = {
-                  'contract_version': 'context_update_contract',
-                  'should_save_context': bool(compact_context.get('has_last_context')),
-                  'compact_context': compact_context,
-                  'last_context_json': compact_context_json,
-                  'warnings': compact_context.get('context_warnings') or [],
-              }
-              answer_payload = {
-                  'contract_version': 'answer_payload_contract',
-                  'answer_type': answer_type,
-                  'answer_text': answer_text or '',
-                  'chart_echarts_markdown': chart_payload_markdown or '',
-                  'chart_payload_json': json.dumps({k:v for k,v in (chart_payload if isinstance(chart_payload, dict) else {}).items() if k != 'chart_debug'}, ensure_ascii=False),
-                  'result_summary': answer_text or '',
-                  'message': answer_text or '',
-                  'state_update': {
-                      'should_save_context': bool(compact_context.get('has_last_context')),
-                      'context_summary': compact_context,
-                  },
-                  'debug_summary': {
-                      'answer_mode': mode or '',
-                      'row_count': len(result_rows),
-                      'chart_available': bool(chart_available),
-                  },
-              }
-              return {
-                  'final_answer_markdown': answer,
-                  'answer_payload_markdown': answer,
-                  'answer_text': answer_text or '',
-                  'chart_echarts_markdown': chart_payload_markdown or '',
-                  'answer_payload_json': json.dumps(answer_payload, ensure_ascii=False),
-                  'chart_payload_json': json.dumps({k:v for k,v in (chart_payload if isinstance(chart_payload, dict) else {}).items() if k != 'chart_debug'}, ensure_ascii=False),
-                  'context_update_json': json.dumps(context_update, ensure_ascii=False),
-                  'compact_context_json': compact_context_json,
-                  'answer_mode': mode or '',
-                  'final_answer_summary': answer_text[:4000],
+          def _is_effectively_empty_stage(stage):
+              if not isinstance(stage, dict):
+                  return True
+              intent = str(stage.get('intent_type') or '').strip()
+              filters = stage.get('filters') or []
+              group_fields = stage.get('group_fields') or []
+              projection_fields = stage.get('projection_fields') or []
+              metric_function = str(stage.get('metric_function') or '').strip()
+              join_source_field = str(stage.get('join_source_field') or '').strip()

@@ -457,6 +457,103 @@ save_node = node_by_id['1775000000023']
   end
 end
 
+
+
+# Phase 13 final answer/context saver contract guardrails.
+merge_node = node_by_id['1775000000022']
+merge_code = merge_node&.dig('data', 'code').to_s
+%w[answer_payload_contract context_update_contract compact_context_contract].each do |token|
+  errors << "Phase 13 final answer merge must contain #{token}" unless merge_code.include?(token)
+end
+%w[answer_payload_json answer_payload_markdown answer_text chart_echarts_markdown context_update_json compact_context_json result_summary].each do |field|
+  errors << "1775000000022 output #{field} is missing for Phase 13" unless outputs_by_id.dig('1775000000022', field)
+end
+%w[query_with_chart query_only empty_result execution_error system_error].each do |answer_type|
+  errors << "Phase 13 merge must handle #{answer_type}" unless merge_code.include?(answer_type)
+end
+unless merge_code.include?("'chart_payload':") && merge_code.include?("'query_result_profile':") && merge_code.include?("'state_update':")
+  errors << 'Phase 13 answer_payload_json must use stable chart_payload/query_result_profile/state_update fields'
+end
+%w[chart_debug compiler_debug validator_debug].each do |token|
+  if merge_code.match?(/answer_payload.*#{token}/m) && !merge_code.include?("out.pop('#{token}', None)")
+    errors << "answer_payload_json must not expose #{token}"
+  end
+end
+
+main_answer = node_by_id['1773910028939']
+unless main_answer&.dig('data', 'answer').to_s.include?('1775000000022.answer_payload_markdown')
+  errors << 'Final Answer must primarily read answer_payload_markdown from 1775000000022'
+end
+if main_answer&.dig('data', 'answer').to_s.match?(/rows_json|merged_rows_json|pipeline_json|compiler_debug|schema_metadata|chart_payload\.option/)
+  errors << 'Final Answer must not directly read rows/pipeline/schema/debug/chart option fields'
+end
+
+save_node = node_by_id['1775000000023']
+save_items = save_node&.dig('data', 'items') || []
+expected_save_order = [
+  [['conversation', 'last_context_json'], ['1775000000022', 'compact_context_json']],
+  [['conversation', 'last_answer_payload_json'], ['1775000000022', 'answer_payload_json']],
+  [['conversation', 'last_context_update_json'], ['1775000000022', 'context_update_json']]
+]
+expected_save_order.each do |selector, expected_value|
+  item = save_items.find { |it| it['variable_selector'] == selector }
+  errors << "Phase 13 save node missing #{selector.inspect}" unless item
+  errors << "Phase 13 #{selector.inspect} must use #{expected_value.inspect}, got #{item&.dig('value').inspect}" unless item&.dig('value') == expected_value
+end
+save_serialized = save_node.to_s
+%w[rows_json merged_rows_json pipeline_json request_body_json compiler_debug_json schema_metadata_json schema_alias_index_json].each do |token|
+  errors << "Phase 13 context saver must not persist full #{token}" if save_serialized.include?(token)
+end
+
+# Non-valid validator branch must also emit stable answer/context payloads and must not enter compiler.
+validator_code = node_by_id['1778000000001']&.dig('data', 'code').to_s
+%w[answer_payload_contract context_update_contract compact_context_contract answer_payload_markdown compact_context_json].each do |token|
+  errors << "Phase 13 validator non-valid contract missing #{token}" unless validator_code.include?(token) || outputs_by_id.dig('1778000000001', token)
+end
+%w[answer_payload_json context_update_json answer_payload_markdown compact_context_json].each do |field|
+  errors << "1778000000001 output #{field} is missing for Phase 13 non-valid branch" unless outputs_by_id.dig('1778000000001', field)
+end
+unless node_by_id['1778000000003']&.dig('data', 'answer').to_s.include?('1778000000001.answer_payload_markdown')
+  errors << 'validator non-valid Answer must read answer_payload_markdown'
+end
+nonvalid_save = node_by_id['1778000000004']
+%w[last_answer_payload_json last_context_update_json last_context_json].each do |field|
+  unless (nonvalid_save&.dig('data', 'items') || []).any? { |item| item['variable_selector'] == ['conversation', field] }
+    errors << "validator non-valid save node must persist #{field}"
+  end
+end
+
+# Chart-only adapter must produce answer_payload_contract and preserve previous query plan fields.
+chart_adapter = node_by_id['1776000000006']
+chart_adapter_code = chart_adapter&.dig('data', 'code').to_s
+%w[answer_payload_contract context_update_contract compact_context_contract chart_only answer_payload_markdown answer_payload_json context_update_json compact_context_json].each do |token|
+  errors << "Phase 13 chart-only adapter missing #{token}" unless chart_adapter_code.include?(token) || outputs_by_id.dig('1776000000006', token)
+end
+unless chart_adapter_code.include?('prior_plan') && chart_adapter_code.include?('prior_primary') && chart_adapter_code.include?('prior_schema')
+  errors << 'chart-only adapter must preserve last_plan_summary, last_primary_collection, and schema_context_ref'
+end
+unless node_by_id['1776000000009']&.dig('data', 'answer').to_s.include?('1776000000006.answer_payload_markdown')
+  errors << 'chart-only Answer must read answer_payload_markdown'
+end
+
+nodes.select { |node| node.dig('data', 'type').to_s == 'answer' }.each do |node|
+  unless node.dig('data', 'answer').to_s.include?('answer_payload_markdown')
+    errors << "Phase 13 answer node #{node['id']} (#{node.dig('data', 'title')}) must prioritize answer_payload_markdown"
+  end
+end
+
+# Compact context / last_context_json boundary: code may list banned keys, but no saver should write full banned fields.
+compact_boundary_tokens = %w[schema_metadata_json schema_alias_index_json schema_runtime_context_json hydrated_schema_metadata_json hydrated_schema_alias_index_json raw_schema_docs raw_llm_response full_prompt pipeline_json request_body_json query_response_body query_response_headers compiler_debug_json validator_debug chart_debug stage_execution_trace full_rows rows_json merged_rows_json echarts_markdown chart_payload.option]
+[save_node, nonvalid_save, chart_adapter].compact.each do |node|
+  serialized = node.to_s
+  compact_boundary_tokens.each do |token|
+    next if node == chart_adapter && chart_adapter_code.include?('BANNED_CONTEXT_KEYS')
+    if serialized.match?(/variable_selector.*conversation/m) && serialized.include?(token) && !serialized.include?('last_context_json')
+      errors << "#{node['id']} may persist banned compact-context token #{token}"
+    end
+  end
+end
+
 incoming_counts = Hash.new(0)
 outgoing_counts = Hash.new(0)
 edges.each do |edge|
