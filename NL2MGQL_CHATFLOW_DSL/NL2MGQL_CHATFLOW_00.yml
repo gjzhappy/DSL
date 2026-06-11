@@ -358,11 +358,44 @@ workflow:
     - data:
         isInLoop: false
         sourceType: code
-        targetType: llm
-      id: 1777000000001-source-1773975766025-target
+        targetType: if-else
+      id: 1777000000001-source-1777100000001-target
       source: '1777000000001'
       sourceHandle: source
+      target: '1777100000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: llm
+      id: 1777100000001-has_primary-1773975766025-target
+      source: '1777100000001'
+      sourceHandle: has_primary
       target: '1773975766025'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1777100000001-false-1777100000002-target
+      source: '1777100000001'
+      sourceHandle: 'false'
+      target: '1777100000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: answer
+      id: 1777100000002-source-1777100000003-target
+      source: '1777100000002'
+      sourceHandle: source
+      target: '1777100000003'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -795,10 +828,43 @@ workflow:
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: code
-      id: 1776000000022-false-1777000000001-target
+        targetType: knowledge-retrieval
+      id: 1776000000022-false-1777099999998-target
       source: '1776000000022'
       sourceHandle: 'false'
+      target: '1777099999998'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: 1777099999998-source-1777099999999-target
+      source: '1777099999998'
+      sourceHandle: source
+      target: '1777099999999'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: 1777099999999-source-1777100000000-target
+      source: '1777099999999'
+      sourceHandle: source
+      target: '1777100000000'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1777100000000-source-1777000000001-target
+      source: '1777100000000'
+      sourceHandle: source
       target: '1777000000001'
       targetHandle: target
       type: custom

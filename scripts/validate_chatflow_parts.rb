@@ -238,7 +238,23 @@ else
   if selector_code.match?(/priority\s*=\s*[^\n]*(orders|products)/) || selector_code.match?(/priority['\"]\]\s*=\s*[^\n]*(orders|products)/)
     errors << "selector must not contain collection-name priority special-casing in #{selector_label} node #{selector_id}"
   end
+
+  catalog_var = (selector_node.dig('data', 'variables') || []).find { |var| var['variable'] == 'collection_catalog_json' }
+  if catalog_var.nil?
+    errors << 'selector 代码执行_CollectionCatalog候选选择 must bind collection_catalog_json'
+  else
+    source_id = catalog_var.dig('value_selector', 0).to_s
+    source_title = node_by_id.dig(source_id, 'data', 'title').to_s
+    legal_source = ['CollectionCatalog', 'collection catalog', '打包CollectionCatalog', '解析CollectionCatalog', '检索 collection catalog'].any? { |token| source_title.include?(token) }
+    forbidden_source = source_id == selector_id || source_id == 'conversation' || source_title.match?(/semantic_plan_validator|schema retrieval pack|Schema结果|Schema_Hydration|当前CollectionSchema/i)
+    errors << "selector collection_catalog_json source #{source_id}(#{source_title}) is not a legal collection catalog pack/retrieval node" unless legal_source
+    errors << "selector collection_catalog_json source #{source_id}(#{source_title}) is forbidden" if forbidden_source
+    if catalog_var.dig('value_selector') == ['conversation', 'last_schema_metadata_json']
+      errors << 'selector collection_catalog_json must not come from conversation.last_schema_metadata_json'
+    end
+  end
 end
+
 
 # Common code-node output schema guardrails for fields that frequently drift from the
 # embedded Python return contract. These checks are intentionally conservative: broad
@@ -555,6 +571,38 @@ nonvalid_handles.each do |handle|
   end
 end
 
+# Collection catalog bootstrap / selector routing guardrails.
+catalog_pack_node = nodes.find { |node| node.dig('data', 'title').to_s.include?('打包CollectionCatalog') || node.dig('data', 'title').to_s.include?('解析CollectionCatalog') }
+main_selector_node = nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_CollectionCatalog候选选择' }
+schema_retrieval_node = nodes.find { |node| node.dig('data', 'title').to_s == '遍历Collections检索Schema' }
+if catalog_pack_node && main_selector_node
+  pack_id = catalog_pack_node['id'].to_s
+  selector_id = main_selector_node['id'].to_s
+  errors << 'catalog pack node must reach collection selector' unless reachable.call(pack_id).include?(selector_id)
+  errors << 'collection selector must not reach catalog pack node' if reachable.call(selector_id).include?(pack_id)
+end
+if main_selector_node && schema_retrieval_node
+  selector_id = main_selector_node['id'].to_s
+  schema_id = schema_retrieval_node['id'].to_s
+  errors << 'schema retrieval must be after collection selector' unless reachable.call(selector_id).include?(schema_id)
+  errors << 'schema retrieval must not reach collection selector' if reachable.call(schema_id).include?(selector_id)
+end
+selection_branch = nodes.find { |node| node.dig('data', 'title').to_s == '条件分支_CollectionSelection结果判断' }
+if selection_branch
+  branch_id = selection_branch['id'].to_s
+  safe_reachable = reachable.call(branch_id, Set[[branch_id, 'has_primary']])
+  {
+    '1773975766025' => 'LLM_查询规划',
+    '1774083951307' => '代码执行_构建检索任务',
+    '1778000000001' => '代码执行_semantic_plan_validator'
+  }.each do |target_id, label|
+    errors << "selector clarification/default branch must not reach #{label}" if safe_reachable.include?(target_id)
+  end
+else
+  errors << 'required 条件分支_CollectionSelection结果判断 is missing'
+end
+
+
 forbidden_persist_fields = %w[schema_metadata_json schema_alias_index_json hydrated_schema_metadata_json hydrated_schema_alias_index_json schema_runtime_context_json]
 nodes.each do |node|
   title = node.dig('data', 'title').to_s
@@ -761,10 +809,13 @@ unless node_by_id['1778000000003']&.dig('data', 'answer').to_s.include?('1778000
   errors << 'validator non-valid Answer must read answer_payload_markdown'
 end
 nonvalid_save = node_by_id['1778000000004']
-%w[last_answer_payload_json last_context_update_json last_context_json].each do |field|
+%w[last_answer_payload_json last_context_update_json].each do |field|
   unless (nonvalid_save&.dig('data', 'items') || []).any? { |item| item['variable_selector'] == ['conversation', field] }
     errors << "validator non-valid save node must persist #{field}"
   end
+end
+if (nonvalid_save&.dig('data', 'items') || []).any? { |item| item['variable_selector'] == ['conversation', 'last_context_json'] }
+  errors << 'validator non-valid save node must not persist conversation.last_context_json unless guarded by should_save_context=true'
 end
 
 # Chart-only adapter must produce answer_payload_contract and preserve previous query plan fields.
