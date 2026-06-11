@@ -1,0 +1,403 @@
+    - data:
+        code: |
+          import json, re
+          from datetime import datetime, timezone
+
+          def _loads(v, fb):
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return fb
+              return fb
+          def _dumps(v): return json.dumps(v, ensure_ascii=False)
+          def _bool(v):
+              if isinstance(v, bool): return v
+              if isinstance(v, str): return v.strip().lower() in {'true','1','yes','y'}
+              return bool(v)
+          def _num(v):
+              if v is None or isinstance(v,bool): return None
+              try:
+                  if isinstance(v,str) and not v.strip(): return None
+                  return float(v)
+              except Exception: return None
+          def _numeric(rows,f):
+              vals=[r.get(f) for r in rows[:200] if isinstance(r,dict) and r.get(f) is not None]
+              return bool(vals) and sum(1 for v in vals if _num(v) is not None)>=max(1,int(len(vals)*0.7))
+          def _markdown(option):
+              fence=chr(96)*3
+              return fence+'echarts\n'+json.dumps(option,ensure_ascii=False,indent=2)+'\n'+fence
+          def _chart_req(v):
+              default={'enabled':False,'chart_type':'','x_field':'','y_field':'','series_name':'','title':'','field_labels':{}}
+              obj=_loads(v,{})
+              cand=obj.get('chart_request') if isinstance(obj,dict) and isinstance(obj.get('chart_request'),dict) else obj
+              out=dict(default)
+              if isinstance(cand,dict):
+                  for k in default:
+                      if k in cand: out[k]=cand[k]
+              out['enabled']=_bool(out.get('enabled', True)); out['chart_type']=str(out.get('chart_type') or '').strip().lower()
+              out['x_field']=str(out.get('x_field') or '').strip(); out['y_field']=str(out.get('y_field') or '').strip()
+              out['series_name']=str(out.get('series_name') or '').strip(); out['title']=str(out.get('title') or '').strip()
+              out['field_labels']=out.get('field_labels') if isinstance(out.get('field_labels'),dict) else {}
+              return out
+          def _title(req):
+              if req.get('title'): return str(req.get('title'))
+              labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}
+              return '按%s统计%s' % (labels.get(req.get('x_field')) or req.get('x_field') or '维度', labels.get(req.get('y_field')) or req.get('series_name') or req.get('y_field') or '指标')
+          def _payload(req, rows, fields, chart_plan_warning=''):
+              fields=set([str(f) for f in (fields or [])])
+              for r in rows[:20]: fields.update(r.keys())
+              p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':len(rows),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{'mode':'chart_only'}}
+              if not req.get('enabled'):
+                  p['warning']='chart_request disabled'; return p
+              if not rows:
+                  p['warning']='上一轮结果摘要不足以重新生成图表'; return p
+              x=str(req.get('x_field') or ''); y=str(req.get('y_field') or '')
+              if not x or not y or x not in fields or y not in fields:
+                  p['warning']='图表字段不在查询结果中'; return p
+              if not _numeric(rows,y):
+                  p['warning']='图表纵轴字段不是数字，未生成图表。'; return p
+              ctype=str(req.get('chart_type') or 'bar')
+              if ctype not in {'bar','line','pie','scatter'}:
+                  p['warning']='暂不支持该图表类型'; return p
+              title=_title(req); series=req.get('series_name') or y
+              if ctype=='pie':
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'series':[{'name':series,'type':'pie','data':[{'name':str(r.get(x) if r.get(x) is not None else '未分类'),'value':_num(r.get(y)) or 0} for r in rows[:20]]}]}
+              elif ctype=='scatter':
+                  if not _numeric(rows,x): p['warning']='散点图横轴字段不是数字，未生成图表。'; return p
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'scatter','data':[[_num(r.get(x)),_num(r.get(y))] for r in rows if _num(r.get(x)) is not None and _num(r.get(y)) is not None]}]}
+              else:
+                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
+                  if ctype=='line' and not re.search(r'date|time|day|month|year|日期|时间|日|月|年',x,re.I): p['warning']='折线图横轴不是明显时间或有序字段。'
+              p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':'已基于上一轮结果摘要重新生成%s图表。' % ctype})
+              if chart_plan_warning and not p.get('warning'): p['warning']=str(chart_plan_warning)
+              return p
+          def main(chart_request_json: str, last_result_profile_json: str, chart_plan_warning: str=''):
+              req=_chart_req(chart_request_json); profile=_loads(last_result_profile_json,{})
+              rows=profile.get('preview_rows') if isinstance(profile.get('preview_rows'),list) else []
+              rows=[r for r in rows if isinstance(r,dict)]
+              fields=profile.get('fields') if isinstance(profile.get('fields'),list) else (list(rows[0].keys()) if rows else [])
+              payload=_payload(req, rows, fields, chart_plan_warning)
+              md=payload.get('echarts_markdown') or ''
+              note=payload.get('summary') or payload.get('warning') or '未生成图表。'
+              final=(md+'\n\n'+note).strip() if md else note
+              return {'chart_payload_json':_dumps(payload),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':md,'chart_summary':payload.get('summary') or '','chart_warning':payload.get('warning') or '','chart_enabled':bool(payload.get('enabled')),'data_profile_json':_dumps(payload.get('data_profile') or {}),'chart_debug_json':_dumps(payload.get('chart_debug') or {}),'final_answer_markdown':final,'final_answer_summary':note,'updated_at':datetime.now(timezone.utc).isoformat()}
+        code_language: python3
+        desc: Phase 12 chart-only：compact_context.last_chart_request + last_result_profile.preview_rows
+          -> chart_payload_contract；不查 Mongo、不改查询语义。
+        outputs:
+          chart_payload_json:
+            children:
+            type: string
+          chart_payload_contract:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          chart_summary:
+            children:
+            type: string
+          chart_warning:
+            children:
+            type: string
+          chart_enabled:
+            children:
+            type: boolean
+          data_profile_json:
+            children:
+            type: string
+          chart_debug_json:
+            children:
+            type: string
+          final_answer_markdown:
+            children:
+            type: string
+          final_answer_summary:
+            children:
+            type: string
+          updated_at:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_ChartPayloadBuilder
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000015'
+          - chart_request_json
+          value_type: string
+          variable: chart_request_json
+        - value_selector:
+          - '1776000000001'
+          - last_result_profile_json
+          value_type: string
+          variable: last_result_profile_json
+        - value_selector:
+          - '1776000000015'
+          - chart_plan_warning
+          value_type: string
+          variable: chart_plan_warning
+      height: 80
+      id: '1776000000016'
+      position:
+        x: 4140
+        y: 1120
+      positionAbsolute:
+        x: 4140
+        y: 1120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: analysis-system
+          role: system
+          text: |-
+            你是一个基于上一轮查询结果的分析助手。
+            必须基于已给出的结果行、字段、图表请求、用户本轮问题进行分析。
+            必须输出 JSON，不要 markdown 代码块，不要解释 JSON 之外的内容，不要输出 schema 之外字段。
+            不执行 Mongo；默认不重新画图。
+
+            analysis_markdown 必须非空，作为最终给用户看的自然语言分析。
+            analysis_debug_json 用于结构化调试，可包含 observations / insights / suggestions。
+            不能只填 analysis_debug_json 而让 analysis_markdown 为空。
+
+            如果结果行较少，需要明确说明样本量有限，不要过度解读。
+            不要基于当前结果中不存在的字段做确定性归因。
+            促销、库存、渠道、地区、价格等如果不在结果字段中，只能作为“后续可验证方向”，不能作为已发生原因。
+            涉及占比时必须计算准确：例如 Huawei=4, Apple=3, Xiaomi=3，总计=10，则 Huawei=40%，Apple=30%，Xiaomi=30%。
+            不要写出 “30% vs 40%” 这种方向混乱的表达。
+
+            输出结构：
+            {
+              "analysis_markdown": "非空 markdown 分析正文，建议包含：### 看到的现象、### 初步判断、### 建议下一步",
+              "analysis_debug_json": {
+                "observations": [],
+                "insights": [],
+                "suggestions": []
+              }
+            }
+        - id: analysis-user
+          role: user
+          text: |-
+            当前用户问题：{{#sys.query#}}
+            上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
+            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
+            上一轮最终摘要：{{#conversation.last_result_summary#}}
+            分析关注点：{{#1776000000004.analysis_focus#}}
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - analysis_markdown
+            - analysis_debug_json
+            properties:
+              analysis_markdown:
+                type: string
+              analysis_debug_json:
+                type: object
+                additionalProperties: true
+        structured_output_enabled: true
+        title: LLM_基于上一轮结果继续分析
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776000000017'
+      position:
+        x: 3220
+        y: 1480
+      positionAbsolute:
+        x: 3220
+        y: 1480
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |+
+          import json, re
+
+          def _extract(text):
+              text = str(text or '').strip()
+              m = re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I | re.S)
+              if m:
+                  text = m.group(1).strip()
+              s, e = text.find('{'), text.rfind('}')
+              return text[s:e + 1] if s >= 0 and e >= s else text
+
+          def _loads(v):
+              if isinstance(v, dict):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      return json.loads(_extract(v))
+                  except Exception:
+                      return {}
+              return {}
+
+          def _as_list(v):
+              if isinstance(v, list):
+                  return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip():
+                  return [v.strip()]
+              return []
+
+          def _build_markdown_from_debug(debug):
+              if not isinstance(debug, dict):
+                  return ''
+
+              observations = _as_list(debug.get('observations'))
+              insights = _as_list(debug.get('insights'))
+              suggestions = _as_list(debug.get('suggestions'))
+
+              parts = []
+
+              if observations:
+                  parts.append('### 看到的现象')
+                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(observations)])
+
+              if insights:
+                  if parts:
+                      parts.append('')
+                  parts.append('### 初步判断')
+                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(insights)])
+
+              if suggestions:
+                  if parts:
+                      parts.append('')
+                  parts.append('### 建议下一步')
+                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(suggestions)])
+
+              return '\n'.join(parts).strip()
+
+          def main(analysis_structured, analysis_text: str, last_context_json: str):
+              obj = _loads(analysis_structured) or _loads(analysis_text)
+
+              debug = obj.get('analysis_debug_json') if isinstance(obj.get('analysis_debug_json'), dict) else {}
+              text = str(obj.get('analysis_markdown') or '').strip()
+
+              if not text:
+                  text = _build_markdown_from_debug(debug)
+
+              fallback_used = False
+              if not text:
+                  fallback_used = True
+                  try:
+                      ctx = json.loads(last_context_json or '{}')
+                      count = int(ctx.get('result_rows_count') or 0)
+                      fields = ', '.join(ctx.get('result_fields') or [])
+                  except Exception:
+                      count = 0
+                      fields = ''
+
+                  text = '从当前统计结果看，已返回 %s 行结果%s。LLM 分析暂不可用，建议结合图表和结果摘要判断差异；如需验证原因，需要进一步补充筛选条件或重新查询。' % (
+                      count,
+                      ('，字段包括：' + fields) if fields else ''
+                  )
+
+              if fallback_used and not debug:
+                  debug = {'fallback': True}
+
+              compact = _loads(last_context_json)
+              if not isinstance(compact, dict) or compact.get('context_version') != 'compact_context_contract':
+                  compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':'','last_turn_intent':{},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':'','size_guard':{},'context_warnings':[]}
+              compact['answer_summary'] = text[:800]
+              compact_json = json.dumps(compact, ensure_ascii=False)
+              payload = {'contract_version':'answer_payload_contract','answer_type':'query_only','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':compact.get('last_result_profile') or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(compact.get('has_last_context')),'context_summary':compact}}
+              update = {'contract_version':'context_update_contract','should_save_context':bool(compact.get('has_last_context')),'compact_context':compact,'last_context_json':compact_json,'warnings':compact.get('context_warnings') or [],'clear_fields':[]}
+              return {
+                  'analysis_markdown': text,
+                  'analysis_debug_json': json.dumps(debug, ensure_ascii=False),
+                  'final_answer_markdown': text,
+                  'answer_payload_markdown': text,
+                  'answer_payload_json': json.dumps(payload, ensure_ascii=False),
+                  'context_update_json': json.dumps(update, ensure_ascii=False),
+                  'compact_context_json': compact_json,
+                  'answer_text': text,
+                  'result_summary': text[:800],
+                  'final_answer_summary': text[:4000]
+              }
+
+        code_language: python3
+        desc: 解析 LLM 继续分析输出；失败时生成可读降级分析。
+        outputs:
+          analysis_markdown:
+            children:
+            type: string
+          analysis_debug_json:
+            children:
+            type: string
+          final_answer_markdown:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+          final_answer_summary:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_payload_json:
+            children:
+            type: string
+          compact_context_json:
+            children:
+            type: string
+          answer_text:
+            children:
+            type: string
+          result_summary:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_规范化继续分析结果
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000017'
+          - structured_output
+          value_type: object
+          variable: analysis_structured
+        - value_selector:
+          - '1776000000017'
+          - text
+          value_type: string
+          variable: analysis_text
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+      height: 80
+      id: '1776000000018'
+      position:
+        x: 3680
+        y: 1480
+      positionAbsolute:
+        x: 3680
+        y: 1480
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242

@@ -650,11 +650,97 @@ answer_refs.each do |answer_id, source_id, field|
   errors << "answer #{answer_id} references missing output #{source_id}.#{field}" unless declared_outputs.key?(field)
 end
 
+# Phase 15 display-only layout guardrails. These checks intentionally validate only
+# canvas readability fields and do not change workflow semantics.
+NODE_LAYOUT_SIZES = {
+  'start' => [240, 120],
+  'answer' => [240, 120],
+  'if-else' => [260, 160],
+  'condition' => [260, 160],
+  'llm' => [320, 180],
+  'code' => [360, 220],
+  'iteration' => [520, 360],
+  'knowledge-retrieval' => [320, 180]
+}.freeze
+DEFAULT_NODE_LAYOUT_SIZE = [300, 160].freeze
+layout_missing = []
+coordinate_groups = Hash.new { |hash, key| hash[key] = [] }
+node_layout = {}
+
+nodes.each do |node|
+  id = node['id'].to_s
+  position = node['positionAbsolute'].is_a?(Hash) ? node['positionAbsolute'] : node['position']
+  if !position.is_a?(Hash) || position['x'].nil? || position['y'].nil?
+    layout_missing << id
+    next
+  end
+  x = position['x'].to_f
+  y = position['y'].to_f
+  width, height = NODE_LAYOUT_SIZES.fetch(node.dig('data', 'type').to_s, DEFAULT_NODE_LAYOUT_SIZE)
+  node_layout[id] = {
+    'node' => node,
+    'x' => x,
+    'y' => y,
+    'width' => width.to_f,
+    'height' => height.to_f,
+    'parent_id' => node['parentId'].to_s
+  }
+  coordinate_groups[[x, y]] << node
+end
+
+errors << "nodes missing position: #{layout_missing.join(', ')}" unless layout_missing.empty?
+duplicate_coordinates = coordinate_groups.select { |_coord, grouped_nodes| grouped_nodes.length > 1 }
+unless duplicate_coordinates.empty?
+  duplicate_messages = duplicate_coordinates.map do |coord, grouped_nodes|
+    "#{coord.inspect}=#{grouped_nodes.map { |node| "#{node['id']}(#{node.dig('data', 'title')})" }.join('|')}"
+  end
+  errors << "duplicate node coordinates: #{duplicate_messages.join('; ')}"
+end
+
+layout_overlaps = []
+iteration_internal_overlaps = []
+node_layout.values.combination(2) do |a, b|
+  a_id = a['node']['id'].to_s
+  b_id = b['node']['id'].to_s
+  # Parent iteration containers are expected to visually contain their children.
+  next if a_id == b['parent_id'] || b_id == a['parent_id']
+
+  overlaps = a['x'] < b['x'] + b['width'] && a['x'] + a['width'] > b['x'] &&
+             a['y'] < b['y'] + b['height'] && a['y'] + a['height'] > b['y']
+  next unless overlaps
+
+  pair = "#{a_id}(#{a['node'].dig('data', 'title')}) <-> #{b_id}(#{b['node'].dig('data', 'title')})"
+  if !a['parent_id'].empty? && a['parent_id'] == b['parent_id']
+    iteration_internal_overlaps << pair
+  else
+    layout_overlaps << pair
+  end
+end
+warnings << "layout overlap pairs: #{layout_overlaps.join('; ')}" unless layout_overlaps.empty?
+errors << "iteration internal layout overlaps: #{iteration_internal_overlaps.join('; ')}" unless iteration_internal_overlaps.empty?
+
+phase15_lane_sequences = {
+  'turn_intent' => %w[1773909192919 1776000000001 1776000000002 1776000000003 1776000000004 1776000000013 1776000000005],
+  'new_query' => %w[1777000000001 1773975766025 1774083951307 1775000000001 1775000000005 1775000000014 1775000000013 1775000000020],
+  'refine_full_replan' => %w[1777000000002 1776000000030 1776000000025 1776000000032 1776000000026 1776000000027 1776000000020 1776000000028 1776000000021],
+  'runtime_validator_success' => %w[1776000000024 1779000000001 1780000000001 1780000000009 1778000000001 1778000000002 1775000000007 1781000000001 1775000000022 1775000000023 1773910028939],
+  'chart_only' => %w[1776000000014 1776000000015 1776000000016 1776000000006 1776000000009],
+  'non_valid' => %w[1778000000004 1778000000003]
+}
+phase15_lane_sequences.each do |lane, ids|
+  xs = ids.filter_map { |id| node_layout.dig(id, 'x') }
+  next unless xs.length == ids.length
+  unless xs.each_cons(2).all? { |left, right| right > left }
+    warnings << "layout lane #{lane} is not strictly left-to-right: #{ids.zip(xs).inspect}"
+  end
+end
+
 puts "Manifest: #{MANIFEST_PATH}"
 puts "Parts: #{parts.join(', ')}"
 puts "Nodes: #{nodes.length}"
 puts "Edges: #{edges.length}"
 puts "Warnings: #{warnings.length}"
+puts "Layout: missing=#{layout_missing.length} duplicate_coordinates=#{duplicate_coordinates.length} overlaps=#{layout_overlaps.length} iteration_internal_overlaps=#{iteration_internal_overlaps.length}"
 warnings.each { |warning| warn "WARNING: #{warning}" }
 
 if errors.empty?

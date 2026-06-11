@@ -1,0 +1,861 @@
+    - data:
+        code: |
+          import json
+
+          MAX_COLLECTIONS = 3
+          UNKNOWN = {'', 'unknown', 'UNKNOWN', 'null', 'None', '未确定', '未知'}
+
+          def _loads(v, default=None):
+              if default is None:
+                  default = {}
+              if isinstance(v, (dict, list)):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return default
+              return default
+
+          def _list(v):
+              if v is None or v == '':
+                  return []
+              if isinstance(v, list):
+                  return v
+              if isinstance(v, str):
+                  parsed = _loads(v, None)
+                  if isinstance(parsed, list):
+                      return parsed
+                  return [x.strip() for x in v.split(',') if x.strip()]
+              return [v]
+
+          def _add(out, value):
+              s = str(value or '').strip()
+              if not s or s in UNKNOWN:
+                  return
+              if s not in out:
+                  out.append(s)
+
+          def _plan_cols(plan):
+              out = []
+              _add(out, plan.get('primary_collection'))
+              for c in _list(plan.get('related_collections')):
+                  _add(out, c)
+              for st in plan.get('stages') or []:
+                  if isinstance(st, dict):
+                      _add(out, st.get('collection'))
+                      _add(out, st.get('primary_collection'))
+                      for c in _list(st.get('related_collections')):
+                          _add(out, c)
+              return out
+
+          def _selection_cols(sel):
+              out = []
+              _add(out, sel.get('selected_primary_collection'))
+              for k in ('selected_related_collections', 'related_collections', 'candidate_collections'):
+                  for c in _list(sel.get(k)):
+                      _add(out, (c or {}).get('collection') if isinstance(c, dict) else c)
+              return out
+
+          def _compact_cols(ctx):
+              out = []
+              ref = ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'), dict) else {}
+              for c in _list(ref.get('collections')):
+                  _add(out, c)
+              _add(out, ctx.get('last_primary_collection'))
+              for c in _list(ctx.get('last_related_collections')):
+                  _add(out, c)
+              return out
+
+          def main(schema_runtime_context_json='{}', semantic_plan_json='{}', compact_context_json='{}', collection_selection_json='{}'):
+              runtime = _loads(schema_runtime_context_json, {}) or {}
+              plan = _loads(semantic_plan_json, {}) or {}
+              compact = _loads(compact_context_json, {}) or {}
+              selection = _loads(collection_selection_json, {}) or {}
+              warnings = []
+              sources = [
+                  ('schema_runtime_context.schema_hydration_collections', _list(runtime.get('schema_hydration_collections'))),
+                  ('semantic_plan', _plan_cols(plan)),
+                  ('collection_selection', _selection_cols(selection)),
+                  ('compact_context', _compact_cols(compact)),
+              ]
+              chosen = []
+              source_name = ''
+              for name, cols in sources:
+                  tmp = []
+                  for c in cols:
+                      _add(tmp, c)
+                  if tmp:
+                      chosen = tmp
+                      source_name = name
+                      break
+              plan_cols = _plan_cols(plan)
+              compact_cols = _compact_cols(compact)
+              if plan_cols and compact_cols and set(plan_cols) != set(compact_cols):
+                  warnings.append('semantic_plan_collections_differ_from_compact_context_ref')
+              if len(chosen) > MAX_COLLECTIONS:
+                  warnings.append('hydration_collections_truncated_to_3')
+                  chosen = chosen[:MAX_COLLECTIONS]
+              tasks = [{
+                  'collection_name': c,
+                  'role': 'validator_schema_hydration',
+                  'query_text': 'schema metadata alias fields metrics relations for collection ' + c,
+                  'retrieval_mode': 'validator_schema_hydration',
+              } for c in chosen]
+              valid = bool(tasks)
+              reason = str(runtime.get('schema_hydration_reason') or ('derived_from_' + source_name if source_name else 'missing_collections_for_schema_hydration'))
+              if not valid:
+                  warnings.append('missing_collections_for_schema_hydration')
+              return {
+                  'hydration_collection_tasks': tasks,
+                  'collection_tasks': tasks,
+                  'hydration_collections': chosen,
+                  'hydration_reason': reason,
+                  'hydration_task_valid': valid,
+                  'hydration_warnings': warnings,
+                  'hydration_warnings_json': json.dumps(warnings, ensure_ascii=False),
+                  'retrieval_mode': 'validator_schema_hydration',
+              }
+        code_language: python3
+        desc: Phase 10：基于 runtime schema_hydration_collections / semantic_plan / collection_selection
+          / compact_context 推导最多 3 个 collection，构造兼容 Traversal 的 schema retrieval
+          tasks；不改写 plan、不调用 LLM。
+        outputs:
+          hydration_collection_tasks:
+            children:
+            type: array[object]
+          collection_tasks:
+            children:
+            type: array[object]
+          hydration_collections:
+            children:
+            type: array[string]
+          hydration_reason:
+            children:
+            type: string
+          hydration_task_valid:
+            children:
+            type: boolean
+          hydration_warnings:
+            children:
+            type: array[string]
+          hydration_warnings_json:
+            children:
+            type: string
+          retrieval_mode:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_构建ValidatorSchemaHydration检索任务
+        type: code
+        variables:
+        - value_selector:
+          - '1779000000001'
+          - schema_runtime_context_json
+          value_type: string
+          variable: schema_runtime_context_json
+        - value_selector:
+          - '1776000000024'
+          - semantic_plan_contract_json
+          value_type: string
+          variable: semantic_plan_json
+        - value_selector:
+          - conversation
+          - last_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1777000000001'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+      height: 80
+      id: '1780000000002'
+      position:
+        x: 12700
+        y: 760
+      positionAbsolute:
+        x: 12700
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: Phase 10 validator schema hydration retrieval：复用与普通 schema retrieval
+          相同的 collection schema 知识库检索能力，但只服务 validator runtime schema，不进入 planner。
+        error_handle_mode: terminated
+        height: 360
+        is_parallel: false
+        iterator_selector:
+        - '1780000000002'
+        - hydration_collection_tasks
+        output_selector:
+        - '1780000000006'
+        - output
+        output_type: array[string]
+        parallel_nums: 3
+        selected: false
+        start_node_id: 1780000000003start
+        title: 遍历Collections检索Schema_Hydration
+        type: iteration
+        width: 980
+      height: 360
+      id: '1780000000003'
+      position:
+        x: 13160
+        y: 760
+      positionAbsolute:
+        x: 13160
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 980
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1780000000003start
+      parentId: '1780000000003'
+      position:
+        x: 40
+        y: 90
+      positionAbsolute:
+        x: 13200
+        y: 850
+      selectable: false
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+          def main(item):
+              data = item
+              if isinstance(data, str):
+                  data = json.loads(data)
+              data = data or {}
+              return {
+                  'collection_name': str(data.get('collection_name') or '').strip(),
+                  'role': str(data.get('role') or 'validator_schema_hydration').strip(),
+                  'query_text': str(data.get('query_text') or '').strip(),
+              }
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        isIterationStart: true
+        iteration_id: '1780000000003'
+        outputs:
+          collection_name:
+            children:
+            type: string
+          query_text:
+            children:
+            type: string
+          role:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_解析HydrationSchema任务
+        type: code
+        variables:
+        - value_selector:
+          - '1780000000003'
+          - item
+          variable: item
+      height: 52
+      id: '1780000000004'
+      parentId: '1780000000003'
+      position:
+        x: 380
+        y: 90
+      positionAbsolute:
+        x: 13540
+        y: 850
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1001
+    - data:
+        dataset_ids:
+        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
+        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        isInIteration: true
+        iteration_id: '1780000000003'
+        metadata_filtering_conditions:
+          conditions:
+          - comparison_operator: is
+            id: phase10-hydration-collection-filter
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1780000000004.collection_name#}}"
+          logical_operator: and
+        metadata_filtering_mode: manual
+        multiple_retrieval_config:
+          reranking_enable: false
+          reranking_mode: weighted_score
+          top_k: 4
+          weights:
+            keyword_setting:
+              keyword_weight: 0.3
+            vector_setting:
+              embedding_model_name: nomic-embed-text:v1.5
+              embedding_provider_name: langgenius/ollama/ollama
+              vector_weight: 0.7
+            weight_type: customized
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1780000000004'
+        - query_text
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索_Hydration当前CollectionSchema
+        type: knowledge-retrieval
+      height: 90
+      id: '1780000000005'
+      parentId: '1780000000003'
+      position:
+        x: 800
+        y: 90
+      positionAbsolute:
+        x: 13960
+        y: 850
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+          def main(collection_name: str, role: str, docs):
+              docs = docs or []
+              parts = []
+              for idx, item in enumerate(docs):
+                  title = str((item or {}).get('title') or '').strip()
+                  content = str((item or {}).get('content') or '').strip()
+                  metadata = (item or {}).get('metadata') or {}
+                  score = metadata.get('score', '')
+                  chunk = f"[{idx+1}] title={title} score={score}\n{content}".strip()
+                  if chunk:
+                      parts.append(chunk)
+              return {'output': json.dumps({'collection_name': collection_name, 'role': role, 'context_text': '\n\n'.join(parts)}, ensure_ascii=False)}
+        code_language: python3
+        desc: ''
+        isInIteration: true
+        iteration_id: '1780000000003'
+        outputs:
+          output:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_打包HydrationSchema结果
+        type: code
+        variables:
+        - value_selector:
+          - '1780000000004'
+          - collection_name
+          value_type: string
+          variable: collection_name
+        - value_selector:
+          - '1780000000004'
+          - role
+          value_type: string
+          variable: role
+        - value_selector:
+          - '1780000000005'
+          - result
+          value_type: array[object]
+          variable: docs
+      height: 52
+      id: '1780000000006'
+      parentId: '1780000000003'
+      position:
+        x: 1220
+        y: 90
+      positionAbsolute:
+        x: 14380
+        y: 850
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: |
+          import hashlib
+          import json
+          import re
+
+          def _loads(v, default=None):
+              if default is None:
+                  default = {}
+              if isinstance(v, (dict, list)):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return default
+              return default
+
+          def _dumps(v):
+              return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+
+          def _as_list(v):
+              if v is None or v == '': return []
+              return v if isinstance(v, list) else [v]
+
+          def _extract_json_objects(text):
+              out = []
+              raw = str(text or '')
+              blocks = re.findall(r'```(?:json|yaml|yml)?\s*\n(.*?)\n```', raw, flags=re.I|re.S)
+              candidates = blocks + [raw]
+              for c in candidates:
+                  s = c.strip()
+                  if not s: continue
+                  if s.startswith('{'):
+                      try:
+                          out.append(json.loads(s)); continue
+                      except Exception:
+                          pass
+                  m = re.search(r'(\{.*"collections"\s*:\s*\{.*\})', s, flags=re.S)
+                  if m:
+                      try: out.append(json.loads(m.group(1)))
+                      except Exception: pass
+              return out
+
+          def _normalize_collection(cname, coll):
+              coll = dict(coll or {})
+              coll.setdefault('collection_name', cname)
+              coll.setdefault('fields', {})
+              coll.setdefault('metrics', {})
+              coll.setdefault('relations', [])
+              coll.setdefault('query_rules', {})
+              return coll
+
+          def _add_alias(idx, alias, collection, kind, name, label='', source='', field=None):
+              alias = str(alias or '').strip()
+              if not alias: return
+              item = {'collection': collection, 'kind': kind, 'name': name, 'label': str(label or '').strip(), 'confidence': 1.0, 'source': source}
+              if field: item['field'] = field
+              bucket = idx.setdefault(alias, [])
+              if not any(x.get('collection') == collection and x.get('kind') == kind and x.get('name') == name and x.get('field') == field for x in bucket):
+                  bucket.append(item)
+
+          def _build_alias(meta):
+              aliases, ca, fa, ma, va = {}, {}, {}, {}, {}
+              for cname, coll in (meta.get('collections') or {}).items():
+                  _add_alias(aliases, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
+                  _add_alias(ca, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
+                  _add_alias(aliases, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
+                  _add_alias(ca, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
+                  for a in _as_list(coll.get('collection_aliases')):
+                      _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                      _add_alias(ca, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                  for fname, f in (coll.get('fields') or {}).items():
+                      f = f or {}
+                      for a, src in ((fname, 'field.name'), (f.get('label'), 'field.label')):
+                          _add_alias(aliases, a, cname, 'field', fname, f.get('label'), src); _add_alias(fa, a, cname, 'field', fname, f.get('label'), src)
+                      for a in _as_list(f.get('aliases')):
+                          _add_alias(aliases, a, cname, 'field', fname, f.get('label'), 'field.aliases'); _add_alias(fa, a, cname, 'field', fname, f.get('label'), 'field.aliases')
+                      for va0, cv in (f.get('value_aliases') or {}).items():
+                          _add_alias(aliases, va0, cname, 'value', cv, va0, 'field.value_aliases', field=fname); _add_alias(va, va0, cname, 'value', cv, va0, 'field.value_aliases', field=fname)
+                  for mname, m in (coll.get('metrics') or {}).items():
+                      m = m or {}
+                      for a, src in ((mname, 'metric.name'), (m.get('label'), 'metric.label')):
+                          _add_alias(aliases, a, cname, 'metric', mname, m.get('label'), src); _add_alias(ma, a, cname, 'metric', mname, m.get('label'), src)
+                      for a in _as_list(m.get('aliases')):
+                          _add_alias(aliases, a, cname, 'metric', mname, m.get('label'), 'metric.aliases'); _add_alias(ma, a, cname, 'metric', mname, m.get('label'), 'metric.aliases')
+              return {'contract_version': 'schema_alias_index_contract', 'aliases': aliases, 'collection_aliases': ca, 'field_aliases': fa, 'metric_aliases': ma, 'value_aliases': va, 'warnings': []}
+
+          def _digest(meta):
+              clone = json.loads(json.dumps(meta, ensure_ascii=False))
+              clone.pop('schema_digest', None)
+              payload = json.dumps(clone, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+              return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+          def main(hydrated_schema_results=None, hydration_collections=None, compact_context_json='{}', hydration_warnings_json='[]'):
+              warnings = _loads(hydration_warnings_json, []) or []
+              errors = []
+              collections = {}
+              for raw in hydrated_schema_results or []:
+                  item = _loads(raw, {}) or {}
+                  cname_hint = str(item.get('collection_name') or '').strip()
+                  text = str(item.get('context_text') or '')
+                  for obj in _extract_json_objects(text):
+                      if isinstance(obj, dict) and isinstance(obj.get('collections'), dict):
+                          for cname, coll in obj.get('collections', {}).items():
+                              collections[str(cname).strip()] = _normalize_collection(str(cname).strip(), coll)
+                      elif isinstance(obj, dict) and (obj.get('collection_name') or cname_hint):
+                          cname = str(obj.get('collection_name') or cname_hint).strip()
+                          collections[cname] = _normalize_collection(cname, obj)
+              wanted = [str(c or '').strip() for c in (hydration_collections or []) if str(c or '').strip()]
+              if wanted:
+                  collections = {c: collections[c] for c in wanted if c in collections}
+              if not collections:
+                  errors.append('hydrated_schema_metadata_empty')
+              meta = {'contract_version': 'schema_metadata_contract', 'schema_version': '', 'schema_digest': '', 'collections': collections, 'warnings': warnings, 'parse_errors': errors}
+              meta['schema_digest'] = _digest(meta)
+              alias = _build_alias(meta)
+              compact = _loads(compact_context_json, {}) or {}
+              ref = compact.get('schema_context_ref') if isinstance(compact.get('schema_context_ref'), dict) else {}
+              if ref.get('schema_digest') and ref.get('schema_digest') != meta['schema_digest']:
+                  warnings.append('hydrated_schema_digest_mismatch_with_compact_ref')
+              version = str(meta.get('schema_version') or ref.get('schema_version') or '').strip()
+              catalog_digest = str(ref.get('catalog_digest') or '').strip()
+              context_ref = {'collections': list(collections.keys()), 'schema_digest': meta['schema_digest'], 'schema_version': version, 'catalog_digest': catalog_digest}
+              return {
+                  'hydrated_schema_metadata_json': _dumps(meta),
+                  'hydrated_schema_alias_index_json': _dumps(alias),
+                  'hydrated_schema_digest': meta['schema_digest'],
+                  'hydrated_schema_version': version,
+                  'hydrated_schema_context_ref_json': _dumps(context_ref),
+                  'hydration_success': bool(collections) and not errors,
+                  'hydration_warnings_json': _dumps(warnings),
+                  'hydration_errors_json': _dumps(errors),
+              }
+        code_language: python3
+        desc: Phase 10：合并 hydration schema retrieval 结果，解析 schema metadata 并构造 alias
+          index/digest/context_ref；只输出 runtime 字段，不写 compact context，不构造 LLM prompt。
+        outputs:
+          hydrated_schema_metadata_json:
+            children:
+            type: string
+          hydrated_schema_alias_index_json:
+            children:
+            type: string
+          hydrated_schema_digest:
+            children:
+            type: string
+          hydrated_schema_version:
+            children:
+            type: string
+          hydrated_schema_context_ref_json:
+            children:
+            type: string
+          hydration_success:
+            children:
+            type: boolean
+          hydration_warnings_json:
+            children:
+            type: string
+          hydration_errors_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并HydratedSchema上下文并解析metadata
+        type: code
+        variables:
+        - value_selector:
+          - '1780000000003'
+          - output
+          value_type: array[string]
+          variable: hydrated_schema_results
+        - value_selector:
+          - '1780000000002'
+          - hydration_collections
+          value_type: array[string]
+          variable: hydration_collections
+        - value_selector:
+          - conversation
+          - last_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1780000000002'
+          - hydration_warnings_json
+          value_type: string
+          variable: hydration_warnings_json
+      height: 80
+      id: '1780000000007'
+      position:
+        x: 14820
+        y: 760
+      positionAbsolute:
+        x: 14820
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v, default=None):
+              if default is None: default = {}
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return default
+              return default
+          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def main(hydrated_schema_metadata_json='{}', hydrated_schema_alias_index_json='{}', hydrated_schema_digest='', hydrated_schema_version='', hydrated_schema_context_ref_json='{}', hydration_success=False, hydration_warnings_json='[]', hydration_errors_json='[]'):
+              warnings = _loads(hydration_warnings_json, []) or []
+              errors = _loads(hydration_errors_json, []) or []
+              meta = _loads(hydrated_schema_metadata_json, {}) or {}
+              alias = _loads(hydrated_schema_alias_index_json, {}) or {}
+              ref = _loads(hydrated_schema_context_ref_json, {}) or {}
+              ready = bool(hydration_success and meta.get('collections') and alias)
+              ctx = {
+                  'contract_version': 'schema_runtime_context_contract',
+                  'schema_context_ready': ready,
+                  'validator_schema_context_ready': ready,
+                  'schema_hydration_needed': False,
+                  'schema_hydration_reason': '',
+                  'schema_hydration_collections': [],
+                  'schema_metadata_json': _dumps(meta) if ready else '{}',
+                  'schema_alias_index_json': _dumps(alias) if ready else '{}',
+                  'schema_digest': str(hydrated_schema_digest or ref.get('schema_digest') or ''),
+                  'schema_version': str(hydrated_schema_version or ref.get('schema_version') or ''),
+                  'catalog_digest': str(ref.get('catalog_digest') or ''),
+                  'schema_source': 'hydrated_runtime' if ready else 'hydration_failed',
+                  'schema_context_ref': ref,
+                  'warnings': warnings,
+                  'errors': errors,
+              }
+              ctx['schema_runtime_context_json'] = _dumps(ctx)
+              return ctx
+        code_language: python3
+        desc: Phase 10：把 hydrated metadata/alias 注入 validator runtime context；仅运行时使用，不写入
+          compact context。
+        outputs:
+          contract_version:
+            children:
+            type: string
+          schema_context_ready:
+            children:
+            type: boolean
+          validator_schema_context_ready:
+            children:
+            type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections:
+            children:
+            type: array[string]
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_digest:
+            children:
+            type: string
+          schema_version:
+            children:
+            type: string
+          catalog_digest:
+            children:
+            type: string
+          schema_source:
+            children:
+            type: string
+          schema_context_ref:
+            children:
+            type: object
+          warnings:
+            children:
+            type: array[string]
+          errors:
+            children:
+            type: array[string]
+          schema_runtime_context_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_准备HydratedValidator运行时Schema上下文
+        type: code
+        variables:
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_metadata_json
+          value_type: string
+          variable: hydrated_schema_metadata_json
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_alias_index_json
+          value_type: string
+          variable: hydrated_schema_alias_index_json
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_digest
+          value_type: string
+          variable: hydrated_schema_digest
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_version
+          value_type: string
+          variable: hydrated_schema_version
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_context_ref_json
+          value_type: string
+          variable: hydrated_schema_context_ref_json
+        - value_selector:
+          - '1780000000007'
+          - hydration_success
+          value_type: boolean
+          variable: hydration_success
+        - value_selector:
+          - '1780000000007'
+          - hydration_warnings_json
+          value_type: string
+          variable: hydration_warnings_json
+        - value_selector:
+          - '1780000000007'
+          - hydration_errors_json
+          value_type: string
+          variable: hydration_errors_json
+      height: 80
+      id: '1780000000008'
+      position:
+        x: 15280
+        y: 760
+      positionAbsolute:
+        x: 15280
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v, default=None):
+              if default is None: default = {}
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return default
+              return default
+          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def main(base_schema_runtime_context_json='{}', hydrated_schema_runtime_context_json='{}'):
+              base = _loads(base_schema_runtime_context_json, {}) or {}
+              hydrated = _loads(hydrated_schema_runtime_context_json, {}) or {}
+              ctx = hydrated if hydrated.get('schema_context_ready') else base
+              ctx.setdefault('contract_version', 'schema_runtime_context_contract')
+              ctx['schema_runtime_context_json'] = _dumps(ctx)
+              return {
+                  'contract_version': ctx.get('contract_version'),
+                  'schema_context_ready': bool(ctx.get('schema_context_ready')),
+                  'validator_schema_context_ready': bool(ctx.get('validator_schema_context_ready') or ctx.get('schema_context_ready')),
+                  'schema_hydration_needed': bool(ctx.get('schema_hydration_needed')),
+                  'schema_hydration_reason': str(ctx.get('schema_hydration_reason') or ''),
+                  'schema_hydration_collections': ctx.get('schema_hydration_collections') or [],
+                  'schema_metadata_json': ctx.get('schema_metadata_json') or '{}',
+                  'schema_alias_index_json': ctx.get('schema_alias_index_json') or '{}',
+                  'schema_digest': str(ctx.get('schema_digest') or ''),
+                  'schema_version': str(ctx.get('schema_version') or ''),
+                  'catalog_digest': str(ctx.get('catalog_digest') or ''),
+                  'schema_source': str(ctx.get('schema_source') or 'missing'),
+                  'schema_context_ref': ctx.get('schema_context_ref') or {},
+                  'warnings': ctx.get('warnings') or [],
+                  'errors': ctx.get('errors') or [],
+                  'schema_runtime_context_json': ctx['schema_runtime_context_json'],
+              }
+        code_language: python3
+        desc: Phase 10：统一选择 validator 最终 runtime schema context。schema ready / no-hydration
+          使用 base；hydration 成功使用 hydrated runtime；失败则让 validator 走 non-valid，不绕过 validator。
+        outputs:
+          contract_version:
+            children:
+            type: string
+          schema_context_ready:
+            children:
+            type: boolean
+          validator_schema_context_ready:
+            children:
+            type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections:
+            children:
+            type: array[string]
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_digest:
+            children:
+            type: string
+          schema_version:
+            children:
+            type: string
+          catalog_digest:
+            children:
+            type: string
+          schema_source:
+            children:
+            type: string
+          schema_context_ref:
+            children:
+            type: object
+          warnings:
+            children:
+            type: array[string]
+          errors:
+            children:
+            type: array[string]
+          schema_runtime_context_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_选择最终Validator运行时Schema上下文
+        type: code
+        variables:
+        - value_selector:
+          - '1779000000001'
+          - schema_runtime_context_json
+          value_type: string
+          variable: base_schema_runtime_context_json
+        - value_selector:
+          - '1780000000008'
+          - schema_runtime_context_json
+          value_type: string
+          variable: hydrated_schema_runtime_context_json
+      height: 80
+      id: '1780000000009'
+      position:
+        x: 14080
+        y: 120
+      positionAbsolute:
+        x: 14080
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: -120
+      y: 80
+      zoom: 0.55
+  rag_pipeline_variables: []

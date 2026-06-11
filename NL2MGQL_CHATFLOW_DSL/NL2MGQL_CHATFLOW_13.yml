@@ -1,0 +1,43 @@
+    - data:
+        cases:
+        - case_id: case_use_patch
+          conditions:
+          - comparison_operator: is
+            id: patch-route-use-patch
+            value: use_patch
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patch_route
+          id: case_use_patch
+          logical_operator: and
+        - case_id: case_chart_only
+          conditions:
+          - comparison_operator: is
+            id: patch-route-chart-only
+            value: chart_only
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patch_route
+          id: case_chart_only
+          logical_operator: and
+        desc: refine_query patch 结果只按 patch_route 分流：use_patch 进入 semantic_plan_normalizer/Mongo
+          输入准备；chart_only 复用上一轮结果进入改图分支；默认进入 collection selector + schema retrieval
+          + LLM_Refine查询规划。
+        selected: false
+        title: 条件分支_patch结果判断
+        type: if-else
+      height: 198
+      id: '1776000000023'
+      position:
+        x: 4140
+        y: 180
+      positionAbsolute:
+        x: 4140
+        y: 180
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
