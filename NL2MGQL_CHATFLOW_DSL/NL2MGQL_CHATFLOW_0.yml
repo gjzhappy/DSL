@@ -436,6 +436,42 @@ workflow:
       type: custom
       zIndex: 1002
     - data:
+        isInIteration: true
+        iteration_id: '1780000000003'
+        sourceType: iteration-start
+        targetType: code
+      id: 1780000000003start-source-1780000000004-target
+      source: 1780000000003start
+      sourceHandle: source
+      target: '1780000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1780000000003'
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: 1780000000004-source-1780000000005-target
+      source: '1780000000004'
+      sourceHandle: source
+      target: '1780000000005'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1780000000003'
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: 1780000000005-source-1780000000006-target
+      source: '1780000000005'
+      sourceHandle: source
+      target: '1780000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
         isInLoop: false
         sourceType: http-request
         targetType: code
@@ -850,9 +886,97 @@ workflow:
     - data:
         isInLoop: false
         sourceType: code
-        targetType: code
-      id: 1779000000001-source-1778000000001-target
+        targetType: if-else
+      id: 1779000000001-source-1780000000001-target
       source: '1779000000001'
+      sourceHandle: source
+      target: '1780000000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1780000000001-schema_ready-1780000000009-target
+      source: '1780000000001'
+      sourceHandle: schema_ready
+      target: '1780000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1780000000001-schema_hydration_needed-1780000000002-target
+      source: '1780000000001'
+      sourceHandle: schema_hydration_needed
+      target: '1780000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1780000000001-false-1780000000009-target
+      source: '1780000000001'
+      sourceHandle: 'false'
+      target: '1780000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: iteration
+      id: 1780000000002-source-1780000000003-target
+      source: '1780000000002'
+      sourceHandle: source
+      target: '1780000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: iteration
+        targetType: code
+      id: 1780000000003-source-1780000000007-target
+      source: '1780000000003'
+      sourceHandle: source
+      target: '1780000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1780000000007-source-1780000000008-target
+      source: '1780000000007'
+      sourceHandle: source
+      target: '1780000000008'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1780000000008-source-1780000000009-target
+      source: '1780000000008'
+      sourceHandle: source
+      target: '1780000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1780000000009-source-1778000000001-target
+      source: '1780000000009'
       sourceHandle: source
       target: '1778000000001'
       targetHandle: target
