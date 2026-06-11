@@ -238,68 +238,14 @@
       targetHandle: target
       type: custom
       zIndex: 0
-    - id: 1776000000032start-source-1776000000033-target
-      source: 1776000000032start
-      sourceHandle: source
-      target: '1776000000033'
-      targetHandle: target
-      type: custom
-      data:
-        isInIteration: true
-        iteration_id: '1776000000032'
-        sourceType: iteration-start
-        targetType: code
-      zIndex: 1002
-    - id: 1776000000033-source-1776000000034-target
-      source: '1776000000033'
-      sourceHandle: source
-      target: '1776000000034'
-      targetHandle: target
-      type: custom
-      data:
-        isInIteration: true
-        iteration_id: '1776000000032'
-        sourceType: code
-        targetType: knowledge-retrieval
-      zIndex: 1002
-    - id: 1776000000034-source-1776000000035-target
-      source: '1776000000034'
-      sourceHandle: source
-      target: '1776000000035'
-      targetHandle: target
-      type: custom
-      data:
-        isInIteration: true
-        iteration_id: '1776000000032'
-        sourceType: knowledge-retrieval
-        targetType: code
-      zIndex: 1002
-    - id: 1776000000023-false-1777000000002-target
+    - id: 1776000000023-false-1776000000025-target
       source: '1776000000023'
       sourceHandle: 'false'
-      target: '1777000000002'
-      targetHandle: target
-      type: custom
-      data:
-        sourceType: if-else
-        targetType: llm
-    - id: 1777000000002-source-1776000000030-target
-      source: '1777000000002'
-      sourceHandle: source
-      target: '1776000000030'
-      targetHandle: target
-      type: custom
-      data:
-        sourceType: code
-        targetType: llm
-    - id: 1776000000030-source-1776000000025-target
-      source: '1776000000030'
-      sourceHandle: source
       target: '1776000000025'
       targetHandle: target
       type: custom
       data:
-        sourceType: llm
+        sourceType: if-else
         targetType: code
     - id: 1776000000025-source-1776000000032-target
       source: '1776000000025'
@@ -309,7 +255,7 @@
       type: custom
       data:
         sourceType: code
-        targetType: iteration
+        targetType: knowledge-retrieval
     - id: 1776000000032-source-1776000000026-target
       source: '1776000000032'
       sourceHandle: source
@@ -317,6 +263,78 @@
       targetHandle: target
       type: custom
       data:
-        sourceType: iteration
+        sourceType: knowledge-retrieval
         targetType: code
+    - id: 1776000000026-source-1777000000002-target
+      source: '1776000000026'
+      sourceHandle: source
+      target: '1777000000002'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: code
+        targetType: code
+    - id: 1777000000002-source-1777100000101-target
+      source: '1777000000002'
+      sourceHandle: source
+      target: '1777100000101'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: code
+        targetType: if-else
+    - id: 1777100000101-has_primary-1777100000105-target
+      source: '1777100000101'
+      sourceHandle: has_primary
+      target: '1777100000105'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: if-else
+        targetType: code
+    - id: 1777100000101-false-1777100000102-target
+      source: '1777100000101'
+      sourceHandle: 'false'
+      target: '1777100000102'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: if-else
+        targetType: code
+    - id: 1777100000105-source-1777100000104-target
+      source: '1777100000105'
+      sourceHandle: source
+      target: '1777100000104'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: code
+        targetType: if-else
+    - id: 1777100000104-schema_ready-1776000000027-target
+      source: '1777100000104'
+      sourceHandle: schema_ready
+      target: '1776000000027'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: if-else
+        targetType: code
+    - id: 1777100000104-false-1777100000102-target
+      source: '1777100000104'
+      sourceHandle: 'false'
+      target: '1777100000102'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: if-else
+        targetType: code
+    - id: 1777100000102-source-1777100000103-target
+      source: '1777100000102'
+      sourceHandle: source
+      target: '1777100000103'
+      targetHandle: target
+      type: custom
+      data:
+        sourceType: code
+        targetType: answer
     nodes:

@@ -2,169 +2,107 @@
         code: |
           import json
 
-
-          def _loads_obj(v):
-              if isinstance(v, dict):
-                  return v
-              if isinstance(v, str) and v.strip():
+          def _loads(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str) and value.strip():
                   try:
-                      x = json.loads(v)
-                      return x if isinstance(x, dict) else {}
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
                   except Exception:
                       return {}
               return {}
 
-
-          def _loads_list(v):
-              if isinstance(v, list):
-                  return v
-              if isinstance(v, str) and v.strip():
-                  try:
-                      x = json.loads(v)
-                      return x if isinstance(x, list) else []
-                  except Exception:
-                      return []
-              return []
-
-
-          def _add(xs, value):
-              value = str(value or '').strip()
-              if value and value not in xs:
-                  xs.append(value)
-
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if value in (None, ''):
+                  return []
+              return [str(value).strip()]
 
           def _first_stage(plan):
               stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan, dict) else []
               return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
 
+          def _add(out, value):
+              text = str(value or '').strip()
+              if text and text not in out:
+                  out.append(text)
 
-          def _old_collections_and_fields(old):
-              st = _first_stage(old)
-              primary = str(old.get('primary_collection') or st.get('primary_collection') or st.get('collection') or '').strip()
-              collections = []
-              _add(collections, primary)
-              for source in (old.get('related_collections'), st.get('related_collections'), old.get('collections')):
-                  for c in _loads_list(source):
-                      _add(collections, c)
-              fields = []
-              for x in _loads_list(st.get('group_fields')):
-                  _add(fields, x)
-              _add(fields, st.get('metric_field'))
+          def _old_terms(last_context, old_plan):
+              terms = []
+              _add(terms, last_context.get('last_primary_collection'))
+              for c in _list(last_context.get('last_related_collections')):
+                  _add(terms, c)
+              ref = last_context.get('schema_context_ref') if isinstance(last_context.get('schema_context_ref'), dict) else {}
+              for c in _list(ref.get('collections')):
+                  _add(terms, c)
+              st = _first_stage(old_plan)
+              _add(terms, old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection'))
+              for f in _list(st.get('group_fields')):
+                  _add(terms, f)
+              _add(terms, st.get('metric_field'))
+              _add(terms, st.get('metric_alias'))
               tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
-              _add(fields, tr.get('field'))
-              for f in _loads_list(st.get('filters')):
-                  if isinstance(f, dict):
-                      _add(fields, f.get('field'))
-              for s in _loads_list(st.get('sort')):
-                  if isinstance(s, dict):
-                      _add(fields, s.get('field'))
-              return primary, collections, fields
+              _add(terms, tr.get('field'))
+              return terms
 
+          def _refine_terms(query_refinement, turn_intent):
+              terms = []
+              for obj in (query_refinement, turn_intent):
+                  if not isinstance(obj, dict):
+                      continue
+                  for key in ['refined_question', 'current_question', 'rewrite_question', 'user_correction', 'intent_summary', 'route_reason', 'patch_reason']:
+                      _add(terms, obj.get(key))
+                  for key in ['changed_fields', 'negated_fields', 'new_fields', 'group_fields', 'metrics', 'filters', 'business_terms', 'possible_new_concepts']:
+                      for item in _list(obj.get(key)):
+                          if isinstance(item, dict):
+                              _add(terms, item.get('field') or item.get('name') or item.get('value'))
+                          else:
+                              _add(terms, item)
+              return terms
 
-          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, refine_planning_structured=None, refine_planning_text: str='', patch_reason: str='', changed_fields: str='', collection_selection_json: str=''):
-              old = _loads_obj(old_normalized_semantic_plan_json)
-              primary, old_collections, old_fields = _old_collections_and_fields(old)
-              selection = _loads_obj(collection_selection_json)
-              selected_primary = str(selection.get('selected_primary_collection') or '').strip()
-              selected_related = _loads_list(selection.get('selected_related_collections'))
-              if selected_primary:
-                  primary = selected_primary
-              planning = refine_planning_structured if isinstance(refine_planning_structured, dict) and refine_planning_structured else _loads_obj(refine_planning_text)
-              collection_hints, field_hints, business_terms = [], [], []
-              if selected_primary:
-                  _add(collection_hints, selected_primary)
-              for c in selected_related:
-                  _add(collection_hints, c)
-              for c in old_collections:
-                  _add(collection_hints, c)
-              _add(collection_hints, planning.get('primary_collection_hint'))
-              for c in _loads_list(planning.get('collection_hints')):
-                  _add(collection_hints, c)
-              for f in old_fields:
-                  _add(field_hints, f)
-              for f in _loads_list(planning.get('field_hints')) + _loads_list(planning.get('old_plan_fields')):
-                  _add(field_hints, f)
-              for t in _loads_list(planning.get('business_terms')) + _loads_list(planning.get('possible_new_concepts')):
-                  _add(business_terms, t)
-              tasks = []
-              seen = set()
-              for raw in _loads_list(planning.get('retrieval_tasks')):
-                  if not isinstance(raw, dict):
-                      continue
-                  col = str(selected_primary or raw.get('collection_hint') or primary or '').strip()
-                  q = str(raw.get('query') or question or '').strip()
-                  reason = str(raw.get('reason') or planning.get('planning_reason') or patch_reason or '').strip()
-                  if not col:
-                      continue
-                  key = (col, q[:160])
-                  if key in seen:
-                      continue
-                  seen.add(key)
-                  tasks.append({'collection_name': col, 'role': 'primary' if col == primary else 'candidate', 'query_text': q, 'reason': reason, 'fields': field_hints, 'selection_reason': (selection.get('primary_candidates') or [{}])[0].get('reason', '') if selected_primary and col == selected_primary else '', 'selection_confidence': float(selection.get('confidence') or 0), 'matched_aliases': (selection.get('primary_candidates') or [{}])[0].get('matched_aliases', []) if selected_primary and col == selected_primary else []})
-              for col in collection_hints:
-                  if len(tasks) >= 8:
-                      break
-                  if not col or any(t.get('collection_name') == col for t in tasks):
-                      continue
-                  q = ' '.join([str(question or ''), col] + field_hints + business_terms + [str(patch_reason or '')]).strip()
-                  tasks.append({'collection_name': col, 'role': 'primary' if col == primary else 'candidate', 'query_text': q[:1600], 'reason': 'fallback collection hint retrieval', 'fields': field_hints, 'selection_reason': (selection.get('primary_candidates') or [{}])[0].get('reason', '') if selected_primary and col == selected_primary else '', 'selection_confidence': float(selection.get('confidence') or 0), 'matched_aliases': (selection.get('primary_candidates') or [{}])[0].get('matched_aliases', []) if selected_primary and col == selected_primary else []})
-              if not tasks and primary:
-                  tasks.append({'collection_name': primary, 'role': 'primary', 'query_text': ' '.join([str(question or ''), primary] + old_fields + business_terms)[:1600], 'reason': 'fallback to old primary_collection', 'fields': old_fields, 'selection_reason': (selection.get('primary_candidates') or [{}])[0].get('reason', ''), 'selection_confidence': float(selection.get('confidence') or 0), 'matched_aliases': (selection.get('primary_candidates') or [{}])[0].get('matched_aliases', [])})
-              valid = bool(old and tasks and not planning.get('clarify_needed'))
-              error = ''
-              if not old:
-                  error = '缺少上一轮 normalized semantic plan，无法构建 refine 检索任务'
-              elif planning.get('clarify_needed') and not tasks:
-                  error = str(planning.get('clarify_question') or 'refine planning requested clarification')
-              elif not tasks:
-                  error = '无法构造 refine schema 检索任务'
-              schema_query = '\n'.join([t.get('query_text', '') for t in tasks])[:4000]
+          def main(question: str = '', query_refinement_json: str = '{}', normalized_turn_intent_json: str = '{}', last_context_json: str = '{}', old_normalized_semantic_plan_json: str = '{}', patch_reason: str = '', changed_fields: str = '', **kwargs):
+              q = str(question or '').strip()
+              qref = _loads(query_refinement_json)
+              intent = _loads(normalized_turn_intent_json)
+              last_context = _loads(last_context_json)
+              old_plan = _loads(old_normalized_semantic_plan_json)
+              current_terms = []
+              _add(current_terms, q)
+              for term in _refine_terms(qref, intent):
+                  _add(current_terms, term)
+              old_terms = _old_terms(last_context, old_plan)
+              structural = any(token in (str(qref) + str(intent) + q).lower() for token in ['full_replan', 'structural', '不再', '改按', '换成', '重新', 'new chart'])
+              query = '\n'.join([
+                  '当前用户问题/refine：' + q,
+                  '当前 refine 语义关键词（优先）：' + ' '.join(current_terms),
+                  '上一轮 collection/field 弱参考（不得限制重新召回）：' + ' '.join(old_terms),
+                  'query_refinement_json：' + json.dumps(qref, ensure_ascii=False),
+                  'turn_intent_json：' + json.dumps(intent, ensure_ascii=False),
+                  'patch_reason：' + str(patch_reason or ''),
+                  'changed_fields：' + str(changed_fields or ''),
+                  '是否结构性 full-replan：' + ('true' if structural else 'false'),
+                  '请检索最相关的 Mongo schema 文档；必须优先体现当前 refine 语义，允许重新召回候选 schema。',
+                  '需要 metadata_type: mongo_schema；包含 collection_name fields metrics relations query_rules aliases；用于 collection selection、group by、filters、metrics、relations。',
+                  'Mongo schema metadata_type: mongo_schema fields metrics relations group by',
+              ])
+              debug = {'current_terms': current_terms, 'old_terms': old_terms, 'structural_full_replan': structural}
               return {
-                  'refine_retrieval_tasks_json': json.dumps(tasks[:8], ensure_ascii=False),
-                  'refine_collection_hints_json': json.dumps(collection_hints, ensure_ascii=False),
-                  'refine_field_hints_json': json.dumps(field_hints, ensure_ascii=False),
-                  'refine_business_terms_json': json.dumps(business_terms, ensure_ascii=False),
-                  'refine_schema_query_text': schema_query,
-                  'refine_retrieval_valid': valid,
-                  'refine_retrieval_error': error,
-                  'refine_retrieval_debug_json': json.dumps({'used_structured_output': isinstance(refine_planning_structured, dict) and bool(refine_planning_structured), 'task_count': len(tasks), 'clarify_needed': bool(planning.get('clarify_needed')), 'collection_selection_used': bool(selected_primary)}, ensure_ascii=False),
-                  'collection_selection_json': json.dumps(selection, ensure_ascii=False),
-                  'old_normalized_semantic_plan_json': json.dumps(old, ensure_ascii=False) if old else '',
-                  'query_refinement_json': json.dumps(_loads_obj(query_refinement_json), ensure_ascii=False),
+                  'query_text': query,
+                  'old_normalized_semantic_plan_json': json.dumps(old_plan, ensure_ascii=False),
+                  'query_refinement_json': json.dumps(qref, ensure_ascii=False),
                   'patch_reason': str(patch_reason or ''),
-                  'changed_fields_json': str(changed_fields or '[]'),
-                  'refine_replan_schema_tasks_json': json.dumps(tasks[:8], ensure_ascii=False),
-                  'refine_collection_tasks': tasks[:8]
+                  'changed_fields_json': json.dumps(_list(changed_fields), ensure_ascii=False),
+                  'refine_retrieval_valid': True,
+                  'refine_retrieval_error': '',
+                  'refine_query_debug_json': json.dumps(debug, ensure_ascii=False),
               }
         code_language: python3
-        desc: 解析 LLM_Refine查询规划 structured output 并构造 refine 专用 schema 检索 iteration
-          输入；失败时基于 old primary_collection + 当前问题兜底。
+        desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine
+          语义。
         outputs:
-          refine_retrieval_tasks_json:
-            children:
-            type: string
-          refine_collection_hints_json:
-            children:
-            type: string
-          refine_field_hints_json:
-            children:
-            type: string
-          refine_business_terms_json:
-            children:
-            type: string
-          refine_schema_query_text:
-            children:
-            type: string
-          refine_retrieval_valid:
-            children:
-            type: boolean
-          refine_retrieval_error:
-            children:
-            type: string
-          refine_retrieval_debug_json:
-            children:
-            type: string
-          collection_selection_json:
+          query_text:
             children:
             type: string
           old_normalized_semantic_plan_json:
@@ -179,14 +117,17 @@
           changed_fields_json:
             children:
             type: string
-          refine_replan_schema_tasks_json:
+          refine_retrieval_valid:
+            children:
+            type: boolean
+          refine_retrieval_error:
             children:
             type: string
-          refine_collection_tasks:
+          refine_query_debug_json:
             children:
-            type: array[object]
+            type: string
         selected: false
-        title: 代码执行_构建Refine检索任务
+        title: 代码执行_构建CandidateSchemas检索查询_Refine
         type: code
         variables:
         - value_selector:
@@ -195,25 +136,25 @@
           value_type: string
           variable: question
         - value_selector:
-          - '1776000000001'
-          - old_normalized_semantic_plan_json
-          value_type: string
-          variable: old_normalized_semantic_plan_json
-        - value_selector:
           - '1776000000004'
           - query_refinement_json
           value_type: string
           variable: query_refinement_json
         - value_selector:
-          - '1776000000030'
-          - structured_output
-          value_type: object
-          variable: refine_planning_structured
-        - value_selector:
-          - '1776000000030'
-          - text
+          - '1776000000004'
+          - normalized_turn_intent_json
           value_type: string
-          variable: refine_planning_text
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1776000000001'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
         - value_selector:
           - '1776000000019'
           - patch_reason
@@ -224,19 +165,14 @@
           - changed_fields
           value_type: string
           variable: changed_fields
-        - value_selector:
-          - '1777000000002'
-          - collection_selection_json
-          value_type: string
-          variable: collection_selection_json
       height: 80
       id: '1776000000025'
       position:
-        x: 5520
-        y: 520
+        x: 3000
+        "y": 2200
       positionAbsolute:
-        x: 5520
-        y: 520
+        x: 3000
+        "y": 2200
       selected: false
       sourcePosition: right
       targetPosition: left

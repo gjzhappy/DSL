@@ -23,37 +23,52 @@
 
 
           def main(
-              arg1,
-              arg2: str,
-              arg3: str,
-              llm_token_url: str,
-              llm_chat_url: str,
-              llm_app_id: str,
-              llm_static_token: str,
-              llm_model: str,
-              llm_user: str,
-              llm_basic_auth: str,
-              llm_timeout_ms,
-              llm_temperature,
-              llm_top_p,
-              llm_max_completion_tokens,
-              llm_stream,
-              last_context_json: str = '',
-              normalized_turn_intent_json: str = '',
-              turn_intent: str = '',
-              query_refinement_json: str = '',
+              arg1: str = '',
+              arg2: str = '',
+              arg3: str = '',
+              schema_context: str = '',
               collection_selection_json: str = '',
-              compact_context_json: str = '',
+              question: str = '',
               schema_metadata_summary_json: str = '',
               schema_alias_index_summary_json: str = '',
+              schema_context_ref_json: str = '',
+              compact_context_json: str = '',
+              normalized_turn_intent_json: str = '',
+              query_refinement_json: str = '',
+              llm_token_url: str = '',
+              llm_chat_url: str = '',
+              llm_app_id: str = '',
+              llm_static_token: str = '',
+              llm_model: str = '',
+              llm_user: str = '',
+              llm_basic_auth: str = '',
+              llm_timeout_ms=600000,
+              llm_temperature=0,
+              llm_top_p=1,
+              llm_max_completion_tokens=12288,
+              llm_stream='',
+              last_context_json: str = '',
+              turn_intent: str = '',
               current_date: str = '',
+              **kwargs
           ):
-              planner = json.loads(arg2) if isinstance(arg2, str) else (arg2 or {})
-              if isinstance(arg1, str):
-                  fresh_schema_context = arg1
+              schema_context = schema_context or arg1
+              collection_selection_json = collection_selection_json or arg2
+              question = question or arg3
+              planner = json.loads(collection_selection_json) if isinstance(collection_selection_json, str) and collection_selection_json.strip() else (collection_selection_json or {})
+              schema_context_ref = {}
+              schema_context_ref_warning = ''
+              if schema_context_ref_json:
+                  try:
+                      schema_context_ref = json.loads(schema_context_ref_json) if isinstance(schema_context_ref_json, str) else (schema_context_ref_json or {})
+                  except Exception:
+                      schema_context_ref = {}
+                      schema_context_ref_warning = 'schema_context_ref_json parse failed'
+              if isinstance(schema_context, str):
+                  fresh_schema_context = schema_context
               else:
                   sections = []
-                  for raw in (arg1 or []):
+                  for raw in (schema_context or []):
                       item = json.loads(raw) if isinstance(raw, str) else (raw or {})
                       collection_name = str(item.get("collection_name") or "").strip()
                       role = str(item.get("role") or "").strip()
@@ -70,13 +85,15 @@
               schema_metadata_summary_text = str(schema_metadata_summary_json or '{}')
               schema_alias_index_summary_text = str(schema_alias_index_summary_json or '{}')
               schema_context = (
-                  f"### 用户问题\n{arg3}\n\n"
+                  f"### 用户问题\n{question}\n\n"
                   f"### current_date\n{current_date or ''}\n\n"
                   f"### collection_selection_json（primary_collection 必须来自 selected_primary_collection）\n{collection_selection_text}\n\n"
                   f"### LLM_查询规划 bootstrap 输出（弱参考，不可覆盖 collection_selection/schema）\n{planner_json}\n\n"
                   f"### schema_metadata 裁剪摘要（字段/指标/relation/query_rules 使用 canonical name）\n{schema_metadata_summary_text}\n\n"
                   f"### schema_alias_index 裁剪摘要（别名只能映射到 canonical name）\n{schema_alias_index_summary_text}\n\n"
                   f"### compact_context_json（弱上下文；不得继承用户已否定字段）\n{compact_context_text}\n\n"
+                  f"### schema_context_ref_json（validator/runtime schema ref；必须与裁剪 metadata collections 对齐）\n{json.dumps(schema_context_ref, ensure_ascii=False) if schema_context_ref else str(schema_context_ref_json or '{}')}\n"
+                  f"{(schema_context_ref_warning + chr(10)) if schema_context_ref_warning else ''}\n"
                   f"### fresh schema_context（禁止使用未出现在此处或 schema_metadata 中的字段/指标/relation）\n{fresh_schema_context}"
               )
               refine_context = ''
@@ -89,7 +106,7 @@
                       f"本轮意图JSON:\n{normalized_turn_intent_json}\n\n"
                       f"query_refinement_json:\n{query_refinement_json}\n"
                   )
-              semantic_plan_user_prompt = f"用户问题:\n{arg3}\n\nSchema上下文:\n{schema_context}{refine_context}"
+              semantic_plan_user_prompt = f"用户问题:\n{question}\n\nSchema上下文:\n{schema_context}{refine_context}"
               llm_config = {
                   "tokenUrl": str(llm_token_url or "").strip(),
                   "chatUrl": str(llm_chat_url or "").strip(),
@@ -105,17 +122,6 @@
                   "stream": _to_bool(llm_stream),
               }
 
-              if not llm_config["tokenUrl"]:
-                  raise ValueError("LLM_TOKEN_URL is required")
-              if not llm_config["chatUrl"]:
-                  raise ValueError("LLM_CHAT_URL is required")
-              if not llm_config["appId"]:
-                  raise ValueError("LLM_APP_ID is required")
-              if not llm_config["staticToken"]:
-                  raise ValueError("LLM_STATIC_TOKEN is required")
-              if not llm_config["model"]:
-                  raise ValueError("LLM_MODEL is required")
-
               token_request_body = {
                   "appId": llm_config["appId"],
                   "credential": base64.b64encode(str(llm_config.get("staticToken") or "").encode("utf-8")).decode("utf-8"),
@@ -123,6 +129,11 @@
 
               return {
                   "schema_context": schema_context,
+                  "schema_metadata_json": schema_metadata_summary_text,
+                  "schema_alias_index_json": schema_alias_index_summary_text,
+                  "schema_context_ref_json": json.dumps(schema_context_ref, ensure_ascii=False) if schema_context_ref else str(schema_context_ref_json or '{}'),
+                  "prompt": semantic_plan_user_prompt,
+                  "prompt_json": json.dumps({"system": SEMANTIC_PLAN_SYSTEM_PROMPT, "user": semantic_plan_user_prompt, "schema_context_ref": schema_context_ref, "warnings": [schema_context_ref_warning] if schema_context_ref_warning else []}, ensure_ascii=False),
                   "planner_json": planner_json,
                   "semantic_plan_system_prompt": SEMANTIC_PLAN_SYSTEM_PROMPT,
                   "semantic_plan_user_prompt": semantic_plan_user_prompt,
@@ -140,6 +151,21 @@
             children:
             type: string
           llm_config_json:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          prompt:
+            children:
+            type: string
+          prompt_json:
             children:
             type: string
           planner_json:
