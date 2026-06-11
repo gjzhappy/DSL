@@ -81,6 +81,61 @@ errors << 'workflow.graph is missing' unless graph.is_a?(Hash)
 
 nodes = graph.fetch('nodes', [])
 edges = graph.fetch('edges', [])
+
+FORBIDDEN_DSL_CODE_PATTERNS = [
+  'if __name__ == "__main__"',
+  "if __name__ == '__main__'",
+  'run_selftests(',
+  'run_self_tests(',
+  'run_tests(',
+  'print(("PASS" if ok else "FAIL")',
+  'PASS normal aggregate',
+  'PASS alias canonicalize',
+  'PASS metric canonicalize',
+  'raise SystemExit',
+  'pytest.main',
+  'unittest.main',
+  'argparse.ArgumentParser',
+  'sys.argv'
+].freeze
+
+SUSPICIOUS_DSL_CODE_PATTERNS = [
+  '_sample_schema',
+  '_sample_plan',
+  '_mock_schema',
+  '_mock_rows',
+  'def test_',
+  'assert '
+].freeze
+
+SELF_TEST_CONTEXT_PATTERNS = [
+  'if __name__ == "__main__"',
+  "if __name__ == '__main__'",
+  'run_selftests(',
+  'run_self_tests(',
+  'run_tests(',
+  'pytest.main',
+  'unittest.main',
+  'raise SystemExit',
+  'PASS normal aggregate',
+  'PASS alias canonicalize',
+  'PASS metric canonicalize'
+].freeze
+
+part_line_cache = {}
+source_for_node = lambda do |node_id|
+  part_paths.find do |path|
+    text = File.read(path)
+    text.include?("id: '#{node_id}'") || text.include?("id: #{node_id}") || text.include?("- id: '#{node_id}'") || text.include?("- id: #{node_id}")
+  end
+end
+source_line_for_pattern = lambda do |path, pattern|
+  return nil unless path && File.file?(path)
+  lines = (part_line_cache[path] ||= File.readlines(path, chomp: true))
+  idx = lines.find_index { |line| line.include?(pattern) }
+  idx ? idx + 1 : nil
+end
+
 node_ids = nodes.map { |node| node['id'].to_s }
 duplicates = node_ids.tally.select { |_id, count| count > 1 }.keys
 errors << "duplicate node ids: #{duplicates.join(', ')}" unless duplicates.empty?
@@ -92,6 +147,47 @@ edges.each do |edge|
   target = edge['target'].to_s
   errors << "edge #{edge['id']} source #{source} does not exist" unless node_id_set.include?(source)
   errors << "edge #{edge['id']} target #{target} does not exist" unless node_id_set.include?(target)
+end
+
+# DSL runtime hygiene guardrails: code nodes must not carry standalone CLI/self-test entrypoints.
+code_nodes = nodes.select { |node| node.dig('data', 'type').to_s == 'code' }
+hygiene_forbidden_hits = 0
+hygiene_suspicious_hits = 0
+code_node_required_field_errors = 0
+code_nodes.each do |node|
+  id = node['id'].to_s
+  title = node.dig('data', 'title').to_s
+  data = node['data'].is_a?(Hash) ? node['data'] : {}
+  code = data['code'].to_s
+  source_path = source_for_node.call(id)
+  source_label = source_path ? source_path.sub("#{ROOT}/", '') : '<assembled-workflow>'
+
+  required_field_errors_before = errors.length
+  errors << "code node #{id}(#{title}) data.code_language is #{data['code_language'].inspect}, expected \"python3\"" unless data['code_language'] == 'python3'
+  errors << "code node #{id}(#{title}) data.code is missing" if code.empty?
+  errors << "code node #{id}(#{title}) data.outputs is missing" unless data['outputs'].is_a?(Hash)
+  errors << "code node #{id}(#{title}) data.variables is missing" unless data['variables'].is_a?(Array)
+  code_node_required_field_errors += errors.length - required_field_errors_before
+
+  FORBIDDEN_DSL_CODE_PATTERNS.each do |pattern|
+    next unless code.include?(pattern)
+    line = source_line_for_pattern.call(source_path, pattern)
+    hygiene_forbidden_hits += 1
+    errors << "DSL runtime hygiene forbidden pattern in #{source_label} node #{id}(#{title}) pattern=#{pattern.inspect} line=#{line || '?'}"
+  end
+
+  has_self_test_context = SELF_TEST_CONTEXT_PATTERNS.any? { |pattern| code.include?(pattern) }
+  SUSPICIOUS_DSL_CODE_PATTERNS.each do |pattern|
+    next unless code.include?(pattern)
+    line = source_line_for_pattern.call(source_path, pattern)
+    message = "DSL runtime hygiene suspicious pattern in #{source_label} node #{id}(#{title}) pattern=#{pattern.inspect} line=#{line || '?'}"
+    hygiene_suspicious_hits += 1
+    if has_self_test_context
+      errors << "#{message}; appears inside standalone self-test context"
+    else
+      warnings << "#{message}; allowed as runtime fallback/helper only"
+    end
+  end
 end
 
 outputs_by_id = {}
@@ -740,6 +836,8 @@ puts "Parts: #{parts.join(', ')}"
 puts "Nodes: #{nodes.length}"
 puts "Edges: #{edges.length}"
 puts "Warnings: #{warnings.length}"
+puts "Code node required fields: checked=#{code_nodes.length} errors=#{code_node_required_field_errors}"
+puts "DSL runtime hygiene: code_nodes=#{code_nodes.length} forbidden_hits=#{hygiene_forbidden_hits} suspicious_hits=#{hygiene_suspicious_hits}"
 puts "Layout: missing=#{layout_missing.length} duplicate_coordinates=#{duplicate_coordinates.length} overlaps=#{layout_overlaps.length} iteration_internal_overlaps=#{iteration_internal_overlaps.length}"
 warnings.each { |warning| warn "WARNING: #{warning}" }
 

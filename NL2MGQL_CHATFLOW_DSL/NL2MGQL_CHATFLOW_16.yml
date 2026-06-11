@@ -581,41 +581,6 @@
           def main(**kwargs: Any) -> Dict[str, Any]:
               return semantic_plan_validator(**kwargs)
 
-
-          def _sample_schema() -> Dict[str, Any]:
-              return {"contract_version":"schema_metadata_contract","collections":{"orders":{"collection_name":"orders","default_time_field":"created_at","fields":{"brand":{"name":"brand","label":"品牌","aliases":[],"groupable":True,"filterable":True,"sortable":True,"projectable":True,"returnable":True},"status":{"name":"status","label":"订单状态","aliases":["状态"],"allowed_values":["paid","unpaid"],"value_aliases":{"已支付":"paid"},"groupable":True,"filterable":True,"sortable":True,"projectable":True,"returnable":True},"amount":{"name":"amount","label":"金额","groupable":False,"filterable":True,"sortable":True,"projectable":True,"returnable":True},"created_at":{"name":"created_at","label":"创建时间","semantic_type":"time","role":"time","groupable":False,"filterable":True,"sortable":True,"projectable":True,"returnable":True},"user_phone":{"name":"user_phone","label":"手机号","pii":True,"groupable":False,"filterable":False,"sortable":False,"projectable":False,"returnable":False}},"metrics":{"order_count":{"name":"order_count","label":"订单数","function":"count","field":"_id","source_fields":[],"output_type":"number","allowed_dimensions":["brand","status"],"default_sort":"desc"},"gmv_sum":{"name":"gmv_sum","label":"销售额","aliases":["GMV"],"function":"sum","field":"amount","source_fields":["amount"],"output_type":"number","allowed_dimensions":["brand","status"],"default_sort":"desc"}},"relations":[],"query_rules":{"require_time_range_for_aggregate":False,"max_limit":100,"default_limit":100,"max_time_range_days":366,"sensitive_field_policy":"deny_return_group_sort"}}}}
-
-
-          def run_selftests() -> List[Tuple[str, bool, str]]:
-              schema = _sample_schema()
-              base = {"contract_version":"semantic_plan_contract","primary_collection":"orders","related_collections":[],"stages":[{"collection":"orders","intent_type":"aggregate_summary","time_range":{"mode":"relative_days","relative_days":30},"filters":[],"group_fields":["brand"],"metric_alias":"order_count","sort":[],"limit":10,"projection_fields":[]}],"chart_request":{"enabled":False}}
-              cases = []
-              def check(name, plan, expect_route, pred=lambda r: True, extra=None):
-                  kwargs = dict(question="", semantic_plan_json=json.dumps(plan, ensure_ascii=False), schema_metadata_json=json.dumps(schema, ensure_ascii=False), collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9}, ensure_ascii=False))
-                  if extra: kwargs.update(extra)
-                  r = semantic_plan_validator(**kwargs)
-                  cases.append((name, r.get("validator_route") == expect_route and pred(r), r.get("validator_route") + " " + json.dumps(r.get("errors"), ensure_ascii=False)))
-              check("normal aggregate", copy.deepcopy(base), "valid")
-              p=copy.deepcopy(base); p["stages"][0]["group_fields"]=["订单状态"]; check("alias canonicalize", p, "valid", lambda r: r["normalized_plan"]["stages"][0]["group_fields"]==["status"])
-              p=copy.deepcopy(base); p["stages"][0]["metric_alias"]="销售额"; p["stages"][0]["metric_function"]=""; p["stages"][0]["metric_field"]=""; check("metric canonicalize", p, "valid", lambda r: r["normalized_plan"]["stages"][0]["metric_alias"]=="gmv_sum" and r["normalized_plan"]["stages"][0]["metric_field"]=="amount")
-              p=copy.deepcopy(base); p["stages"][0]["group_fields"]=["customer_level"]; check("unknown field", p, "requires_clarification")
-              p=copy.deepcopy(base); p["stages"][0]["group_fields"]=["user_phone"]; check("pii group", p, "blocked")
-              p=copy.deepcopy(base); p["stages"][0]["time_range"]={"mode":"relative_days","relative_days":7}; check("missing time field", p, "valid", lambda r: r["normalized_plan"]["stages"][0]["time_range"]["field"]=="created_at")
-              schema2=copy.deepcopy(schema); schema2["collections"]["orders"]["query_rules"]["require_time_range_for_aggregate"]=True
-              p=copy.deepcopy(base); p["stages"][0]["time_range"]={}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema2),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("aggregate requires time", r["validator_route"]=="requires_clarification", r["validator_route"]))
-              p=copy.deepcopy(base); p["stages"][0]["limit"]=10000; check("limit over max", p, "valid", lambda r: r["normalized_plan"]["stages"][0]["limit"]==100)
-              p=copy.deepcopy(base); p["stages"][0]["group_fields"]=["status"]; p["chart_request"]={"enabled":True,"chart_type":"bar","x_field":"brand","y_field":"order_count"}; check("chart x align", p, "valid", lambda r: r["normalized_plan"]["chart_request"]["x_field"]=="status")
-              p=copy.deepcopy(base); check("negative residue", p, "needs_replan", extra={"patch_result_json":json.dumps({"negative_fields":["brand"]}, ensure_ascii=False)})
-              p=copy.deepcopy(base); p["related_collections"]=["products"]; schema3=copy.deepcopy(schema); schema3["collections"]["products"]={"collection_name":"products","fields":{},"metrics":{},"relations":[],"query_rules":{}}; r=semantic_plan_validator(semantic_plan_json=json.dumps(p),schema_metadata_json=json.dumps(schema3),collection_selection_json=json.dumps({"selected_primary_collection":"orders","confidence":0.9})); cases.append(("invalid relation", r["validator_route"] in {"blocked","needs_replan"}, r["validator_route"]))
-              return cases
-
-
-          if __name__ == "__main__":
-              failed = False
-              for name, ok, detail in run_selftests():
-                  print(("PASS" if ok else "FAIL"), name, detail)
-                  failed = failed or not ok
-              raise SystemExit(1 if failed else 0)
         code_language: python3
         desc: Phase 8 semantic_plan_validator：在 Mongo 编译执行前校验 collection/field/metric/filter/time_range/relation/PII/chart/negative
           residue，并输出 validator_result_contract。
