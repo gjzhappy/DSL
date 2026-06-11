@@ -7,10 +7,10 @@
       id: '1773909192919'
       position:
         x: 0
-        y: 0
+        "y": 0
       positionAbsolute:
         x: 0
-        y: 0
+        "y": 0
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -35,7 +35,7 @@
           text: |
             你是 Phase 7 的 LLM_查询规划节点：只生成 semantic_plan_contract JSON，不再承担 collection 初判职责。
 
-            输入包含用户问题、collection_selection_json、compact_context_json 以及可能存在的 schema metadata/alias 摘要。
+            输入包含用户问题、collection_selection_json、compact_context_json 以及已裁剪的 selected schema context / schema metadata / alias index。
 
             硬性规则：
             - 只输出 JSON；不要输出 markdown、解释、代码块。
@@ -68,7 +68,7 @@
             }
         - id: planner-user
           role: user
-          text: |-
+          text: |
             question:
             {{#sys.query#}}
 
@@ -78,11 +78,14 @@
             compact_context_json（弱上下文，不继承用户已否定字段）:
             {{#1776000000001.last_context_json#}}
 
-            schema_metadata_summary_json（如存在，仅使用 canonical field/metric/relation/query_rules）:
-            {{#1776000000001.last_schema_metadata_json#}}
+            schema_context（已按 selected collections 裁剪）:
+            {{#1777100000005.schema_context#}}
 
-            schema_alias_index_summary_json（如存在，用于别名到 canonical name 映射）:
-            {{#1776000000001.last_schema_alias_index_json#}}
+            schema_metadata_json（仅使用 canonical field/metric/relation/query_rules）:
+            {{#1777100000005.schema_metadata_json#}}
+
+            schema_alias_index_json（用于别名到 canonical name 映射）:
+            {{#1777100000005.schema_alias_index_json#}}
         selected: false
         structured_output:
           schema:
@@ -194,11 +197,11 @@
       height: 88
       id: '1773975766025'
       position:
-        x: 4140
-        y: -620
+        x: 6110
+        "y": -620
       positionAbsolute:
-        x: 4140
-        y: -620
+        x: 6110
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -209,20 +212,21 @@
           def main(question: str):
               q = str(question or '').strip()
               query = (
-                  '用户问题: ' + q + '\n'
-                  '请检索 collection catalog，用于选择 Mongo collection；需要轻量集合目录信息：'
-                  'mongo collections fields metrics dimensions aliases related_collections supported_intents default_time_field priority。'
-                  '不要检索完整 schema。'
+                  '用户问题：' + q + '\n'
+                  '请根据用户问题检索最相关的 Mongo schema 文档，用于确定 collection、字段、指标和关联关系。'
+                  '优先返回包含 metadata_type: mongo_schema 的完整 schema 文档；'
+                  '文档需要包含 collection_name、collection_label、fields、metrics、relations、query_rules；'
+                  '不要只返回普通解释文本。'
               )
               return {'query_text': query}
         code_language: python3
-        desc: 为轻量 collection catalog retrieval 构造查询，不硬编码业务 collection。
+        desc: 为一次性 CandidateSchemas schema retrieval 构造查询，不依赖独立 collection catalog 文档。
         outputs:
           query_text:
             children:
             type: string
         selected: false
-        title: 代码执行_构建CollectionCatalog检索查询
+        title: 代码执行_构建CandidateSchemas检索查询
         type: code
         variables:
         - value_selector:
@@ -234,10 +238,10 @@
       id: '1777099999998'
       position:
         x: 2910
-        y: -620
+        "y": -620
       positionAbsolute:
         x: 2910
-        y: -620
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -254,7 +258,7 @@
         multiple_retrieval_config:
           reranking_enable: false
           reranking_mode: weighted_score
-          top_k: 4
+          top_k: 6
           weights:
             keyword_setting:
               keyword_weight: 0.4
@@ -269,16 +273,16 @@
         - query_text
         retrieval_mode: multiple
         selected: false
-        title: 知识检索_CollectionCatalog
+        title: 知识检索_CandidateSchemas
         type: knowledge-retrieval
       height: 90
       id: '1777099999999'
       position:
-        x: 3220
-        y: -620
+        x: 3310
+        "y": -620
       positionAbsolute:
-        x: 3220
-        y: -620
+        x: 3310
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -288,135 +292,373 @@
         code: |
           import json
           import hashlib
+          import re
 
+          SCHEMA_CONTRACT_VERSION = 'schema_metadata_contract'
+          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
           CATALOG_VERSION = 'collection_catalog_contract'
 
-          def _loads(value):
-              if isinstance(value, dict):
-                  return dict(value)
-              if isinstance(value, str) and value.strip():
+
+          def _strip_quotes(v):
+              v = str(v or '').strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                  return v[1:-1]
+              return v
+
+
+          def _split_inline_list(body):
+              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
+
+
+          def _parse_scalar(v):
+              v = str(v or '').strip()
+              if not v:
+                  return ''
+              if v in {'|', '>', '|-', '>-'}:
+                  return ''
+              if v in {'true', 'True'}:
+                  return True
+              if v in {'false', 'False'}:
+                  return False
+              if v in {'null', 'Null', 'NULL', '~'}:
+                  return None
+              if v.startswith('[') and v.endswith(']'):
+                  return _split_inline_list(v[1:-1].strip())
+              if v.startswith('{') and v.endswith('}'):
                   try:
-                      parsed = json.loads(value)
-                      return parsed if isinstance(parsed, dict) else {}
+                      return json.loads(v)
                   except Exception:
-                      return {}
-              return {}
+                      return _strip_quotes(v)
+              if re.match(r'^-?\d+$', v):
+                  try:
+                      return int(v)
+                  except Exception:
+                      pass
+              if re.match(r'^-?\d+\.\d+$', v):
+                  try:
+                      return float(v)
+                  except Exception:
+                      pass
+              return _strip_quotes(v)
 
-          def _list(value):
-              if isinstance(value, list):
-                  return [str(x).strip() for x in value if str(x).strip()]
-              if value in (None, ''):
-                  return []
-              return [str(value).strip()]
 
-          def _uniq(items, limit=0):
-              out, seen = [], set()
-              for item in items:
-                  item = str(item or '').strip()
-                  if item and item not in seen:
-                      seen.add(item); out.append(item)
-                      if limit and len(out) >= limit:
-                          break
-              return out
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1
+                      continue
+                  if ':' in s:
+                      k, v = s.split(':', 1)
+                      key = k.strip()
+                      val = v.strip()
+                      if isinstance(parent, dict):
+                          if val:
+                              parent[key] = _parse_scalar(val)
+                              i += 1
+                              continue
+                          j = i + 1
+                          nxt = ''
+                          while j < len(lines):
+                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
+                                  nxt = lines[j].strip()
+                                  break
+                              j += 1
+                          container = [] if nxt.startswith('- ') else {}
+                          parent[key] = container
+                          stack.append((indent, container))
+                  i += 1
+              return root
 
-          def _digest(obj):
-              tmp = dict(obj or {})
-              tmp.pop('catalog_digest', None)
-              return hashlib.sha256(json.dumps(tmp, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
 
           def _content(doc):
               if isinstance(doc, dict):
                   return str(doc.get('content') or doc.get('text') or doc.get('document') or '')
               return str(doc or '')
 
-          def _json_candidates(text):
-              text = str(text or '').strip()
-              candidates = [text]
-              if '```' in text:
-                  parts = text.split('```')
-                  candidates.extend(part.strip() for part in parts if part.strip() and not part.strip().lower().startswith('json'))
-              start = text.find('{')
-              end = text.rfind('}')
-              if start >= 0 and end > start:
-                  candidates.append(text[start:end + 1])
-              for candidate in candidates:
-                  parsed = _loads(candidate)
-                  if parsed:
-                      yield parsed
 
-          def _normalize_collection(item, idx):
-              item = item if isinstance(item, dict) else {}
-              name = str(item.get('collection_name') or item.get('name') or item.get('collection') or '').strip()
-              if not name:
+          def _extract_blocks(text):
+              raw = str(text or '')
+              blocks = []
+              for pat in [
+                  r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```',
+                  r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema").*?)\n```',
+              ]:
+                  blocks.extend(m.group(2 if 'Schema Metadata' in pat else 1) for m in re.finditer(pat, raw, re.I | re.S))
+              if not blocks and re.search(r'metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"', raw, re.I):
+                  blocks.append(raw)
+              return blocks
+
+
+          def _parse_block(block):
+              text = str(block or '').strip()
+              if not text:
+                  return {}
+              if text.startswith('{'):
+                  return json.loads(text)
+              return _parse_simple_yaml(text)
+
+
+          def _as_list(value):
+              if value in (None, ''):
+                  return []
+              if isinstance(value, list):
+                  return [x for x in value if x is not None and str(x).strip()]
+              return [x for x in _split_inline_list(value) if str(x).strip()]
+
+
+          def _str_list(value, limit=0):
+              out, seen = [], set()
+              for item in _as_list(value):
+                  s = str(item or '').strip()
+                  if s and s not in seen:
+                      seen.add(s); out.append(s)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
+          def _named_map(value):
+              result = {}
+              if isinstance(value, dict):
+                  for name, item in value.items():
+                      if isinstance(item, dict):
+                          obj = dict(item); obj.setdefault('name', name); result[str(obj.get('name') or name).strip()] = obj
+              elif isinstance(value, list):
+                  for item in value:
+                      if isinstance(item, dict) and str(item.get('name') or '').strip():
+                          result[str(item.get('name')).strip()] = dict(item)
+              return result
+
+
+          def _normalize_collection(doc):
+              cname = str((doc or {}).get('collection_name') or '').strip()
+              if not cname:
                   return None
-              return {
-                  'collection_name': name,
-                  'collection_label': str(item.get('collection_label') or item.get('label') or name).strip(),
-                  'aliases': _uniq(_list(item.get('aliases') or item.get('collection_aliases')), 32),
-                  'description': str(item.get('description') or '').strip(),
-                  'default_time_field': str(item.get('default_time_field') or '').strip(),
-                  'primary_metrics': _uniq(_list(item.get('primary_metrics') or item.get('metrics')), 64),
-                  'primary_dimensions': _uniq(_list(item.get('primary_dimensions') or item.get('dimensions') or item.get('fields')), 80),
-                  'supported_intents': _uniq(_list(item.get('supported_intents') or ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich']), 16),
-                  'related_collections': _uniq(_list(item.get('related_collections')), 16),
-                  'priority': int(item.get('priority')) if str(item.get('priority') or '').strip().isdigit() else max(0, 100 - idx),
-              }
+              fields = _named_map(doc.get('fields'))
+              metrics = _named_map(doc.get('metrics'))
+              relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
+              normalized = dict(doc)
+              normalized.update({
+                  'collection_name': cname,
+                  'collection_label': str(doc.get('collection_label') or cname).strip() or cname,
+                  'collection_aliases': _str_list(doc.get('collection_aliases')),
+                  'fields': fields,
+                  'metrics': metrics,
+                  'relations': [r for r in relations if isinstance(r, dict)],
+                  'query_rules': doc.get('query_rules') if isinstance(doc.get('query_rules'), dict) else {},
+              })
+              return normalized
 
-          def _normalize_catalog(obj):
+
+          def _digest(obj, key):
+              tmp = json.loads(json.dumps(obj or {}, ensure_ascii=False))
+              if isinstance(tmp, dict):
+                  tmp.pop(key, None)
+              payload = json.dumps(tmp, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+              return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+          def _add_alias(bucket, alias, collection, kind, canonical, label='', source='', field=''):
+              alias = str(alias or '').strip()
+              if not alias:
+                  return
+              bucket.setdefault(alias, [])
+              item = {'collection': collection, 'kind': kind, 'canonical': canonical, 'label': str(label or '').strip(), 'source': source}
+              if field:
+                  item['field'] = field
+              if item not in bucket[alias]:
+                  bucket[alias].append(item)
+
+
+          def _alias_index(meta):
+              aliases, ca, fa, ma, va = {}, {}, {}, {}, {}
+              simple = {'fields': {}, 'metrics': {}, 'collections': {}}
+              for cname, coll in (meta.get('collections') or {}).items():
+                  for alias, source in [(cname, 'collection.name'), (coll.get('collection_label'), 'collection.label')]:
+                      _add_alias(aliases, alias, cname, 'collection', cname, coll.get('collection_label'), source)
+                      _add_alias(ca, alias, cname, 'collection', cname, coll.get('collection_label'), source)
+                      if alias: simple['collections'][str(alias)] = cname
+                  for a in coll.get('collection_aliases') or []:
+                      _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                      _add_alias(ca, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                      simple['collections'][str(a)] = cname
+                  for fname, f in (coll.get('fields') or {}).items():
+                      for alias, source in [(fname, 'field.name'), (f.get('label'), 'field.label')] + [(a, 'field.aliases') for a in (f.get('aliases') or [])]:
+                          _add_alias(aliases, alias, cname, 'field', fname, f.get('label'), source)
+                          _add_alias(fa, alias, cname, 'field', fname, f.get('label'), source)
+                          if alias: simple['fields'].setdefault(cname, {})[str(alias)] = fname
+                      for val_alias, canonical_value in (f.get('value_aliases') or {}).items() if isinstance(f.get('value_aliases'), dict) else []:
+                          _add_alias(aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                          _add_alias(va, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                  for mname, m in (coll.get('metrics') or {}).items():
+                      for alias, source in [(mname, 'metric.name'), (m.get('label'), 'metric.label')] + [(a, 'metric.aliases') for a in (m.get('aliases') or [])]:
+                          _add_alias(aliases, alias, cname, 'metric', mname, m.get('label'), source)
+                          _add_alias(ma, alias, cname, 'metric', mname, m.get('label'), source)
+                          if alias: simple['metrics'].setdefault(cname, {})[str(alias)] = mname
+              return {'contract_version': ALIAS_INDEX_CONTRACT_VERSION, 'aliases': aliases, 'collection_aliases': ca, 'field_aliases': fa, 'metric_aliases': ma, 'value_aliases': va, 'fields': simple['fields'], 'metrics': simple['metrics'], 'collections': simple['collections'], 'warnings': []}
+
+
+          def _catalog(meta):
+              cols = []
               warnings = []
-              if obj.get('catalog_version') and obj.get('catalog_version') != CATALOG_VERSION:
-                  warnings.append('unexpected catalog_version: ' + str(obj.get('catalog_version')))
-              raw_collections = obj.get('collections') if isinstance(obj.get('collections'), list) else []
-              collections = []
-              seen = set()
-              for idx, item in enumerate(raw_collections):
-                  coll = _normalize_collection(item, idx)
-                  if not coll:
-                      continue
-                  name = coll['collection_name']
-                  if name in seen:
-                      warnings.append('duplicate collection ignored: ' + name)
-                      continue
-                  seen.add(name); collections.append(coll)
-              catalog = {
-                  'catalog_version': CATALOG_VERSION,
-                  'catalog_digest': '',
-                  'collections': collections,
-                  'warnings': _uniq(_list(obj.get('warnings')) + warnings, 32),
-              }
-              catalog['catalog_digest'] = str(obj.get('catalog_digest') or '').strip() or _digest(catalog)
-              return catalog
+              for idx, (cname, coll) in enumerate((meta.get('collections') or {}).items()):
+                  metrics = []
+                  for mname, m in (coll.get('metrics') or {}).items():
+                      metrics.extend([mname, m.get('label')]); metrics.extend(m.get('aliases') or [])
+                  dims = []
+                  default_time = str(coll.get('default_time_field') or '').strip()
+                  for fname, f in (coll.get('fields') or {}).items():
+                      role = str(f.get('role') or f.get('semantic_type') or '').strip()
+                      if role in {'dimension', 'time'} or f.get('groupable') or f.get('filterable') or (default_time and fname == default_time):
+                          dims.extend([fname, f.get('label')]); dims.extend(f.get('aliases') or [])
+                  related = []
+                  for r in coll.get('relations') or []:
+                      target = str((r or {}).get('target_collection') or '').strip()
+                      if target and target not in related:
+                          related.append(target)
+                  try:
+                      priority = int(coll.get('priority')) if str(coll.get('priority') or '').strip() != '' else 60
+                  except Exception:
+                      priority = 60
+                  cols.append({'collection_name': cname, 'collection_label': str(coll.get('collection_label') or cname).strip() or cname, 'aliases': _str_list([cname, coll.get('collection_label')] + (coll.get('collection_aliases') or []), 32), 'description': str(coll.get('purpose') or coll.get('description') or '').strip(), 'default_time_field': default_time, 'primary_metrics': _str_list(metrics, 64), 'primary_dimensions': _str_list(dims, 80), 'supported_intents': _str_list(coll.get('supported_intents') or ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'], 16), 'related_collections': related, 'priority': priority})
+              if not cols:
+                  warnings.append('schema metadata 中没有 collections，collection catalog 为空。')
+              cat = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': cols, 'warnings': warnings}
+              cat['catalog_digest'] = _digest(cat, 'catalog_digest') if cols else ''
+              return cat
+
+
+          def _schema_context(meta):
+              sections = []
+              for cname, coll in (meta.get('collections') or {}).items():
+                  sections.append('## collection=' + cname + '\n```json\n' + json.dumps(coll, ensure_ascii=False, indent=2) + '\n```')
+              return '\n\n'.join(sections)
+
 
           def main(docs):
               warnings = []
-              docs = docs or []
+              collections = {}
+              schema_version = ''
+              for doc in (docs or []):
+                  text = _content(doc)
+                  for block in _extract_blocks(text):
+                      try:
+                          raw = _parse_block(block)
+                          if not isinstance(raw, dict):
+                              warnings.append('跳过非对象 schema block')
+                              continue
+                          if raw.get('metadata_type') != 'mongo_schema' and not raw.get('collection_name'):
+                              warnings.append('跳过非 mongo_schema block')
+                              continue
+                          if not schema_version:
+                              schema_version = str(raw.get('schema_version') or raw.get('metadata_version') or '').strip()
+                          coll = _normalize_collection(raw)
+                          if coll:
+                              collections[coll['collection_name']] = coll
+                      except Exception as e:
+                          warnings.append('CandidateSchemas block 解析失败: ' + str(e)[:160])
+              meta = {'metadata_type': SCHEMA_CONTRACT_VERSION, 'contract_version': SCHEMA_CONTRACT_VERSION, 'schema_version': schema_version, 'schema_digest': '', 'collections': collections, 'warnings': warnings, 'parse_errors': []}
+              meta['schema_digest'] = _digest(meta, 'schema_digest') if collections else ''
+              alias = _alias_index(meta) if collections else {'contract_version': ALIAS_INDEX_CONTRACT_VERSION, 'aliases': {}, 'collection_aliases': {}, 'field_aliases': {}, 'metric_aliases': {}, 'value_aliases': {}, 'fields': {}, 'metrics': {}, 'collections': {}, 'warnings': []}
+              cat = _catalog(meta)
+              context_ref = {'collections': list(collections.keys()), 'schema_digest': meta.get('schema_digest', ''), 'schema_version': schema_version, 'catalog_digest': cat.get('catalog_digest', '')}
               if not docs:
-                  catalog = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': [], 'warnings': ['collection catalog retrieval returned no documents']}
-                  return {'collection_catalog_json': json.dumps(catalog, ensure_ascii=False), 'catalog_parse_warnings_json': json.dumps(catalog['warnings'], ensure_ascii=False)}
-              for doc in docs:
-                  for obj in _json_candidates(_content(doc)):
-                      raw = obj
-                      if isinstance(raw.get('collection_catalog'), dict):
-                          raw = raw.get('collection_catalog')
-                      if isinstance(raw.get('collections'), list):
-                          catalog = _normalize_catalog(raw)
-                          if catalog.get('collections'):
-                              return {'collection_catalog_json': json.dumps(catalog, ensure_ascii=False), 'catalog_parse_warnings_json': json.dumps(catalog.get('warnings') or [], ensure_ascii=False)}
-                          warnings.extend(catalog.get('warnings') or [])
-              warnings.append('collection catalog parse failed or contained no collections')
-              catalog = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': [], 'warnings': _uniq(warnings, 32)}
-              return {'collection_catalog_json': json.dumps(catalog, ensure_ascii=False), 'catalog_parse_warnings_json': json.dumps(catalog['warnings'], ensure_ascii=False)}
+                  warnings.append('CandidateSchemas retrieval returned no documents')
+              if docs and not collections:
+                  warnings.append('CandidateSchemas parse failed or contained no mongo_schema')
+              meta['warnings'] = warnings
+              cat['warnings'] = (cat.get('warnings') or []) + warnings
+              return {
+                  'schema_context': _schema_context(meta),
+                  'schema_metadata_json': json.dumps(meta, ensure_ascii=False),
+                  'schema_alias_index_json': json.dumps(alias, ensure_ascii=False),
+                  'collection_catalog_json': json.dumps(cat, ensure_ascii=False),
+                  'schema_context_ref_json': json.dumps(context_ref, ensure_ascii=False),
+                  'candidate_schema_collections_json': json.dumps(list(collections.keys()), ensure_ascii=False),
+                  'parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
+                  'catalog_parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
+              }
         code_language: python3
-        desc: 将轻量 collection catalog 检索结果打包为 collection_catalog_contract；解析失败只输出空 collections，不回退到业务 collection。
+        desc: 解析 CandidateSchemas 检索结果中的 mongo_schema 文档，输出 schema metadata、alias index、派生
+          catalog 与 schema context ref。
         outputs:
+          schema_context:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
           collection_catalog_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          candidate_schema_collections_json:
+            children:
+            type: string
+          parse_warnings_json:
             children:
             type: string
           catalog_parse_warnings_json:
             children:
             type: string
         selected: false
-        title: 代码执行_打包CollectionCatalog
+        title: 代码执行_打包CandidateSchemas并派生Catalog
         type: code
         variables:
         - value_selector:
@@ -427,11 +669,11 @@
       height: 80
       id: '1777100000000'
       position:
-        x: 3450
-        y: -620
+        x: 3710
+        "y": -620
       positionAbsolute:
-        x: 3450
-        y: -620
+        x: 3710
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -650,8 +892,8 @@
                   'clarification_question': selection.get('clarification_question') or '',
               }
         code_language: python3
-        desc: 基于运行时 collection_catalog_contract 选择候选 collection；只做 collection 初判，不生成
-          semantic plan。
+        desc: 基于运行时 collection_catalog_contract 选择候选 collection；只做 collection 初判，不生成 semantic
+          plan。
         outputs:
           collection_catalog_json:
             children:
@@ -702,18 +944,18 @@
           value_type: string
           variable: collection_catalog_json
         - value_selector:
-          - '1776000000001'
-          - last_schema_metadata_json
+          - '1777100000000'
+          - schema_metadata_json
           value_type: string
           variable: schema_metadata_json
       height: 80
       id: '1777000000001'
       position:
-        x: 3680
-        y: -620
+        x: 4110
+        "y": -620
       positionAbsolute:
-        x: 3680
-        y: -620
+        x: 4110
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -739,18 +981,214 @@
             - requires_clarification
           id: has_primary
           logical_operator: and
-        desc: selector 必须选出 primary collection 且不需要澄清才允许进入 planner/schema retrieval；否则 safe stop。
+        desc: selector 必须选出 primary collection 且不需要澄清；否则 safe stop。通过后继续裁剪 CandidateSchemas。
         selected: false
         title: 条件分支_CollectionSelection结果判断
         type: if-else
       height: 148
       id: '1777100000001'
       position:
-        x: 3910
-        y: -620
+        x: 4510
+        "y": -620
       positionAbsolute:
-        x: 3910
-        y: -620
+        x: 4510
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+
+
+          def _loads(value, default):
+              if isinstance(value, (dict, list)):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return default
+              return default
+
+
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      if isinstance(parsed, list):
+                          return [str(x).strip() for x in parsed if str(x).strip()]
+                  except Exception:
+                      pass
+                  return [value.strip()]
+              return []
+
+
+          def _digest(obj, key):
+              tmp = json.loads(json.dumps(obj or {}, ensure_ascii=False))
+              if isinstance(tmp, dict):
+                  tmp.pop(key, None)
+              return hashlib.sha256(json.dumps(tmp, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+          def _filter_alias(alias, keep):
+              if not isinstance(alias, dict):
+                  return {}
+              result = {}
+              for k, v in alias.items():
+                  if k in {'aliases', 'collection_aliases', 'field_aliases', 'metric_aliases', 'value_aliases'} and isinstance(v, dict):
+                      kept = {}
+                      for a, entries in v.items():
+                          filtered = [e for e in (entries or []) if isinstance(e, dict) and str(e.get('collection') or '').strip() in keep]
+                          if filtered:
+                              kept[a] = filtered
+                      result[k] = kept
+                  elif k in {'fields', 'metrics'} and isinstance(v, dict):
+                      result[k] = {c: m for c, m in v.items() if c in keep}
+                  elif k == 'collections' and isinstance(v, dict):
+                      result[k] = {a: c for a, c in v.items() if c in keep}
+                  else:
+                      result[k] = v
+              return result
+
+
+          def _schema_context(meta):
+              sections = []
+              for cname, coll in (meta.get('collections') or {}).items():
+                  sections.append('## collection=' + cname + '\n```json\n' + json.dumps(coll, ensure_ascii=False, indent=2) + '\n```')
+              return '\n\n'.join(sections)
+
+
+          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}'):
+              warnings = []
+              meta = _loads(schema_metadata_json, {}) or {}
+              alias = _loads(schema_alias_index_json, {}) or {}
+              ref = _loads(schema_context_ref_json, {}) or {}
+              collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
+              primary = str(selected_primary_collection or '').strip()
+              if not primary:
+                  warnings.append('selected primary collection is empty')
+              if primary and primary not in collections:
+                  warnings.append('selected primary collection not found in candidate schemas')
+              if warnings:
+                  empty_meta = {'metadata_type': 'schema_metadata_contract', 'contract_version': 'schema_metadata_contract', 'schema_version': str(meta.get('schema_version') or ''), 'schema_digest': '', 'collections': {}, 'warnings': warnings, 'parse_errors': []}
+                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              keep = []
+              for name in [primary] + _list(selected_related_collections):
+                  if name in collections and name not in keep:
+                      keep.append(name)
+                  elif name and name not in collections:
+                      warnings.append('selected related collection not found in candidate schemas: ' + name)
+              selected = dict(meta)
+              selected['collections'] = {name: collections[name] for name in keep}
+              selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
+              selected_alias = _filter_alias(alias, set(keep))
+              selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
+              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+        code_language: python3
+        desc: 按 selector 结果裁剪 CandidateSchemas，只保留 selected primary 与存在于候选 schema metadata
+          中的 related collections。
+        outputs:
+          schema_context:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          selected_schema_ready:
+            children:
+            type: boolean
+          selected_schema_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_裁剪SelectedSchema上下文
+        type: code
+        variables:
+        - value_selector:
+          - '1777000000001'
+          - selected_primary_collection
+          value_type: string
+          variable: selected_primary_collection
+        - value_selector:
+          - '1777000000001'
+          - selected_related_collections
+          value_type: array[string]
+          variable: selected_related_collections
+        - value_selector:
+          - '1777100000000'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - '1777100000000'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1777100000000'
+          - schema_alias_index_json
+          value_type: string
+          variable: schema_alias_index_json
+        - value_selector:
+          - '1777100000000'
+          - schema_context_ref_json
+          value_type: string
+          variable: schema_context_ref_json
+        - value_selector:
+          - '1777100000000'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+      height: 80
+      id: '1777100000005'
+      position:
+        x: 4910
+        "y": -620
+      positionAbsolute:
+        x: 4910
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: schema_ready
+          conditions:
+          - comparison_operator: is
+            id: selected-schema-ready
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1777100000005'
+            - selected_schema_ready
+          id: schema_ready
+          logical_operator: and
+        desc: selected_schema_ready=true 才允许进入语义规划；否则 safe stop，不进入 planner/validator。
+        selected: false
+        title: 条件分支_SelectedSchema结果判断
+        type: if-else
+      height: 126
+      id: '1777100000004'
+      position:
+        x: 5310
+        "y": -620
+      positionAbsolute:
+        x: 5310
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -776,9 +1214,9 @@
               catalog = _loads(collection_catalog_json)
               warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
               if not catalog.get('collections'):
-                  text = '当前 collection catalog 不可用，无法确定要查询的数据集合，请检查知识库或 catalog 配置。'
+                  text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
               else:
-                  text = selection.get('clarification_question') or '当前无法确定要查询的业务集合，请补充说明要查询的数据对象。'
+                  text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'
               payload = {
                   'contract_version': 'answer_payload_contract',
                   'answer_type': 'clarification',
@@ -799,7 +1237,8 @@
                   'context_update_json': json.dumps(update, ensure_ascii=False),
               }
         code_language: python3
-        desc: Collection selector 未选出 primary 或要求澄清时直接 safe stop，不进入 planner/schema retrieval/validator，也不保存成功上下文。
+        desc: Collection selector 或 selected schema 不可用时 safe stop，不进入 planner/schema
+          retrieval/validator，也不保存成功上下文。
         outputs:
           final_answer_markdown:
             children:
@@ -835,11 +1274,11 @@
       height: 80
       id: '1777100000002'
       position:
-        x: 4140
-        y: -360
+        x: 4910
+        "y": -300
       positionAbsolute:
-        x: 4140
-        y: -360
+        x: 4910
+        "y": -300
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -854,11 +1293,11 @@
       height: 180
       id: '1777100000003'
       position:
-        x: 4600
-        y: -360
+        x: 5310
+        "y": -300
       positionAbsolute:
-        x: 4600
-        y: -360
+        x: 5310
+        "y": -300
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1055,11 +1494,11 @@
       height: 80
       id: '1774083951307'
       position:
-        x: 4600
-        y: -620
+        x: 4910
+        "y": 850
       positionAbsolute:
-        x: 4600
-        y: -620
+        x: 4910
+        "y": 850
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1086,11 +1525,11 @@
       height: 360
       id: '1775000000001'
       position:
-        x: 5060
-        y: -620
+        x: 5510
+        "y": 850
       positionAbsolute:
-        x: 5060
-        y: -620
+        x: 5510
+        "y": 850
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1108,10 +1547,10 @@
       parentId: '1775000000001'
       position:
         x: 40
-        y: 90
+        "y": 90
       positionAbsolute:
-        x: 5100
-        y: -530
+        x: 5550
+        "y": 940
       selectable: false
       selected: false
       sourcePosition: right
@@ -1166,10 +1605,10 @@
       parentId: '1775000000001'
       position:
         x: 380
-        y: 90
+        "y": 90
       positionAbsolute:
-        x: 5440
-        y: -530
+        x: 5890
+        "y": 940
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1216,10 +1655,10 @@
       parentId: '1775000000001'
       position:
         x: 800
-        y: 90
+        "y": 90
       positionAbsolute:
-        x: 5860
-        y: -530
+        x: 6310
+        "y": 940
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1283,10 +1722,10 @@
       parentId: '1775000000001'
       position:
         x: 1220
-        y: 90
+        "y": 90
       positionAbsolute:
-        x: 6280
-        y: -530
+        x: 6730
+        "y": 940
       selected: false
       sourcePosition: right
       targetPosition: left

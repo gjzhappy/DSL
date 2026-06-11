@@ -298,35 +298,13 @@
               tmp.pop('catalog_digest', None)
               return hashlib.sha256(json.dumps(tmp, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
 
-          def _fallback_catalog():
+          def _empty_catalog(reason='collection catalog unavailable'):
               catalog = {
                   'catalog_version': CATALOG_VERSION,
                   'catalog_digest': '',
-                  'collections': [
-                      {
-                          'collection_name': 'orders', 'collection_label': '订单', 'domain': 'commerce',
-                          'aliases': ['orders', '订单', '订单表', '销售订单', '下单记录'],
-                          'description': '订单主集合，用于订单明细、销售统计、支付状态、订单趋势分析',
-                          'default_time_field': 'created_at',
-                          'primary_metrics': ['order_count', '订单数', '单量', '订单量', 'gmv_sum', '销售额', 'GMV', 'quantity_sum'],
-                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'province', '省份', 'status', '订单状态', 'payment_status', '支付状态', 'created_at'],
-                          'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
-                          'related_collections': ['products'], 'priority': 100,
-                      },
-                      {
-                          'collection_name': 'products', 'collection_label': '商品', 'domain': 'commerce',
-                          'aliases': ['products', '商品', '商品表', '产品', '产品表', '货品'],
-                          'description': '商品主数据集合，用于商品明细、品牌、类目、上下架状态和商品数量统计',
-                          'default_time_field': 'updated_at',
-                          'primary_metrics': ['product_count', '商品数', '产品数', 'sku_count'],
-                          'primary_dimensions': ['brand', '品牌', '厂商', 'category', '品类', 'status', '商品状态', 'product_name', '商品名称'],
-                          'supported_intents': ['detail', 'aggregate_summary', 'ranking', 'enrich'],
-                          'related_collections': [], 'priority': 80,
-                      },
-                  ],
-                  'warnings': ['使用内置 C-MVP collection catalog fallback。'],
+                  'collections': [],
+                  'warnings': [reason],
               }
-              catalog['catalog_digest'] = _digest(catalog)
               return catalog
 
           def _catalog_from_schema(schema_metadata_json, manual_catalog_json):
@@ -339,7 +317,7 @@
               meta = _loads(schema_metadata_json)
               collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
               if not collections:
-                  return _fallback_catalog()
+                  return _empty_catalog('schema metadata unavailable; no runtime fallback catalog')
               out = []
               for idx, name in enumerate(sorted(collections.keys())):
                   coll = collections.get(name) or {}
@@ -371,7 +349,7 @@
                       'primary_dimensions': _uniq(dim_terms, 32),
                       'supported_intents': ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'],
                       'related_collections': related[:8],
-                      'priority': 100 if name == 'orders' else (80 if name == 'products' else max(10, 60 - idx)),
+                      'priority': int(coll.get('priority')) if str(coll.get('priority') or '').strip().isdigit() else max(10, 60 - idx),
                   })
               catalog = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': out, 'warnings': []}
               catalog['catalog_digest'] = _digest(catalog)
