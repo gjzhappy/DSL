@@ -1,87 +1,41 @@
-              field=str(sort.get('field') or req.get('y_field') or '').strip()
-              direction=str(sort.get('direction') or '').lower().strip()
-              if field and direction in {'asc','desc'}:
-                  data=sorted(data, key=lambda r: (_num(r.get(field)) if _num(r.get(field)) is not None else str(r.get(field) or '')), reverse=(direction=='desc'))
-              try: top_n=int(req.get('top_n') or 0)
-              except Exception: top_n=0
-              return data[:top_n] if top_n>0 else data
-
-          def main(chart_request_json: str, last_merged_rows, chart_plan_warning: str):
-              req=_loads(chart_request_json,{})
-              if not isinstance(req,dict): req={}
-              rows=_rows(last_merged_rows); warnings=[]; error=''; rec=''
-              req.setdefault('enabled', True); req.setdefault('renderer','echarts')
-              req.setdefault('series_name', str(req.get('y_field') or 'value') or 'value')
-              req.setdefault('top_n',0); req.setdefault('sort',{}); req.setdefault('label',{}); req.setdefault('warning','')
-              ctype=str(req.get('chart_type') or 'bar').lower().strip()
-              if ctype not in SUPPORTED:
-                  warnings.append('不支持的图表类型，已推荐柱状图'); rec='bar'; ctype='bar'; req['chart_type']='bar'
-              x=str(req.get('x_field') or '').strip(); y=str(req.get('y_field') or '').strip()
-              if not rows:
-                  error='查询结果为空，不生成空图。'
-              else:
-                  fields,numeric,category,time_fields,ordered=_profile(rows)
-                  if ctype in {'bar','pie'}:
-                      if not x: x=(category[0] if category else (time_fields[0] if time_fields else ''))
-                      if not y: y=(numeric[0] if numeric else '')
-                  elif ctype in {'line','area'}:
-                      used_category_fallback=False
-                      if not x:
-                          x=(time_fields[0] if time_fields else (category[0] if category else (ordered[0] if ordered else '')))
-                          used_category_fallback=bool(x and x in category and x not in time_fields)
-                      if not y: y=(next((f for f in numeric if f!=x), '') or (numeric[0] if numeric else ''))
-                      if used_category_fallback or (x and x not in time_fields and x not in ordered):
-                          warnings.append('折线/面积图横轴不是明显时间或有序字段，可能不如柱状图适合。')
-                  elif ctype=='scatter':
-                      if not x or not _field_numeric(rows,x):
-                          x=numeric[0] if numeric else x
-                      if not y or y==x or not _field_numeric(rows,y):
-                          y=next((f for f in numeric if f!=x), '')
-                  req['x_field']=x; req['y_field']=y
-                  if ctype=='scatter':
-                      if not x or not y or x==y or not _exists(x,fields) or not _exists(y,fields) or not _field_numeric(rows,x) or not _field_numeric(rows,y):
-                          error='散点图需要两个数值字段。'
-                          rec='bar'
-                  else:
-                      if not x or not _exists(x,fields): error='图表横轴字段不存在。'
-                      elif not y or not _exists(y,fields): error='图表纵轴字段不存在。'
-                      elif not _field_numeric(rows,y): error='图表纵轴字段不是数字。'
-                  if not error and ctype=='pie':
-                      cats=len({str(r.get(x)) for r in rows}) if x else 0
-                      if cats>10:
-                          warnings.append('饼图分类较多，建议使用柱状图。'); rec=rec or 'bar'
-                  if not error and ctype in {'line','area'} and x and x not in time_fields and x not in ordered:
-                      msg='折线/面积图横轴不是明显时间或有序字段，可能不如柱状图适合。'
-                      if msg not in warnings: warnings.append(msg)
-              if len(str(req.get('title') or ''))>60: req['title']=str(req.get('title'))[:60]
-              if not str(req.get('series_name') or '').strip(): req['series_name']=str(req.get('y_field') or 'value') or 'value'
-              valid=not bool(error)
-              warn='；'.join([w for w in [chart_plan_warning, req.get('warning')]+warnings if w])
-              req['warning']=warn
-              return {'chart_valid':valid,'chart_warning':warn,'chart_error':error,'normalized_chart_request_json':json.dumps(req,ensure_ascii=False),'recommended_chart_type':rec,'should_generate_chart':valid}
         code_language: python3
-        desc: 查询链路和改图链路共用的图表可视化可行性校验。
+        desc: Phase 12 chart-only：compact_context.last_chart_request + last_result_profile.preview_rows -> chart_payload_contract；不查 Mongo、不改查询语义。
         outputs:
-          chart_valid:
+          chart_payload_json:
             children:
-            type: boolean
+            type: string
+          chart_payload_contract:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          chart_summary:
+            children:
+            type: string
           chart_warning:
             children:
             type: string
-          chart_error:
-            children:
-            type: string
-          normalized_chart_request_json:
-            children:
-            type: string
-          recommended_chart_type:
-            children:
-            type: string
-          should_generate_chart:
+          chart_enabled:
             children:
             type: boolean
+          data_profile_json:
+            children:
+            type: string
+          chart_debug_json:
+            children:
+            type: string
+          final_answer_markdown:
+            children:
+            type: string
+          final_answer_summary:
+            children:
+            type: string
+          updated_at:
+            children:
+            type: string
         selected: false
-        title: 代码执行_图表可视化可行性校验
+        title: 代码执行_ChartPayloadBuilder
         type: code
         variables:
         - value_selector:
@@ -90,10 +44,10 @@
           value_type: string
           variable: chart_request_json
         - value_selector:
-          - conversation
-          - last_merged_rows
+          - '1776000000001'
+          - last_result_profile_json
           value_type: string
-          variable: last_merged_rows
+          variable: last_result_profile_json
         - value_selector:
           - '1776000000015'
           - chart_plan_warning

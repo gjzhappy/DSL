@@ -387,6 +387,76 @@ if compact_code.include?("'last_pipeline_json'") || compact_code.include?("last_
   errors << 'compact context saver appears to persist last_pipeline_json/full pipeline'
 end
 
+
+
+# Phase 12 chart payload contract guardrails.
+chart_builder_ids = nodes.select { |node| node.dig('data', 'title').to_s == '代码执行_ChartPayloadBuilder' }.map { |node| node['id'].to_s }
+if chart_builder_ids.empty?
+  errors << 'Phase 12 requires at least one 代码执行_ChartPayloadBuilder node'
+end
+%w[1781000000001 1776000000016].each do |id|
+  unless chart_builder_ids.include?(id)
+    errors << "Phase 12 expected #{id} to be titled 代码执行_ChartPayloadBuilder"
+  end
+  %w[chart_payload_json chart_payload_contract chart_echarts_markdown chart_warning chart_enabled data_profile_json].each do |field|
+    errors << "#{id} output #{field} is missing for Phase 12" unless outputs_by_id.dig(id, field)
+  end
+  code = node_by_id[id]&.dig('data', 'code').to_s
+  errors << "#{id} must contain chart_payload_contract" unless code.include?('chart_payload_contract')
+  errors << "#{id} must not use Mongo/API request execution" if code.match?(/requests\.|httpx|pymongo|MongoClient|query_urls|request_body_json|pipeline_json/)
+  errors << "#{id} must not resolve aliases or business field names" if code.match?(/alias_index|schema_alias|field_alias|metric_alias|group_fields/)
+end
+
+unless outputs_by_id.dig('1781000000001', 'chart_payload_json')
+  errors << 'normal query ChartPayloadBuilder must output chart_payload_json'
+end
+unless edge_pairs.include?(['1775000000007', 'source', '1781000000001']) && edge_pairs.include?(['1781000000001', 'source', '1775000000022'])
+  errors << 'Phase 12 normal valid query path must be compiler -> ChartPayloadBuilder -> final answer merge'
+end
+if edge_pairs.include?(['1775000000007', 'source', '1775000000022'])
+  errors << 'Phase 12 compiler must not bypass ChartPayloadBuilder into final answer merge'
+end
+unless edge_pairs.include?(['1776000000015', 'source', '1776000000016']) && edge_pairs.include?(['1776000000016', 'source', '1776000000006'])
+  errors << 'Phase 12 chart-only path must enter ChartPayloadBuilder before chart answer adapter'
+end
+
+phase12_forbidden_targets = %w[1773975766025 1776000000020 1777000000002 1779000000001 1780000000002 1780000000003 1780000000007 1780000000008 1780000000009]
+chart_builder_ids.each do |id|
+  reached = reachable.call(id)
+  phase12_forbidden_targets.each do |target_id|
+    errors << "Phase 12 ChartPayloadBuilder #{id} can reach forbidden planner/schema node #{target_id}" if reached.include?(target_id)
+  end
+end
+
+merge_node = node_by_id['1775000000022']
+merge_code = merge_node&.dig('data', 'code').to_s
+merge_vars = merge_node&.dig('data', 'variables') || []
+unless merge_vars.any? { |var| var['variable'] == 'chart_payload_json' && var['value_selector'] == ['1781000000001', 'chart_payload_json'] }
+  errors << 'final answer merge must read chart_payload_json from normal ChartPayloadBuilder'
+end
+unless merge_code.include?('chart_payload_json') && merge_code.include?("chart_payload.get('echarts_markdown')")
+  errors << 'final answer merge must prefer chart_payload_json / chart_payload.echarts_markdown'
+end
+unless merge_code.include?('chart_echarts_markdown')
+  errors << 'final answer merge must retain old chart_echarts_markdown fallback'
+end
+
+compact_serialized = compact_saver.to_s
+%w[chart_payload.option echarts option echarts_markdown full_rows compiler_debug_json pipeline_json request_body_json].each do |token|
+  errors << "compact context must not persist #{token}" if compact_serialized.include?("'#{token}' =>") || compact_serialized.include?("\"#{token}\" =>")
+end
+save_node = node_by_id['1775000000023']
+(save_node&.dig('data', 'items') || []).each do |item|
+  selector = item['variable_selector'] || []
+  value = item['value'] || []
+  if selector == ['conversation', 'last_chart_echarts_markdown'] && value != ['1781000000001', 'chart_summary']
+    errors << "Phase 12 must not persist full echarts markdown; last_chart_echarts_markdown selector is #{value.inspect}"
+  end
+  if selector == ['conversation', 'last_query_result_json'] && value != ['1775000000007', 'query_result_json']
+    errors << "Phase 12 last_query_result_json must use query_result_json contract, got #{value.inspect}"
+  end
+end
+
 incoming_counts = Hash.new(0)
 outgoing_counts = Hash.new(0)
 edges.each do |edge|
