@@ -53,6 +53,22 @@ COMMON_OUTPUT_FIELD_TYPE_RULES = {
 }.freeze
 STRING_LIST_FIELDS = %w[errors warnings context_warnings parse_errors].freeze
 
+OLD_REFINE_SCHEMA_RETRIEVAL_IDS = {
+  '1776000000033' => '代码执行_解析当前任务_Refine',
+  '1776000000034' => '知识检索_当前CollectionSchema_Refine',
+  '1776000000035' => '代码执行_打包Schema结果_Refine'
+}.freeze
+
+OLD_REFINE_SCHEMA_RETRIEVAL_TITLES = Set.new([
+  '遍历Collections检索Schema_Refine',
+  '代码执行_解析当前任务_Refine',
+  '代码执行_解析当前任务',
+  '知识检索_当前CollectionSchema_Refine',
+  '知识检索_当前CollectionSchema',
+  '代码执行_打包Schema结果_Refine',
+  '代码执行_打包Schema结果'
+]).freeze
+
 OLD_NORMAL_SCHEMA_RETRIEVAL_IDS = {
   '1774083951307' => '代码执行_构建检索任务',
   '1775000000001' => '遍历Collections检索Schema',
@@ -172,6 +188,16 @@ OLD_NORMAL_SCHEMA_RETRIEVAL_IDS.each do |id, title|
 
   errors << "old normal schema retrieval island node #{id}(#{title}) must be removed; CandidateSchemas bootstrap replaces this path"
 end
+OLD_REFINE_SCHEMA_RETRIEVAL_IDS.each do |id, title|
+  errors << "old refine schema retrieval island node #{id}(#{title}) must be removed; CandidateSchemas refine bootstrap replaces this path" if node_id_set.include?(id)
+end
+nodes.each do |node|
+  title = node.dig('data', 'title').to_s
+  if OLD_REFINE_SCHEMA_RETRIEVAL_TITLES.include?(title)
+    errors << "old refine schema retrieval island node #{node['id']}(#{title}) must be removed; CandidateSchemas refine bootstrap replaces this path"
+  end
+end
+
 
 edges.each do |edge|
   source = edge['source'].to_s
@@ -199,6 +225,24 @@ code_nodes.each do |node|
   errors << "code node #{id}(#{title}) data.outputs is missing" unless data['outputs'].is_a?(Hash)
   errors << "code node #{id}(#{title}) data.variables is missing" unless data['variables'].is_a?(Array)
   code_node_required_field_errors += errors.length - required_field_errors_before
+
+  variables = data['variables'].is_a?(Array) ? data['variables'].map { |var| var['variable'].to_s }.reject(&:empty?) : []
+  main_match = code.match(/def\s+main\s*\((.*?)\)\s*(?:->\s*[^:]+)?\s*:/m)
+  if main_match && !variables.empty?
+    params_text = main_match[1]
+    accepts_kwargs = params_text.match?(/\*\*\s*[A-Za-z_]\w*/)
+    explicit_params = params_text.split(',').map do |raw_param|
+      token = raw_param.strip
+      token = token.sub(/^\*\*?/, '').split(/[=:]/, 2).first.to_s.strip
+      token
+    end.reject(&:empty?).to_set
+    missing_params = variables.reject { |var_name| explicit_params.include?(var_name) }
+    unless accepts_kwargs || missing_params.empty?
+      errors << "code node #{id}(#{title}) main() missing variables #{missing_params.uniq.join(', ')} and does not accept **kwargs"
+    end
+  elsif !variables.empty?
+    errors << "code node #{id}(#{title}) must define main() for variables #{variables.join(', ')}"
+  end
 
   FORBIDDEN_DSL_CODE_PATTERNS.each do |pattern|
     next unless code.include?(pattern)
@@ -480,6 +524,24 @@ edge_pairs = edges.map { |edge| [edge['source'].to_s, edge['sourceHandle'].to_s,
   errors << "missing edge #{pair.join(' -> ')} (#{message})" unless edge_pairs.include?(pair)
 end
 
+{
+  ['1776000000023', 'false', '1776000000025'] => 'refine full-replan must build CandidateSchemas query first',
+  ['1776000000025', 'source', '1776000000032'] => 'refine CandidateSchemas query must enter refine retrieval',
+  ['1776000000032', 'source', '1776000000026'] => 'refine CandidateSchemas retrieval must enter pack/catalog derivation',
+  ['1776000000026', 'source', '1777000000002'] => 'refine selector must consume CandidateSchemas-derived catalog',
+  ['1777000000002', 'source', '1777100000101'] => 'refine selector must enter collection-selection safe gate',
+  ['1777100000101', 'has_primary', '1777100000105'] => 'refine selected collection must enter selected schema trim',
+  ['1777100000105', 'source', '1777100000104'] => 'refine selected schema trim must enter selected-schema gate',
+  ['1777100000104', 'schema_ready', '1776000000027'] => 'refine selected schema must enter refine merge prompt',
+  ['1776000000027', 'source', '1776000000020'] => 'refine merge prompt must enter LLM_Refine查询规划'
+}.each do |pair, message|
+  errors << "missing refine CandidateSchemas edge #{pair.join(' -> ')} (#{message})" unless edge_pairs.include?(pair)
+end
+
+if edge_pairs.include?(['1776000000023', 'false', '1777000000002']) || edge_pairs.include?(['1776000000030', 'source', '1776000000025'])
+  errors << 'refine full-replan still uses old LLM retrieval-planning path before CandidateSchemas retrieval'
+end
+
 if edge_pairs.include?(['1775000000013', 'source', '1775000000007'])
   errors << '1775000000013 still connects directly to 1775000000007 without unified preparation'
 end
@@ -605,6 +667,17 @@ required_candidate_titles = [
 required_candidate_titles.each do |title|
   errors << "required CandidateSchemas main-chain node #{title} is missing" unless nodes.any? { |node| node.dig('data', 'title').to_s == title }
 end
+required_refine_candidate_titles = [
+  '代码执行_构建CandidateSchemas检索查询_Refine',
+  '知识检索_CandidateSchemas_Refine',
+  '代码执行_打包CandidateSchemas并派生Catalog_Refine',
+  '代码执行_CollectionCatalog候选选择_Refine',
+  '代码执行_裁剪SelectedSchema上下文_Refine',
+  'LLM_Refine查询规划'
+]
+required_refine_candidate_titles.each do |title|
+  errors << "required refine CandidateSchemas main-chain node #{title} is missing" unless nodes.any? { |node| node.dig('data', 'title').to_s == title }
+end
 catalog_pack_node = nodes.find { |node| node.dig('data', 'title').to_s.include?('打包CandidateSchemas并派生Catalog') || node.dig('data', 'title').to_s.include?('打包CollectionCatalog') || node.dig('data', 'title').to_s.include?('解析CollectionCatalog') }
 main_selector_node = nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_CollectionCatalog候选选择' }
 schema_retrieval_node = nodes.find { |node| node.dig('data', 'title').to_s == '遍历Collections检索Schema' }
@@ -682,6 +755,29 @@ if compact_code.include?("'last_pipeline_json'") || compact_code.include?("last_
 end
 
 
+
+
+# Merge prompt selected-schema input guardrails.
+normal_merge_vars = (nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_合并Schema上下文并准备语义计划提示词' }&.dig('data', 'variables') || [])
+{
+  'schema_metadata_summary_json' => ['1777100000005', 'schema_metadata_json'],
+  'schema_alias_index_summary_json' => ['1777100000005', 'schema_alias_index_json'],
+  'schema_context_ref_json' => ['1777100000005', 'schema_context_ref_json']
+}.each do |var_name, expected_selector|
+  actual = normal_merge_vars.find { |var| var['variable'] == var_name }&.dig('value_selector')
+  errors << "normal merge prompt #{var_name} selector is #{actual.inspect}, expected #{expected_selector.inspect}" unless actual == expected_selector
+end
+normal_arg1 = normal_merge_vars.find { |var| var['variable'] == 'arg1' }&.dig('value_selector')
+errors << "normal merge prompt schema_context/arg1 must come from selected schema trim, got #{normal_arg1.inspect}" unless normal_arg1 == ['1777100000005', 'schema_context']
+refine_merge_vars = (nodes.find { |node| node.dig('data', 'title').to_s == '代码执行_合并Schema上下文并准备Refine语义计划提示词' }&.dig('data', 'variables') || [])
+{
+  'refine_schema_context' => ['1777100000105', 'schema_context'],
+  'schema_context_ref_json' => ['1777100000105', 'schema_context_ref_json'],
+  'collection_selection_json' => ['1777000000002', 'collection_selection_json']
+}.each do |var_name, expected_selector|
+  actual = refine_merge_vars.find { |var| var['variable'] == var_name }&.dig('value_selector')
+  errors << "refine merge prompt #{var_name} selector is #{actual.inspect}, expected #{expected_selector.inspect}" unless actual == expected_selector
+end
 
 # Phase 12 chart payload contract guardrails.
 chart_builder_ids = nodes.select { |node| node.dig('data', 'title').to_s == '代码执行_ChartPayloadBuilder' }.map { |node| node['id'].to_s }
@@ -1022,7 +1118,16 @@ unless layout_overlaps.empty?
     '代码执行_CollectionCatalog候选选择',
     '条件分支_CollectionSelection结果判断',
     '代码执行_裁剪SelectedSchema上下文',
-    '代码执行_合并Schema上下文并准备语义计划提示词'
+    '代码执行_合并Schema上下文并准备语义计划提示词',
+    '代码执行_构建CandidateSchemas检索查询_Refine',
+    '知识检索_CandidateSchemas_Refine',
+    '代码执行_打包CandidateSchemas并派生Catalog_Refine',
+    '代码执行_CollectionCatalog候选选择_Refine',
+    '条件分支_CollectionSelection结果判断_Refine',
+    '代码执行_裁剪SelectedSchema上下文_Refine',
+    '条件分支_SelectedSchema结果判断_Refine',
+    '代码执行_合并Schema上下文并准备Refine语义计划提示词',
+    'LLM_Refine查询规划'
   ])
   critical_overlaps = layout_overlaps.select do |pair|
     critical_layout_titles.any? { |title| pair.include?(title) }
@@ -1034,7 +1139,7 @@ errors << "iteration internal layout overlaps: #{iteration_internal_overlaps.joi
 phase15_lane_sequences = {
   'turn_intent' => %w[1773909192919 1776000000001 1776000000002 1776000000003 1776000000004 1776000000013 1776000000005],
   'new_query' => %w[1777099999998 1777099999999 1777100000000 1777000000001 1777100000001 1777100000005 1777100000004 1775000000005 1773975766025 1775000000014 1775000000013 1775000000020],
-  'refine_full_replan' => %w[1777000000002 1776000000030 1776000000025 1776000000032 1776000000026 1776000000027 1776000000020 1776000000028 1776000000021],
+  'refine_full_replan' => %w[1776000000025 1776000000032 1776000000026 1777000000002 1777100000101 1777100000105 1777100000104 1776000000027 1776000000020 1776000000028 1776000000021],
   'runtime_validator_success' => %w[1776000000024 1779000000001 1780000000001 1780000000009 1778000000001 1778000000002 1775000000007 1781000000001 1775000000022 1775000000023 1773910028939],
   'chart_only' => %w[1776000000014 1776000000015 1776000000016 1776000000006 1776000000009],
   'non_valid' => %w[1778000000004 1778000000003]
