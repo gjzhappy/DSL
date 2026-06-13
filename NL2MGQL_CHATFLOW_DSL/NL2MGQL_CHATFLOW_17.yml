@@ -64,6 +64,16 @@
                   if isinstance(tr, dict):
                       _add(deprecated, tr.get('field'))
               inherit = str(intent.get('turn_intent') or '') in {'refine_query','full_replan'} and bool(intent.get('need_previous_context', True)) and bool(base) and not explicit_switch
+              target_terms = []
+              for v in [qref.get('group_by_dimension'), qref.get('metric'), qref.get('time_range')]:
+                  if isinstance(v, dict):
+                      for x in v.values():
+                          _add(target_terms, x)
+                  elif isinstance(v, list):
+                      for x in v:
+                          _add(target_terms, x)
+                  else:
+                      _add(target_terms, v)
               return {
                   'inherit_previous_collection': inherit,
                   'collection_switch': explicit_switch,
@@ -81,6 +91,7 @@
                   'changed_slots': changed,
                   'replaced_slots': replaced,
                   'deprecated_fields': deprecated,
+                  'target_semantic_terms': target_terms,
               }
 
           def _refine_terms(query_refinement, turn_intent):
@@ -120,12 +131,16 @@
               positive = [t for t in target_terms if t not in deprecated]
               base = cb.get('base_primary_collection') or ''
               must = [base] if cb.get('inherit_previous_collection') and base else []
+              collection_strategy = 'inherit_previous' if must else 'discover_collection'
+              schema_strategy = 'hydrate_inherited_collection' if must else 'candidate_discovery'
               structural = any(token in (str(qref) + str(intent) + q).lower() for token in ['full_replan', 'structural', '重新', 'new chart'])
               query = '\n'.join([
                   '当前是 refine/full-replan。',
                   '如果 context_binding.inherit_previous_collection=true 且 base_primary_collection 非空，则上一轮 primary_collection 是本轮 schema retrieval 的强约束。',
                   'full-replan 表示重规划字段/指标/时间/图表，不表示丢弃上一轮 primary_collection。',
-                  '除非 collection_switch=true，否则必须优先检索 base_primary_collection 对应 schema。',
+                  '除非 collection_switch=true，否则必须优先检索 base_primary_collection 对应 mongo_schema。',
+                  'collection_strategy：' + collection_strategy,
+                  'schema_strategy：' + schema_strategy,
                   'base_primary_collection 强约束：' + base,
                   'must_include_collections：' + json.dumps(must, ensure_ascii=False),
                   'preferred_collections：' + json.dumps(must, ensure_ascii=False),
@@ -135,13 +150,13 @@
                   'context_binding_json：' + json.dumps(cb, ensure_ascii=False),
                   '需要 metadata_type: mongo_schema；包含 fields / metrics / relations / query_rules / aliases；用于 collection selection、group by、filters、metrics、relations。',
               ])
-              debug = {'target_semantic_terms': positive, 'deprecated_fields': deprecated, 'must_include_collections': must, 'structural_full_replan': structural, 'context_binding': cb}
+              debug = {'collection_strategy': collection_strategy, 'schema_strategy': schema_strategy, 'base_primary_collection': base, 'target_semantic_terms': positive, 'deprecated_fields': deprecated, 'must_include_collections': must, 'structural_full_replan': structural, 'context_binding': cb}
               return {
                   'query_text': query,
                   'old_normalized_semantic_plan_json': json.dumps(old_plan, ensure_ascii=False),
                   'query_refinement_json': json.dumps(qref, ensure_ascii=False),
                   'patch_reason': str(patch_reason or ''),
-                  'changed_fields_json': json.dumps(_list(changed_fields), ensure_ascii=False),
+                  'changed_fields_json': json.dumps(_list(cb.get('changed_slots')) or _list(changed_fields), ensure_ascii=False),
                   'refine_retrieval_valid': True,
                   'refine_retrieval_error': '',
                   'refine_query_debug_json': json.dumps(debug, ensure_ascii=False),
@@ -149,6 +164,10 @@
                   'must_include_collections_json': json.dumps(must, ensure_ascii=False),
                   'preferred_collections_json': json.dumps(must, ensure_ascii=False),
                   'deprecated_fields_json': json.dumps(deprecated, ensure_ascii=False),
+                  'collection_strategy': collection_strategy,
+                  'schema_strategy': schema_strategy,
+                  'base_primary_collection': base,
+                  'target_semantic_terms_json': json.dumps(positive, ensure_ascii=False),
               }
         code_language: python3
         desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine
@@ -188,6 +207,18 @@
             children:
             type: string
           deprecated_fields_json:
+            children:
+            type: string
+          collection_strategy:
+            children:
+            type: string
+          schema_strategy:
+            children:
+            type: string
+          base_primary_collection:
+            children:
+            type: string
+          target_semantic_terms_json:
             children:
             type: string
         selected: false
