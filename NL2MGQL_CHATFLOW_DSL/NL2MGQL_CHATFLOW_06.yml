@@ -573,13 +573,13 @@
             value: 'true'
             varType: string
             variable_selector:
-            - env
-            - ENABLE_FULL_LLM
+            - '1775000000005'
+            - effective_use_full_llm_query_plan
           id: 'true'
           logical_operator: and
         desc: ''
         selected: false
-        title: 条件分支_是否启用满血LLM
+        title: 条件分支_是否使用满血LLM_查询规划
         type: if-else
       height: 124
       id: '1775000000014'
@@ -626,18 +626,64 @@
       width: 242
     - data:
         code: |
+          import json
+
+
           def _truncate_text(text, limit=1200):
               text = '' if text is None else str(text)
               return text if len(text) <= limit else text[:limit] + '...'
+
+
+          def _extract_content(resp):
+              if not isinstance(resp, dict):
+                  return ''
+              choices = resp.get('choices')
+              if isinstance(choices, list) and choices:
+                  message = (choices[0] or {}).get('message') if isinstance(choices[0], dict) else {}
+                  if isinstance(message, dict) and isinstance(message.get('content'), str):
+                      return message.get('content').strip()
+                  if isinstance(choices[0].get('text'), str):
+                      return choices[0].get('text').strip()
+              result = resp.get('result')
+              if isinstance(result, str):
+                  return result.strip()
+              if isinstance(result, dict) and isinstance(result.get('content'), str):
+                  return result.get('content').strip()
+              return ''
 
 
           def main(status_code, body):
               code = int(status_code or 0)
               body_text = '' if body is None else str(body).strip()
               ok = 200 <= code < 300 and bool(body_text)
+              error = ''
+              content = ''
+              raw_response = {}
+              if ok:
+                  try:
+                      raw_response = json.loads(body_text)
+                      content = _extract_content(raw_response)
+                      if not content:
+                          ok = False
+                          error = 'content empty or missing'
+                      else:
+                          try:
+                              json.loads(content)
+                          except Exception as exc:
+                              ok = False
+                              error = 'content is not valid JSON: ' + str(exc)
+                  except Exception as exc:
+                      ok = False
+                      error = 'response body is not valid JSON: ' + str(exc)
+              else:
+                  error = f"status={code}, body={_truncate_text(body, 1200)}"
               return {
                   'full_http_ok': 'true' if ok else 'false',
-                  'full_http_error': '' if ok else f"status={code}, body={_truncate_text(body, 1200)}",
+                  'full_http_error': '' if ok else error,
+                  'success': bool(ok),
+                  'content': content if ok else '',
+                  'error': '' if ok else error,
+                  'raw_response': raw_response,
               }
         code_language: python3
         desc: 根据满血LLM HTTP状态决定是否�退本地LLM
@@ -648,6 +694,18 @@
           full_http_ok:
             children:
             type: string
+          success:
+            children:
+            type: boolean
+          content:
+            children:
+            type: string
+          error:
+            children:
+            type: string
+          raw_response:
+            children:
+            type: object
         selected: false
         title: 代码执行_判断满血LLM状态
         type: code
