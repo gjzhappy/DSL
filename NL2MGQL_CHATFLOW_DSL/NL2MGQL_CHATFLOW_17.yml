@@ -29,23 +29,59 @@
               if text and text not in out:
                   out.append(text)
 
-          def _old_terms(last_context, old_plan):
-              terms = []
-              _add(terms, last_context.get('last_primary_collection'))
-              for c in _list(last_context.get('last_related_collections')):
-                  _add(terms, c)
-              ref = last_context.get('schema_context_ref') if isinstance(last_context.get('schema_context_ref'), dict) else {}
-              for c in _list(ref.get('collections')):
-                  _add(terms, c)
+          def _slot_value(value):
+              if isinstance(value, list):
+                  return [x for x in value if str(x or '').strip()]
+              if isinstance(value, dict):
+                  return {k: v for k, v in value.items() if v not in (None, '', [], {})}
+              return str(value or '').strip()
+
+          def _same_semantic(a, b):
+              return json.dumps(_slot_value(a), ensure_ascii=False, sort_keys=True) == json.dumps(_slot_value(b), ensure_ascii=False, sort_keys=True)
+
+          def _context_binding(qref, intent, old_plan):
               st = _first_stage(old_plan)
-              _add(terms, old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection'))
-              for f in _list(st.get('group_fields')):
-                  _add(terms, f)
-              _add(terms, st.get('metric_field'))
-              _add(terms, st.get('metric_alias'))
               tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
-              _add(terms, tr.get('field'))
-              return terms
+              base = str(old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection') or '').strip()
+              explicit_switch = bool(qref.get('collection_switch') or qref.get('target_collection') or qref.get('collection'))
+              changed, replaced, deprecated = [], {}, []
+              old_groups = _list(st.get('group_fields'))
+              new_group = qref.get('group_by_dimension') or qref.get('dimension') or qref.get('group_fields')
+              if new_group not in (None, '', [], {}) and old_groups:
+                  changed.append('group_by_dimension')
+                  replaced['group_by_dimension'] = {'old': old_groups, 'new_semantic': new_group}
+                  for f in old_groups:
+                      _add(deprecated, f)
+              old_metric = {'metric_alias': st.get('metric_alias'), 'metric_field': st.get('metric_field'), 'metric_function': st.get('metric_function')}
+              new_metric = qref.get('metric')
+              if new_metric not in (None, '', [], {}) and not _same_semantic(new_metric, old_metric):
+                  changed.append('metric')
+                  replaced['metric'] = {'old': {k: v for k, v in old_metric.items() if v not in (None, '')}, 'new_semantic': new_metric}
+              new_time = qref.get('time_range')
+              if new_time not in (None, '', [], {}):
+                  changed.append('time_range')
+                  replaced['time_range'] = {'old': tr, 'new_semantic': new_time}
+                  if isinstance(tr, dict):
+                      _add(deprecated, tr.get('field'))
+              inherit = str(intent.get('turn_intent') or '') in {'refine_query','full_replan'} and bool(intent.get('need_previous_context', True)) and bool(base) and not explicit_switch
+              return {
+                  'inherit_previous_collection': inherit,
+                  'collection_switch': explicit_switch,
+                  'base_primary_collection': base,
+                  'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '',
+                  'old_primary_collection': base,
+                  'old_stage_collection': str(st.get('collection') or ''),
+                  'old_group_fields': old_groups,
+                  'old_metric_field': str(st.get('metric_field') or ''),
+                  'old_metric_alias': str(st.get('metric_alias') or ''),
+                  'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '',
+                  'target_group_dimension': qref.get('group_by_dimension'),
+                  'target_metric': qref.get('metric'),
+                  'target_time_range': qref.get('time_range'),
+                  'changed_slots': changed,
+                  'replaced_slots': replaced,
+                  'deprecated_fields': deprecated,
+              }
 
           def _refine_terms(query_refinement, turn_intent):
               terms = []
@@ -68,26 +104,38 @@
               intent = _loads(normalized_turn_intent_json)
               last_context = _loads(last_context_json)
               old_plan = _loads(old_normalized_semantic_plan_json)
-              current_terms = []
-              _add(current_terms, q)
+              cb = _context_binding(qref, intent, old_plan)
+              target_terms = []
+              _add(target_terms, q)
               for term in _refine_terms(qref, intent):
-                  _add(current_terms, term)
-              old_terms = _old_terms(last_context, old_plan)
-              structural = any(token in (str(qref) + str(intent) + q).lower() for token in ['full_replan', 'structural', '不再', '改按', '换成', '重新', 'new chart'])
+                  _add(target_terms, term)
+              for term in [cb.get('target_group_dimension'), cb.get('target_metric'), cb.get('target_time_range')]:
+                  if isinstance(term, dict):
+                      for v in term.values(): _add(target_terms, v)
+                  elif isinstance(term, list):
+                      for v in term: _add(target_terms, v)
+                  else:
+                      _add(target_terms, term)
+              deprecated = _list(cb.get('deprecated_fields'))
+              positive = [t for t in target_terms if t not in deprecated]
+              base = cb.get('base_primary_collection') or ''
+              must = [base] if cb.get('inherit_previous_collection') and base else []
+              structural = any(token in (str(qref) + str(intent) + q).lower() for token in ['full_replan', 'structural', '重新', 'new chart'])
               query = '\n'.join([
-                  '当前用户问题/refine：' + q,
-                  '当前 refine 语义关键词（优先）：' + ' '.join(current_terms),
-                  '上一轮 collection/field 弱参考（不得限制重新召回）：' + ' '.join(old_terms),
+                  '当前是 refine/full-replan。',
+                  '如果 context_binding.inherit_previous_collection=true 且 base_primary_collection 非空，则上一轮 primary_collection 是本轮 schema retrieval 的强约束。',
+                  'full-replan 表示重规划字段/指标/时间/图表，不表示丢弃上一轮 primary_collection。',
+                  '除非 collection_switch=true，否则必须优先检索 base_primary_collection 对应 schema。',
+                  'base_primary_collection 强约束：' + base,
+                  'must_include_collections：' + json.dumps(must, ensure_ascii=False),
+                  'preferred_collections：' + json.dumps(must, ensure_ascii=False),
+                  'target_semantic_terms 正向检索语义：' + ' '.join(positive),
+                  'deprecated_fields 仅作负向/排除说明，不作为正向检索关键词：' + ' '.join(deprecated),
                   'query_refinement_json：' + json.dumps(qref, ensure_ascii=False),
-                  'turn_intent_json：' + json.dumps(intent, ensure_ascii=False),
-                  'patch_reason：' + str(patch_reason or ''),
-                  'changed_fields：' + str(changed_fields or ''),
-                  '是否结构性 full-replan：' + ('true' if structural else 'false'),
-                  '请检索最相关的 Mongo schema 文档；必须优先体现当前 refine 语义，允许重新召回候选 schema。',
-                  '需要 metadata_type: mongo_schema；包含 collection_name fields metrics relations query_rules aliases；用于 collection selection、group by、filters、metrics、relations。',
-                  'Mongo schema metadata_type: mongo_schema fields metrics relations group by',
+                  'context_binding_json：' + json.dumps(cb, ensure_ascii=False),
+                  '需要 metadata_type: mongo_schema；包含 fields / metrics / relations / query_rules / aliases；用于 collection selection、group by、filters、metrics、relations。',
               ])
-              debug = {'current_terms': current_terms, 'old_terms': old_terms, 'structural_full_replan': structural}
+              debug = {'target_semantic_terms': positive, 'deprecated_fields': deprecated, 'must_include_collections': must, 'structural_full_replan': structural, 'context_binding': cb}
               return {
                   'query_text': query,
                   'old_normalized_semantic_plan_json': json.dumps(old_plan, ensure_ascii=False),
@@ -97,6 +145,10 @@
                   'refine_retrieval_valid': True,
                   'refine_retrieval_error': '',
                   'refine_query_debug_json': json.dumps(debug, ensure_ascii=False),
+                  'context_binding_json': json.dumps(cb, ensure_ascii=False),
+                  'must_include_collections_json': json.dumps(must, ensure_ascii=False),
+                  'preferred_collections_json': json.dumps(must, ensure_ascii=False),
+                  'deprecated_fields_json': json.dumps(deprecated, ensure_ascii=False),
               }
         code_language: python3
         desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine
@@ -124,6 +176,18 @@
             children:
             type: string
           refine_query_debug_json:
+            children:
+            type: string
+          context_binding_json:
+            children:
+            type: string
+          must_include_collections_json:
+            children:
+            type: string
+          preferred_collections_json:
+            children:
+            type: string
+          deprecated_fields_json:
             children:
             type: string
         selected: false

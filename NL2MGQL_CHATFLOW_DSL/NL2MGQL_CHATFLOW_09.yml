@@ -547,6 +547,11 @@
           variable: question
         - value_selector:
           - '1776000000001'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000001'
           - last_context_json
           value_type: string
           variable: last_context_json
@@ -696,6 +701,55 @@
               return str(value).strip().lower() in {'1','true','yes','y','on'}
 
 
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if value in (None, ''):
+                  return []
+              return [str(value).strip()]
+
+          def _first_stage(plan):
+              stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan, dict) else []
+              return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
+
+          def _add(out, value):
+              text = str(value or '').strip()
+              if text and text not in out:
+                  out.append(text)
+
+          def _same_semantic(a, b):
+              def clean(v):
+                  if isinstance(v, dict):
+                      return {k: x for k, x in v.items() if x not in (None, '', [], {})}
+                  if isinstance(v, list):
+                      return [x for x in v if str(x or '').strip()]
+                  return str(v or '').strip()
+              return json.dumps(clean(a), ensure_ascii=False, sort_keys=True) == json.dumps(clean(b), ensure_ascii=False, sort_keys=True)
+
+          def _context_binding(obj, old_plan):
+              qref = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
+              st = _first_stage(old_plan)
+              tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
+              base = str(old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection') or '').strip()
+              explicit_switch = bool(qref.get('collection_switch') or qref.get('target_collection') or qref.get('collection'))
+              changed, replaced, deprecated = [], {}, []
+              old_groups = _list(st.get('group_fields'))
+              new_group = qref.get('group_by_dimension') or qref.get('dimension') or qref.get('group_fields')
+              if new_group not in (None, '', [], {}) and old_groups:
+                  changed.append('group_by_dimension')
+                  replaced['group_by_dimension'] = {'old': old_groups, 'new_semantic': new_group}
+                  for f in old_groups: _add(deprecated, f)
+              old_metric = {'metric_alias': st.get('metric_alias'), 'metric_field': st.get('metric_field'), 'metric_function': st.get('metric_function')}
+              if qref.get('metric') not in (None, '', [], {}) and not _same_semantic(qref.get('metric'), old_metric):
+                  changed.append('metric')
+                  replaced['metric'] = {'old': {k: v for k, v in old_metric.items() if v not in (None, '')}, 'new_semantic': qref.get('metric')}
+              if qref.get('time_range') not in (None, '', [], {}):
+                  changed.append('time_range')
+                  replaced['time_range'] = {'old': tr, 'new_semantic': qref.get('time_range')}
+                  if isinstance(tr, dict): _add(deprecated, tr.get('field'))
+              inherit = obj.get('turn_intent') == 'refine_query' and bool(obj.get('need_previous_context')) and bool(base) and not explicit_switch
+              return {'inherit_previous_collection': inherit, 'collection_switch': explicit_switch, 'base_primary_collection': base, 'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '', 'old_primary_collection': base, 'old_stage_collection': str(st.get('collection') or ''), 'old_group_fields': old_groups, 'old_metric_field': str(st.get('metric_field') or ''), 'old_metric_alias': str(st.get('metric_alias') or ''), 'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '', 'target_group_dimension': qref.get('group_by_dimension'), 'target_metric': qref.get('metric'), 'target_time_range': qref.get('time_range'), 'changed_slots': changed, 'replaced_slots': replaced, 'deprecated_fields': deprecated}
+
           def _defaults(intent):
               base = {'need_previous_context': False, 'need_requery': True, 'need_rechart': False, 'need_analysis': True, 'can_answer_directly': False}
               if intent == 'modify_chart':
@@ -713,8 +767,9 @@
               return base
 
 
-          def main(intent_structured, intent_text: str, last_context_json: str, question: str):
+          def main(intent_structured, intent_text: str, last_context_json: str, question: str, old_normalized_semantic_plan_json: str = '{}'):
               ctx = _loads_obj(last_context_json)
+              old_plan = _loads_obj(old_normalized_semantic_plan_json)
               obj = _loads_obj(intent_structured)
               source = 'structured_output' if obj else 'text'
               if not obj:
@@ -753,6 +808,8 @@
                   qkeys = {'field','fields','time_range','filters','group_fields','metric','metric_alias','metric_field','dimension','sort','limit'}
                   obj['need_requery'] = any(k in ref and ref.get(k) not in ({}, [], '', None) for k in qkeys)
                   obj['need_rechart'] = bool(obj['need_requery'] or mod)
+              cb = _context_binding(obj, old_plan)
+              obj['context_binding'] = cb
               return {
                   'normalized_turn_intent_json': json.dumps(obj, ensure_ascii=False),
                   'turn_intent': str(obj.get('turn_intent') or 'new_query'),
@@ -766,6 +823,7 @@
                   'missing_info': json.dumps(obj.get('missing_info') or [], ensure_ascii=False),
                   'chart_modification_json': json.dumps(obj.get('chart_modification') or {}, ensure_ascii=False),
                   'query_refinement_json': json.dumps(obj.get('query_refinement') or {}, ensure_ascii=False),
+                  'context_binding_json': json.dumps(cb, ensure_ascii=False),
                   'analysis_focus': str(obj.get('analysis_focus') or ''),
               }
         code_language: python3
@@ -804,6 +862,9 @@
           query_refinement_json:
             children:
             type: string
+          context_binding_json:
+            children:
+            type: string
           analysis_focus:
             children:
             type: string
@@ -834,6 +895,11 @@
           - query
           value_type: string
           variable: question
+        - value_selector:
+          - '1776000000001'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
       height: 80
       id: '1776000000004'
       position:
