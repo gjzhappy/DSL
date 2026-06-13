@@ -481,7 +481,7 @@
           filter，必须输出 filters；如果用户改变时间范围，必须更新时间范围。',\n        '10. 如果当前用户问题包含图表需求，needs_chart=true
           且 chart_request.enabled=true，chart_request.x_field/y_field 必须与新 group_fields/metric_alias
           对齐。',\n        '11. 不输出 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字或代码块。',
-        '12. intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related；不得使用 aggregate / aggregation / group_by / group_by_metric_with_time_filter 这类泛化或别名值；按维度分组统计指标使用 aggregate_summary，明细查询使用 detail_query。'
+        '12. intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related；不得使用 aggregate_group_by / aggregate / aggregation / group_by / group_by_metric / group_by_dimension / group_by_metric_with_time_filter / group_by_dimension_with_time_range_and_aggregation 这类泛化或别名值；按维度分组统计、按字段分组统计、group by 聚合统计统一使用 aggregate_summary，明细查询使用 detail_query；不要输出 aggregate_group_by 这类非 canonical intent_type。'
           \n    ])\n    parts = [\n        '当前用户问题：\\n' + str(question or ''),\n        'normalized
           old_plan（仅作上一轮摘要；当前用户否定/修改的字段不得继承）：\\n' + _dumps(old_plan),\n        'normalized
           query_refinement_json（仅使用 schema_context 显式 aliases 或 old_plan 既有字段归一）：\\n'

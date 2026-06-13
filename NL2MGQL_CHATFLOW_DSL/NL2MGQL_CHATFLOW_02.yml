@@ -50,7 +50,7 @@
             - compact_context_json 只能作为弱上下文，不得继承当前用户已否定的旧字段。
             - 不输出 Mongo pipeline、MQL、MGQL pipeline、AST、patch diff，也不要输出 $match、$group、$project、$lookup 等 Mongo stage。
             - intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related。
-            - intent_type 不得使用 aggregate / aggregation / group_by / group_by_metric_with_time_filter 这类泛化或别名值；按维度分组统计指标必须使用 aggregate_summary，明细查询必须使用 detail_query。
+            - intent_type 不得使用 aggregate_group_by / aggregate / aggregation / group_by / group_by_metric / group_by_dimension / group_by_metric_with_time_filter / group_by_dimension_with_time_range_and_aggregation 这类泛化或别名值；按维度分组统计、按字段分组统计、group by 聚合统计必须统一使用 aggregate_summary，明细查询必须使用 detail_query；不要输出 aggregate_group_by 这类非 canonical intent_type。
 
             必须输出完整 semantic_plan_contract：
             {
