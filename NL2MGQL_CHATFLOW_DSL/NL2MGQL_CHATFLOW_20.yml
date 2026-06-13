@@ -346,7 +346,34 @@
               catalog = _catalog_from_schema(schema_metadata_json, collection_catalog_json)
               selection = _default_selection()
               selection['collection_catalog_digest'] = catalog.get('catalog_digest', '')
+              q = str(question or '')
+              ctx = _loads(compact_context_json)
+              turn = _loads(turn_intent_json)
+              cb = _loads(context_binding_json)
+              base = str(cb.get('base_primary_collection') or '').strip()
+              inherit = bool(cb.get('inherit_previous_collection')) and bool(base) and not bool(cb.get('collection_switch'))
               if not catalog.get('collections'):
+                  if inherit:
+                      selection.update({
+                          'selected_primary_collection': base,
+                          'confidence': 0.85,
+                          'requires_clarification': False,
+                          'clarification_question': '',
+                          'needs_schema_retrieval': True,
+                          'needs_schema_hydration': True,
+                          'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog',
+                          'warnings': ['inherited_primary_collection_missing_from_candidate_catalog'],
+                      })
+                      return {
+                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                          'selected_primary_collection': base,
+                          'selected_related_collections': [],
+                          'selection_confidence': float(selection.get('confidence') or 0),
+                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                          'requires_clarification': False,
+                          'clarification_question': '',
+                      }
                   selection.update({
                       'confidence': 0,
                       'low_confidence': True,
@@ -364,10 +391,6 @@
                       'requires_clarification': True,
                       'clarification_question': selection.get('clarification_question') or '',
                   }
-              q = str(question or '')
-              ctx = _loads(compact_context_json)
-              turn = _loads(turn_intent_json)
-              cb = _loads(context_binding_json)
               planner = _loads(planner)
               intent = str(turn.get('turn_intent') or '').strip()
               schema_ref = ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'), dict) else {}
@@ -376,13 +399,11 @@
               schema_ref_collections = _list(schema_ref.get('collections'))
               context_prior_collections = _uniq([last_primary] + last_related + schema_ref_collections, 12)
               warnings, candidates = [], []
-              base = str(cb.get('base_primary_collection') or '').strip()
-              inherit = bool(cb.get('inherit_previous_collection')) and bool(base) and not bool(cb.get('collection_switch'))
               catalog_names = [str(c.get('collection_name') or '').strip() for c in catalog.get('collections') or []]
               if inherit:
                   if base in catalog_names:
-                      selection.update({'selected_primary_collection': base, 'confidence': 1.0, 'requires_clarification': False, 'clarification_question': '', 'inheritance_reason': 'inherited_from_previous_primary_collection'})
-                      selection['primary_candidates'] = [{'collection': base, 'score': 1.0, 'reason': 'inherited_from_previous_primary_collection', 'matched_aliases': []}]
+                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'selection_reason': 'inherited_from_previous_primary_collection'})
+                      selection['primary_candidates'] = [{'collection': base, 'score': 0.85, 'reason': 'inherited_from_previous_primary_collection', 'matched_aliases': []}]
                       selection['warnings'] = warnings
                       return {
                           'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
@@ -395,7 +416,7 @@
                           'clarification_question': '',
                       }
                   else:
-                      selection.update({'selected_primary_collection': base, 'confidence': 0.99, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'inheritance_reason': 'inherited_from_previous_primary_collection'})
+                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog'})
                       warnings.append('inherited_primary_collection_missing_from_candidate_catalog')
                       selection['warnings'] = warnings
                       return {
