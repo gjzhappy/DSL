@@ -306,54 +306,6 @@ workflow:
     - ENABLE_FULL_LLM
     value: 'true'
     value_type: string
-  - description: 全局满血 LLM 总开关；true/1/yes/on 时强制所有已改造 LLM 节点优先走满血，失败后本地兜底
-    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c714
-    name: global_use_full_llm
-    selector:
-    - env
-    - global_use_full_llm
-    value: 'true'
-    value_type: string
-  - description: 查询规划节点满血 LLM 独立开关；全局关闭时生效
-    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c715
-    name: use_full_llm_query_plan
-    selector:
-    - env
-    - use_full_llm_query_plan
-    value: 'false'
-    value_type: string
-  - description: Refine 查询规划节点满血 LLM 独立开关；全局关闭时生效
-    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c716
-    name: use_full_llm_refine_query_plan
-    selector:
-    - env
-    - use_full_llm_refine_query_plan
-    value: 'false'
-    value_type: string
-  - description: 多轮意图识别节点满血 LLM 独立开关；全局关闭时生效
-    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c717
-    name: use_full_llm_multi_turn_intent
-    selector:
-    - env
-    - use_full_llm_multi_turn_intent
-    value: 'false'
-    value_type: string
-  - description: 图表修改规划节点满血 LLM 独立开关；全局关闭时生效
-    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c718
-    name: use_full_llm_chart_plan
-    selector:
-    - env
-    - use_full_llm_chart_plan
-    value: 'false'
-    value_type: string
-  - description: 继续分析结果节点满血 LLM 独立开关；全局关闭时生效
-    id: 735d7e9e-16cf-4089-8de0-ca17b0e3c719
-    name: use_full_llm_reanalyze_result
-    selector:
-    - env
-    - use_full_llm_reanalyze_result
-    value: 'false'
-    value_type: string
   features:
     file_upload:
       allowed_file_extensions:
@@ -686,10 +638,10 @@ workflow:
         isInLoop: false
         sourceType: code
         targetType: llm
-      id: 1776000000002-source-1776100000000-target
+      id: 1776000000002-source-1776000000003-target
       source: '1776000000002'
       sourceHandle: source
-      target: '1776100000000'
+      target: '1776000000003'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -697,8 +649,8 @@ workflow:
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776100000004-source-1776000000004-target
-      source: '1776100000004'
+      id: 1776000000003-source-1776000000004-target
+      source: '1776000000003'
       sourceHandle: source
       target: '1776000000004'
       targetHandle: target
@@ -852,8 +804,8 @@ workflow:
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776100000034-source-1776000000028-target
-      source: '1776100000034'
+      id: 1776000000020-source-1776000000028-target
+      source: '1776000000020'
       sourceHandle: source
       target: '1776000000028'
       targetHandle: target
@@ -863,10 +815,10 @@ workflow:
         isInLoop: false
         sourceType: code
         targetType: llm
-      id: 1776000000027-source-1776100000030-target
+      id: 1776000000027-source-1776000000020-target
       source: '1776000000027'
       sourceHandle: source
-      target: '1776100000030'
+      target: '1776000000020'
       targetHandle: target
       type: custom
       zIndex: 0

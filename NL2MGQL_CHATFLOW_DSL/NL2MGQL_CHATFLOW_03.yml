@@ -50,13 +50,6 @@
               last_context_json: str = '',
               turn_intent: str = '',
               current_date: str = '',
-              global_use_full_llm: str = '',
-              legacy_enable_full_llm: str = '',
-              use_full_llm_query_plan: str = '',
-              use_full_llm_refine_query_plan: str = '',
-              use_full_llm_multi_turn_intent: str = '',
-              use_full_llm_chart_plan: str = '',
-              use_full_llm_reanalyze_result: str = '',
               **kwargs
           ):
               schema_context = schema_context or arg1
@@ -129,13 +122,6 @@
                   "stream": _to_bool(llm_stream),
               }
 
-              global_use_full_llm_bool = _to_bool(global_use_full_llm) or _to_bool(legacy_enable_full_llm)
-              effective_use_full_llm_query_plan_bool = global_use_full_llm_bool or _to_bool(use_full_llm_query_plan)
-              effective_use_full_llm_refine_query_plan_bool = global_use_full_llm_bool or _to_bool(use_full_llm_refine_query_plan)
-              effective_use_full_llm_multi_turn_intent_bool = global_use_full_llm_bool or _to_bool(use_full_llm_multi_turn_intent)
-              effective_use_full_llm_chart_plan_bool = global_use_full_llm_bool or _to_bool(use_full_llm_chart_plan)
-              effective_use_full_llm_reanalyze_result_bool = global_use_full_llm_bool or _to_bool(use_full_llm_reanalyze_result)
-
               token_request_body = {
                   "appId": llm_config["appId"],
                   "credential": base64.b64encode(str(llm_config.get("staticToken") or "").encode("utf-8")).decode("utf-8"),
@@ -157,12 +143,6 @@
                   "llm_config_json": json.dumps(llm_config, ensure_ascii=False),
                   "token_request_body_json": json.dumps(token_request_body, ensure_ascii=False),
                   "request_id": f"llm_{uuid.uuid4().hex}",
-                  "global_use_full_llm_bool": "true" if global_use_full_llm_bool else "false",
-                  "effective_use_full_llm_query_plan": "true" if effective_use_full_llm_query_plan_bool else "false",
-                  "effective_use_full_llm_refine_query_plan": "true" if effective_use_full_llm_refine_query_plan_bool else "false",
-                  "effective_use_full_llm_multi_turn_intent": "true" if effective_use_full_llm_multi_turn_intent_bool else "false",
-                  "effective_use_full_llm_chart_plan": "true" if effective_use_full_llm_chart_plan_bool else "false",
-                  "effective_use_full_llm_reanalyze_result": "true" if effective_use_full_llm_reanalyze_result_bool else "false",
               }
         code_language: python3
         desc: 汇总Schema上下文，准备语义计划提示词与内部LLM调用请求
@@ -210,24 +190,6 @@
             children:
             type: string
           token_url:
-            children:
-            type: string
-          global_use_full_llm_bool:
-            children:
-            type: string
-          effective_use_full_llm_query_plan:
-            children:
-            type: string
-          effective_use_full_llm_refine_query_plan:
-            children:
-            type: string
-          effective_use_full_llm_multi_turn_intent:
-            children:
-            type: string
-          effective_use_full_llm_chart_plan:
-            children:
-            type: string
-          effective_use_full_llm_reanalyze_result:
             children:
             type: string
         selected: false
@@ -354,41 +316,6 @@
           - schema_context_ref_json
           value_type: string
           variable: schema_context_ref_json
-        - value_selector:
-          - env
-          - global_use_full_llm
-          value_type: string
-          variable: global_use_full_llm
-        - value_selector:
-          - env
-          - ENABLE_FULL_LLM
-          value_type: string
-          variable: legacy_enable_full_llm
-        - value_selector:
-          - env
-          - use_full_llm_query_plan
-          value_type: string
-          variable: use_full_llm_query_plan
-        - value_selector:
-          - env
-          - use_full_llm_refine_query_plan
-          value_type: string
-          variable: use_full_llm_refine_query_plan
-        - value_selector:
-          - env
-          - use_full_llm_multi_turn_intent
-          value_type: string
-          variable: use_full_llm_multi_turn_intent
-        - value_selector:
-          - env
-          - use_full_llm_chart_plan
-          value_type: string
-          variable: use_full_llm_chart_plan
-        - value_selector:
-          - env
-          - use_full_llm_reanalyze_result
-          value_type: string
-          variable: use_full_llm_reanalyze_result
       height: 96
       id: '1775000000005'
       position:
