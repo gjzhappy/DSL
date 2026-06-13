@@ -909,6 +909,1159 @@
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: auto-1776100000000
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000005'
+            - effective_use_full_llm_multi_turn_intent
+          id: 'true'
+          logical_operator: and
+        desc: 使用归一化后的 effective_use_full_llm 开关决定是否走满血 LLM
+        selected: false
+        title: 条件分支_是否使用满血LLM_多轮意图识别
+        type: if-else
+      height: 124
+      id: '1776100000000'
+      position:
+        x: 1400
+        y: 2600
+      positionAbsolute:
+        x: 1400
+        y: 2600
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error
+          def _load(v):
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def _post(url, body, auth):
+              req=urllib.request.Request(str(url or ''), data=json.dumps(body,ensure_ascii=False).encode('utf-8'), headers={'Content-Type':'application/json','Authorization':str(auth or '')}, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=70) as r:
+                      return int(getattr(r,'status',0) or 0), r.read().decode('utf-8','replace')
+              except urllib.error.HTTPError as e:
+                  return int(getattr(e,'code',0) or 0), e.read().decode('utf-8','replace')
+              except Exception as e:
+                  return 0, str(e)
+          def main(chat_url: str, llm_config_json: str, authorization_value: str, system_prompt: str, user_prompt: str):
+              cfg=_load(llm_config_json); model=str(cfg.get('model') or 'DeepSeek-V4-Flash')
+              body={'model':model,'messages':[{'role':'system','content':str(system_prompt or '')},{'role':'user','content':str(user_prompt or '')}],'stream':False}
+              code, text = _post(chat_url, body, authorization_value)
+              return {'status_code':code,'body':text,'ok':200 <= code < 300}
+        code_language: python3
+        desc: 调用满血 LLM，后续检查节点只透出 content 给统一提取节点
+        outputs:
+          status_code:
+            type: number
+          body:
+            type: string
+          ok:
+            type: boolean
+        selected: false
+        title: HTTP请求_调用满血LLM_多轮意图识别
+        type: code
+        variables:
+        - value_selector: ['1775000000005', 'chat_url']
+          value_type: string
+          variable: chat_url
+        - value_selector: ['1775000000005', 'llm_config_json']
+          value_type: string
+          variable: llm_config_json
+        - value_selector: ['1775000000011', 'authorization_value']
+          value_type: string
+          variable: authorization_value
+        - value_selector: [sys, query]
+          value_type: string
+          variable: system_prompt
+        - value_selector: ['1776000000002', 'intent_prompt']
+          value_type: string
+          variable: user_prompt
+      height: 96
+      id: '1776100000001'
+      position: {x: 1700, y: 2600}
+      positionAbsolute: {x: 1700, y: 2600}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _content(resp):
+              if not isinstance(resp,dict): return ''
+              ch=resp.get('choices')
+              if isinstance(ch,list) and ch:
+                  msg=(ch[0] or {}).get('message') if isinstance(ch[0],dict) else {}
+                  if isinstance(msg,dict): return str(msg.get('content') or '').strip()
+                  return str((ch[0] or {}).get('text') or '').strip()
+              return str(resp.get('result') or '').strip()
+          def main(status_code, body):
+              ok=False; content=''; err=''
+              try:
+                  resp=json.loads(str(body or ''))
+                  content=_content(resp)
+                  json.loads(content); ok=200 <= int(status_code or 0) < 300 and bool(content)
+              except Exception as e: err=str(e)
+              return {'full_http_ok':'true' if ok else 'false','success':ok,'content':content if ok else '', 'error':err}
+        code_language: python3
+        desc: 校验满血 LLM HTTP 响应并抽取 choices.message.content，不让下游读取原始响应
+        outputs:
+          full_http_ok: {type: string}
+          success: {type: boolean}
+          content: {type: string}
+          error: {type: string}
+        selected: false
+        title: 代码执行_检查满血LLM响应_多轮意图识别
+        type: code
+        variables:
+        - value_selector: ['1776100000001', 'status_code']
+          value_type: number
+          variable: status_code
+        - value_selector: ['1776100000001', 'body']
+          value_type: string
+          variable: body
+      height: 96
+      id: '1776100000002'
+      position: {x: 2000, y: 2600}
+      positionAbsolute: {x: 2000, y: 2600}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ok-1776100000003
+            value: 'true'
+            varType: string
+            variable_selector: ['1776100000002', 'full_http_ok']
+          id: 'true'
+          logical_operator: and
+        desc: 满血失败时转本地兜底 LLM
+        selected: false
+        title: 条件分支_满血LLM是否成功_多轮意图识别
+        type: if-else
+      height: 148
+      id: '1776100000003'
+      position: {x: 2300, y: 2600}
+      positionAbsolute: {x: 2300, y: 2600}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _extract(t):
+              t=str(t or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',t,flags=re.I|re.S)
+              if m: t=m.group(1).strip()
+              s,e=t.find('{'),t.rfind('}')
+              return t[s:e+1] if s>=0 and e>=s else t
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try: return json.loads(_extract(v))
+                  except Exception: return {}
+              return {}
+          def main(full_success=False, full_content: str='', local_structured=None, local_text: str=''):
+              text=str(full_content or '').strip() if full_success else str(local_text or '').strip()
+              obj=_loads(text) if full_success else (_loads(local_structured) or _loads(local_text))
+              return {'text': json.dumps(obj, ensure_ascii=False) if obj else text, 'structured_output': obj}
+        code_language: python3
+        desc: 统一满血成功 / 本地兜底 / 直接本地三条路径的输出变量，保持 text 和 structured_output 名称不变
+        outputs:
+          text: {type: string}
+          structured_output: {type: object}
+        selected: false
+        title: 代码执行_统一提取LLM结果_多轮意图识别
+        type: code
+        variables:
+        - value_selector: ['1776100000002', 'success']
+          value_type: boolean
+          variable: full_success
+        - value_selector: ['1776100000002', 'content']
+          value_type: string
+          variable: full_content
+        - value_selector: ['1776100000005', 'structured_output']
+          value_type: object
+          variable: local_structured
+        - value_selector: ['1776100000005', 'text']
+          value_type: string
+          variable: local_text
+      height: 96
+      id: '1776100000004'
+      position: {x: 2600, y: 2600}
+      positionAbsolute: {x: 2600, y: 2600}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: intent-system
+          role: system
+          text: 你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出
+            schema 之外的字段。
+        - id: intent-user
+          role: user
+          text: "{{#1776000000002.intent_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - turn_intent
+            - need_previous_context
+            - need_requery
+            - need_rechart
+            - need_analysis
+            - can_answer_directly
+            - reason
+            - missing_info
+            - chart_modification
+            - query_refinement
+            - analysis_focus
+            properties:
+              turn_intent:
+                type: string
+                enum:
+                - new_query
+                - modify_chart
+                - refine_query
+                - explain_result
+                - reanalyze_result
+                - fix_result
+                - continue_previous
+                - clarify
+              need_previous_context:
+                type: boolean
+              need_requery:
+                type: boolean
+              need_rechart:
+                type: boolean
+              need_analysis:
+                type: boolean
+              can_answer_directly:
+                type: boolean
+              reason:
+                type: string
+              missing_info:
+                type: array
+                items:
+                  type: string
+              chart_modification:
+                type: object
+                additionalProperties: true
+              query_refinement:
+                type: object
+                additionalProperties: true
+              analysis_focus:
+                type: string
+        structured_output_enabled: true
+        title: LLM_本地兜底多轮意图识别
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776100000005'
+      position:
+        x: 1380
+        y: 0
+      positionAbsolute:
+        x: 1380
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: auto-1776100000010
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000005'
+            - effective_use_full_llm_chart_plan
+          id: 'true'
+          logical_operator: and
+        desc: 使用归一化后的 effective_use_full_llm 开关决定是否走满血 LLM
+        selected: false
+        title: 条件分支_是否使用满血LLM_图表修改规划
+        type: if-else
+      height: 124
+      id: '1776100000010'
+      position:
+        x: 1700
+        y: 2720
+      positionAbsolute:
+        x: 1700
+        y: 2720
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error
+          def _load(v):
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def _post(url, body, auth):
+              req=urllib.request.Request(str(url or ''), data=json.dumps(body,ensure_ascii=False).encode('utf-8'), headers={'Content-Type':'application/json','Authorization':str(auth or '')}, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=70) as r:
+                      return int(getattr(r,'status',0) or 0), r.read().decode('utf-8','replace')
+              except urllib.error.HTTPError as e:
+                  return int(getattr(e,'code',0) or 0), e.read().decode('utf-8','replace')
+              except Exception as e:
+                  return 0, str(e)
+          def main(chat_url: str, llm_config_json: str, authorization_value: str, system_prompt: str, user_prompt: str):
+              cfg=_load(llm_config_json); model=str(cfg.get('model') or 'DeepSeek-V4-Flash')
+              body={'model':model,'messages':[{'role':'system','content':str(system_prompt or '')},{'role':'user','content':str(user_prompt or '')}],'stream':False}
+              code, text = _post(chat_url, body, authorization_value)
+              return {'status_code':code,'body':text,'ok':200 <= code < 300}
+        code_language: python3
+        desc: 调用满血 LLM，后续检查节点只透出 content 给统一提取节点
+        outputs:
+          status_code:
+            type: number
+          body:
+            type: string
+          ok:
+            type: boolean
+        selected: false
+        title: HTTP请求_调用满血LLM_图表修改规划
+        type: code
+        variables:
+        - value_selector: ['1775000000005', 'chat_url']
+          value_type: string
+          variable: chat_url
+        - value_selector: ['1775000000005', 'llm_config_json']
+          value_type: string
+          variable: llm_config_json
+        - value_selector: ['1775000000011', 'authorization_value']
+          value_type: string
+          variable: authorization_value
+        - value_selector: [sys, query]
+          value_type: string
+          variable: system_prompt
+        - value_selector: [sys, query]
+          value_type: string
+          variable: user_prompt
+      height: 96
+      id: '1776100000011'
+      position: {x: 2000, y: 2720}
+      positionAbsolute: {x: 2000, y: 2720}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _content(resp):
+              if not isinstance(resp,dict): return ''
+              ch=resp.get('choices')
+              if isinstance(ch,list) and ch:
+                  msg=(ch[0] or {}).get('message') if isinstance(ch[0],dict) else {}
+                  if isinstance(msg,dict): return str(msg.get('content') or '').strip()
+                  return str((ch[0] or {}).get('text') or '').strip()
+              return str(resp.get('result') or '').strip()
+          def main(status_code, body):
+              ok=False; content=''; err=''
+              try:
+                  resp=json.loads(str(body or ''))
+                  content=_content(resp)
+                  json.loads(content); ok=200 <= int(status_code or 0) < 300 and bool(content)
+              except Exception as e: err=str(e)
+              return {'full_http_ok':'true' if ok else 'false','success':ok,'content':content if ok else '', 'error':err}
+        code_language: python3
+        desc: 校验满血 LLM HTTP 响应并抽取 choices.message.content，不让下游读取原始响应
+        outputs:
+          full_http_ok: {type: string}
+          success: {type: boolean}
+          content: {type: string}
+          error: {type: string}
+        selected: false
+        title: 代码执行_检查满血LLM响应_图表修改规划
+        type: code
+        variables:
+        - value_selector: ['1776100000011', 'status_code']
+          value_type: number
+          variable: status_code
+        - value_selector: ['1776100000011', 'body']
+          value_type: string
+          variable: body
+      height: 96
+      id: '1776100000012'
+      position: {x: 2300, y: 2720}
+      positionAbsolute: {x: 2300, y: 2720}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ok-1776100000013
+            value: 'true'
+            varType: string
+            variable_selector: ['1776100000012', 'full_http_ok']
+          id: 'true'
+          logical_operator: and
+        desc: 满血失败时转本地兜底 LLM
+        selected: false
+        title: 条件分支_满血LLM是否成功_图表修改规划
+        type: if-else
+      height: 148
+      id: '1776100000013'
+      position: {x: 2600, y: 2720}
+      positionAbsolute: {x: 2600, y: 2720}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _extract(t):
+              t=str(t or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',t,flags=re.I|re.S)
+              if m: t=m.group(1).strip()
+              s,e=t.find('{'),t.rfind('}')
+              return t[s:e+1] if s>=0 and e>=s else t
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try: return json.loads(_extract(v))
+                  except Exception: return {}
+              return {}
+          def main(full_success=False, full_content: str='', local_structured=None, local_text: str=''):
+              text=str(full_content or '').strip() if full_success else str(local_text or '').strip()
+              obj=_loads(text) if full_success else (_loads(local_structured) or _loads(local_text))
+              return {'text': json.dumps(obj, ensure_ascii=False) if obj else text, 'structured_output': obj}
+        code_language: python3
+        desc: 统一满血成功 / 本地兜底 / 直接本地三条路径的输出变量，保持 text 和 structured_output 名称不变
+        outputs:
+          text: {type: string}
+          structured_output: {type: object}
+        selected: false
+        title: 代码执行_统一提取LLM结果_图表修改规划
+        type: code
+        variables:
+        - value_selector: ['1776100000012', 'success']
+          value_type: boolean
+          variable: full_success
+        - value_selector: ['1776100000012', 'content']
+          value_type: string
+          variable: full_content
+        - value_selector: ['1776100000015', 'structured_output']
+          value_type: object
+          variable: local_structured
+        - value_selector: ['1776100000015', 'text']
+          value_type: string
+          variable: local_text
+      height: 96
+      id: '1776100000014'
+      position: {x: 2900, y: 2720}
+      positionAbsolute: {x: 2900, y: 2720}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: chart-system
+          role: system
+          text: |-
+            你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段，不要输出 Mongo plan / Mongo pipeline。用户通常是在上一轮查询结果基础上修改图表展示方式。只修改 chart_type / title / style / 排序 / TopN / 标签 / 百分比等展示属性时，才属于 chart_only，不要修改查询条件，不要触发重新查询。若用户修改 x_field / y_field / group / metric / filter / time_range，则不是 chart_only，必须标记为 full_replan/需要重新查询，由语义计划链路重新生成 semantic_plan_contract。
+            如果用户没有明确指定 x_field/y_field，请输出空字符串，表示沿用上一轮字段；空字符串表示“不修改”，不是“清空”。不得编造字段。支持 chart_type: bar, pie, line, area, scatter。bar/pie/line/area 通常需要一个类别或时间字段 + 一个数值字段；scatter 需要两个数值字段。
+        - id: chart-user
+          role: user
+          text: |-
+            当前用户问题：{{#sys.query#}}
+            上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
+            上一轮图表请求（标准扁平 chart_request）：{{#conversation.last_chart_request_json#}}
+            图表修改意图：{{#1776000000004.chart_modification_json#}}
+            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - chart_request
+            - user_message
+            - recommended_chart_type
+            - warning
+            properties:
+              chart_request:
+                type: object
+                additionalProperties: true
+              user_message:
+                type: string
+              recommended_chart_type:
+                type: string
+              warning:
+                type: string
+        structured_output_enabled: true
+        title: LLM_本地兜底图表修改规划
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776100000015'
+      position:
+        x: 3220
+        y: 1120
+      positionAbsolute:
+        x: 3220
+        y: 1120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: auto-1776100000020
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000005'
+            - effective_use_full_llm_reanalyze_result
+          id: 'true'
+          logical_operator: and
+        desc: 使用归一化后的 effective_use_full_llm 开关决定是否走满血 LLM
+        selected: false
+        title: 条件分支_是否使用满血LLM_基于上一轮结果继续分析
+        type: if-else
+      height: 124
+      id: '1776100000020'
+      position:
+        x: 2000
+        y: 2840
+      positionAbsolute:
+        x: 2000
+        y: 2840
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error
+          def _load(v):
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def _post(url, body, auth):
+              req=urllib.request.Request(str(url or ''), data=json.dumps(body,ensure_ascii=False).encode('utf-8'), headers={'Content-Type':'application/json','Authorization':str(auth or '')}, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=70) as r:
+                      return int(getattr(r,'status',0) or 0), r.read().decode('utf-8','replace')
+              except urllib.error.HTTPError as e:
+                  return int(getattr(e,'code',0) or 0), e.read().decode('utf-8','replace')
+              except Exception as e:
+                  return 0, str(e)
+          def main(chat_url: str, llm_config_json: str, authorization_value: str, system_prompt: str, user_prompt: str):
+              cfg=_load(llm_config_json); model=str(cfg.get('model') or 'DeepSeek-V4-Flash')
+              body={'model':model,'messages':[{'role':'system','content':str(system_prompt or '')},{'role':'user','content':str(user_prompt or '')}],'stream':False}
+              code, text = _post(chat_url, body, authorization_value)
+              return {'status_code':code,'body':text,'ok':200 <= code < 300}
+        code_language: python3
+        desc: 调用满血 LLM，后续检查节点只透出 content 给统一提取节点
+        outputs:
+          status_code:
+            type: number
+          body:
+            type: string
+          ok:
+            type: boolean
+        selected: false
+        title: HTTP请求_调用满血LLM_基于上一轮结果继续分析
+        type: code
+        variables:
+        - value_selector: ['1775000000005', 'chat_url']
+          value_type: string
+          variable: chat_url
+        - value_selector: ['1775000000005', 'llm_config_json']
+          value_type: string
+          variable: llm_config_json
+        - value_selector: ['1775000000011', 'authorization_value']
+          value_type: string
+          variable: authorization_value
+        - value_selector: [sys, query]
+          value_type: string
+          variable: system_prompt
+        - value_selector: [sys, query]
+          value_type: string
+          variable: user_prompt
+      height: 96
+      id: '1776100000021'
+      position: {x: 2300, y: 2840}
+      positionAbsolute: {x: 2300, y: 2840}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _content(resp):
+              if not isinstance(resp,dict): return ''
+              ch=resp.get('choices')
+              if isinstance(ch,list) and ch:
+                  msg=(ch[0] or {}).get('message') if isinstance(ch[0],dict) else {}
+                  if isinstance(msg,dict): return str(msg.get('content') or '').strip()
+                  return str((ch[0] or {}).get('text') or '').strip()
+              return str(resp.get('result') or '').strip()
+          def main(status_code, body):
+              ok=False; content=''; err=''
+              try:
+                  resp=json.loads(str(body or ''))
+                  content=_content(resp)
+                  json.loads(content); ok=200 <= int(status_code or 0) < 300 and bool(content)
+              except Exception as e: err=str(e)
+              return {'full_http_ok':'true' if ok else 'false','success':ok,'content':content if ok else '', 'error':err}
+        code_language: python3
+        desc: 校验满血 LLM HTTP 响应并抽取 choices.message.content，不让下游读取原始响应
+        outputs:
+          full_http_ok: {type: string}
+          success: {type: boolean}
+          content: {type: string}
+          error: {type: string}
+        selected: false
+        title: 代码执行_检查满血LLM响应_基于上一轮结果继续分析
+        type: code
+        variables:
+        - value_selector: ['1776100000021', 'status_code']
+          value_type: number
+          variable: status_code
+        - value_selector: ['1776100000021', 'body']
+          value_type: string
+          variable: body
+      height: 96
+      id: '1776100000022'
+      position: {x: 2600, y: 2840}
+      positionAbsolute: {x: 2600, y: 2840}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ok-1776100000023
+            value: 'true'
+            varType: string
+            variable_selector: ['1776100000022', 'full_http_ok']
+          id: 'true'
+          logical_operator: and
+        desc: 满血失败时转本地兜底 LLM
+        selected: false
+        title: 条件分支_满血LLM是否成功_基于上一轮结果继续分析
+        type: if-else
+      height: 148
+      id: '1776100000023'
+      position: {x: 2900, y: 2840}
+      positionAbsolute: {x: 2900, y: 2840}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _extract(t):
+              t=str(t or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',t,flags=re.I|re.S)
+              if m: t=m.group(1).strip()
+              s,e=t.find('{'),t.rfind('}')
+              return t[s:e+1] if s>=0 and e>=s else t
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try: return json.loads(_extract(v))
+                  except Exception: return {}
+              return {}
+          def main(full_success=False, full_content: str='', local_structured=None, local_text: str=''):
+              text=str(full_content or '').strip() if full_success else str(local_text or '').strip()
+              obj=_loads(text) if full_success else (_loads(local_structured) or _loads(local_text))
+              return {'text': json.dumps(obj, ensure_ascii=False) if obj else text, 'structured_output': obj}
+        code_language: python3
+        desc: 统一满血成功 / 本地兜底 / 直接本地三条路径的输出变量，保持 text 和 structured_output 名称不变
+        outputs:
+          text: {type: string}
+          structured_output: {type: object}
+        selected: false
+        title: 代码执行_统一提取LLM结果_基于上一轮结果继续分析
+        type: code
+        variables:
+        - value_selector: ['1776100000022', 'success']
+          value_type: boolean
+          variable: full_success
+        - value_selector: ['1776100000022', 'content']
+          value_type: string
+          variable: full_content
+        - value_selector: ['1776100000025', 'structured_output']
+          value_type: object
+          variable: local_structured
+        - value_selector: ['1776100000025', 'text']
+          value_type: string
+          variable: local_text
+      height: 96
+      id: '1776100000024'
+      position: {x: 3200, y: 2840}
+      positionAbsolute: {x: 3200, y: 2840}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: analysis-system
+          role: system
+          text: |-
+            你是一个基于上一轮查询结果的分析助手。
+            必须基于已给出的结果行、字段、图表请求、用户本轮问题进行分析。
+            必须输出 JSON，不要 markdown 代码块，不要解释 JSON 之外的内容，不要输出 schema 之外字段。
+            不执行 Mongo；默认不重新画图。
+
+            analysis_markdown 必须非空，作为最终给用户看的自然语言分析。
+            analysis_debug_json 用于结构化调试，可包含 observations / insights / suggestions。
+            不能只填 analysis_debug_json 而让 analysis_markdown 为空。
+
+            如果结果行较少，需要明确说明样本量有限，不要过度解读。
+            不要基于当前结果中不存在的字段做确定性归因。
+            促销、库存、渠道、地区、价格等如果不在结果字段中，只能作为“后续可验证方向”，不能作为已发生原因。
+            涉及占比时必须计算准确：例如 Huawei=4, Apple=3, Xiaomi=3，总计=10，则 Huawei=40%，Apple=30%，Xiaomi=30%。
+            不要写出 “30% vs 40%” 这种方向混乱的表达。
+
+            输出结构：
+            {
+              "analysis_markdown": "非空 markdown 分析正文，建议包含：### 看到的现象、### 初步判断、### 建议下一步",
+              "analysis_debug_json": {
+                "observations": [],
+                "insights": [],
+                "suggestions": []
+              }
+            }
+        - id: analysis-user
+          role: user
+          text: |-
+            当前用户问题：{{#sys.query#}}
+            上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
+            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
+            上一轮最终摘要：{{#conversation.last_result_summary#}}
+            分析关注点：{{#1776000000004.analysis_focus#}}
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - analysis_markdown
+            - analysis_debug_json
+            properties:
+              analysis_markdown:
+                type: string
+              analysis_debug_json:
+                type: object
+                additionalProperties: true
+        structured_output_enabled: true
+        title: LLM_本地兜底基于上一轮结果继续分析
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776100000025'
+      position:
+        x: 3220
+        y: 1480
+      positionAbsolute:
+        x: 3220
+        y: 1480
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: auto-1776100000030
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1775000000005'
+            - effective_use_full_llm_refine_query_plan
+          id: 'true'
+          logical_operator: and
+        desc: 使用归一化后的 effective_use_full_llm 开关决定是否走满血 LLM
+        selected: false
+        title: 条件分支_是否使用满血LLM_Refine查询规划
+        type: if-else
+      height: 124
+      id: '1776100000030'
+      position:
+        x: 2300
+        y: 2960
+      positionAbsolute:
+        x: 2300
+        y: 2960
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error
+          def _load(v):
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def _post(url, body, auth):
+              req=urllib.request.Request(str(url or ''), data=json.dumps(body,ensure_ascii=False).encode('utf-8'), headers={'Content-Type':'application/json','Authorization':str(auth or '')}, method='POST')
+              try:
+                  with urllib.request.urlopen(req, timeout=70) as r:
+                      return int(getattr(r,'status',0) or 0), r.read().decode('utf-8','replace')
+              except urllib.error.HTTPError as e:
+                  return int(getattr(e,'code',0) or 0), e.read().decode('utf-8','replace')
+              except Exception as e:
+                  return 0, str(e)
+          def main(chat_url: str, llm_config_json: str, authorization_value: str, system_prompt: str, user_prompt: str):
+              cfg=_load(llm_config_json); model=str(cfg.get('model') or 'DeepSeek-V4-Flash')
+              body={'model':model,'messages':[{'role':'system','content':str(system_prompt or '')},{'role':'user','content':str(user_prompt or '')}],'stream':False}
+              code, text = _post(chat_url, body, authorization_value)
+              return {'status_code':code,'body':text,'ok':200 <= code < 300}
+        code_language: python3
+        desc: 调用满血 LLM，后续检查节点只透出 content 给统一提取节点
+        outputs:
+          status_code:
+            type: number
+          body:
+            type: string
+          ok:
+            type: boolean
+        selected: false
+        title: HTTP请求_调用满血LLM_Refine查询规划
+        type: code
+        variables:
+        - value_selector: ['1775000000005', 'chat_url']
+          value_type: string
+          variable: chat_url
+        - value_selector: ['1775000000005', 'llm_config_json']
+          value_type: string
+          variable: llm_config_json
+        - value_selector: ['1775000000011', 'authorization_value']
+          value_type: string
+          variable: authorization_value
+        - value_selector: ['1776000000027', 'replan_system_prompt']
+          value_type: string
+          variable: system_prompt
+        - value_selector: ['1776000000027', 'replan_user_prompt']
+          value_type: string
+          variable: user_prompt
+      height: 96
+      id: '1776100000031'
+      position: {x: 2600, y: 2960}
+      positionAbsolute: {x: 2600, y: 2960}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _content(resp):
+              if not isinstance(resp,dict): return ''
+              ch=resp.get('choices')
+              if isinstance(ch,list) and ch:
+                  msg=(ch[0] or {}).get('message') if isinstance(ch[0],dict) else {}
+                  if isinstance(msg,dict): return str(msg.get('content') or '').strip()
+                  return str((ch[0] or {}).get('text') or '').strip()
+              return str(resp.get('result') or '').strip()
+          def main(status_code, body):
+              ok=False; content=''; err=''
+              try:
+                  resp=json.loads(str(body or ''))
+                  content=_content(resp)
+                  json.loads(content); ok=200 <= int(status_code or 0) < 300 and bool(content)
+              except Exception as e: err=str(e)
+              return {'full_http_ok':'true' if ok else 'false','success':ok,'content':content if ok else '', 'error':err}
+        code_language: python3
+        desc: 校验满血 LLM HTTP 响应并抽取 choices.message.content，不让下游读取原始响应
+        outputs:
+          full_http_ok: {type: string}
+          success: {type: boolean}
+          content: {type: string}
+          error: {type: string}
+        selected: false
+        title: 代码执行_检查满血LLM响应_Refine查询规划
+        type: code
+        variables:
+        - value_selector: ['1776100000031', 'status_code']
+          value_type: number
+          variable: status_code
+        - value_selector: ['1776100000031', 'body']
+          value_type: string
+          variable: body
+      height: 96
+      id: '1776100000032'
+      position: {x: 2900, y: 2960}
+      positionAbsolute: {x: 2900, y: 2960}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: ok-1776100000033
+            value: 'true'
+            varType: string
+            variable_selector: ['1776100000032', 'full_http_ok']
+          id: 'true'
+          logical_operator: and
+        desc: 满血失败时转本地兜底 LLM
+        selected: false
+        title: 条件分支_满血LLM是否成功_Refine查询规划
+        type: if-else
+      height: 148
+      id: '1776100000033'
+      position: {x: 3200, y: 2960}
+      positionAbsolute: {x: 3200, y: 2960}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _extract(t):
+              t=str(t or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',t,flags=re.I|re.S)
+              if m: t=m.group(1).strip()
+              s,e=t.find('{'),t.rfind('}')
+              return t[s:e+1] if s>=0 and e>=s else t
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try: return json.loads(_extract(v))
+                  except Exception: return {}
+              return {}
+          def main(full_success=False, full_content: str='', local_structured=None, local_text: str=''):
+              text=str(full_content or '').strip() if full_success else str(local_text or '').strip()
+              obj=_loads(text) if full_success else (_loads(local_structured) or _loads(local_text))
+              return {'text': json.dumps(obj, ensure_ascii=False) if obj else text, 'structured_output': obj}
+        code_language: python3
+        desc: 统一满血成功 / 本地兜底 / 直接本地三条路径的输出变量，保持 text 和 structured_output 名称不变
+        outputs:
+          text: {type: string}
+          structured_output: {type: object}
+        selected: false
+        title: 代码执行_统一提取LLM结果_Refine查询规划
+        type: code
+        variables:
+        - value_selector: ['1776100000032', 'success']
+          value_type: boolean
+          variable: full_success
+        - value_selector: ['1776100000032', 'content']
+          value_type: string
+          variable: full_content
+        - value_selector: ['1776100000035', 'structured_output']
+          value_type: object
+          variable: local_structured
+        - value_selector: ['1776100000035', 'text']
+          value_type: string
+          variable: local_text
+      height: 96
+      id: '1776100000034'
+      position: {x: 3500, y: 2960}
+      positionAbsolute: {x: 3500, y: 2960}
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: replan-system
+          role: system
+          text: "{{#1776000000027.replan_system_prompt#}}"
+        - id: replan-user
+          role: user
+          text: "{{#1776000000027.replan_user_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: true
+            required:
+            - contract_version
+            - primary_collection
+            - related_collections
+            - execution_mode
+            - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
+            properties:
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              execution_mode:
+                type: string
+              answer_mode:
+                type: string
+              needs_chart:
+                type: boolean
+              stages:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
+                items:
+                  type: string
+              replan_error:
+                type: string
+              clarify_suggestion:
+                type: string
+        structured_output_enabled: true
+        title: LLM_本地兜底Refine查询规划
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776100000035'
+      position:
+        x: 5880
+        "y": 2200
+      positionAbsolute:
+        x: 5880
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
       x: -120
       y: 80
