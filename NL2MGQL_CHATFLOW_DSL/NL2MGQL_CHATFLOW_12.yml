@@ -1,221 +1,3 @@
-                  reason = ''
-                  if intent == 'clarify':
-                      route = 'clarify'; reason = 'intent requires clarification'
-                  elif _bool(need_previous_context) and not has_ctx:
-                      route = 'clarify'; reason = 'previous context is required but unavailable'
-                  elif intent in CONTEXT_INTENTS and not has_ctx:
-                      route = 'clarify'; reason = 'context-dependent intent without reusable context'
-                  elif nr:
-                      route = 'query'; reason = 'need_requery=true'
-                  elif intent in {'new_query', 'refine_query'}:
-                      route = 'query'; reason = 'query intent'
-                  elif (not nr) and nc:
-                      route = 'chart'; reason = 'reuse prior result and regenerate chart'
-                  elif (not nr) and (not nc) and na:
-                      route = 'analysis'; reason = 'reuse prior result for analysis'
-                  elif direct:
-                      route = 'direct'; reason = 'can answer directly'
-                  else:
-                      route = 'clarify'; reason = 'unable to determine safe route'
-                  debug = {
-                      'turn_intent': intent, 'need_requery': nr, 'need_rechart': nc, 'need_analysis': na,
-                      'has_last_context': has_ctx, 'refine_like_requery': refine_like_requery,
-                      'route_name': route, 'used_last_context': has_ctx and route in {'chart', 'analysis'},
-                      'query_executed': route == 'query', 'chart_generated': False, 'analysis_generated': False,
-                      'state_updated_fields': [], 'error_message': str(intent_error or '')[:200]
-                  }
-                  return {'route_name': route, 'route_reason': reason, 'refine_like_requery': refine_like_requery, 'route_debug_json': json.dumps(debug, ensure_ascii=False)}
-              except Exception:
-                  debug = {'turn_intent': str(turn_intent or ''), 'need_requery': False, 'need_rechart': False, 'need_analysis': False, 'route_name': 'clarify', 'refine_like_requery': False, 'used_last_context': False, 'query_executed': False, 'chart_generated': False, 'analysis_generated': False, 'state_updated_fields': [], 'error_message': 'route normalization failed'}
-                  return {'route_name': 'clarify', 'route_reason': '路由归一化失败，进入澄清分支', 'refine_like_requery': False, 'route_debug_json': json.dumps(debug, ensure_ascii=False)}
-        code_language: python3
-        desc: 将 8 类多轮意图归一化为 query/chart/analysis/clarify/direct 五类路由。
-        outputs:
-          route_name:
-            children:
-            type: string
-          route_reason:
-            children:
-            type: string
-          route_debug_json:
-            children:
-            type: string
-          refine_like_requery:
-            children:
-            type: boolean
-        selected: false
-        title: 代码执行_归一化多轮路由
-        type: code
-        variables:
-        - value_selector:
-          - '1776000000004'
-          - turn_intent
-          value_type: string
-          variable: turn_intent
-        - value_selector:
-          - '1776000000004'
-          - need_previous_context
-          value_type: boolean
-          variable: need_previous_context
-        - value_selector:
-          - '1776000000004'
-          - need_requery
-          value_type: boolean
-          variable: need_requery
-        - value_selector:
-          - '1776000000004'
-          - need_rechart
-          value_type: boolean
-          variable: need_rechart
-        - value_selector:
-          - '1776000000004'
-          - need_analysis
-          value_type: boolean
-          variable: need_analysis
-        - value_selector:
-          - '1776000000004'
-          - can_answer_directly
-          value_type: boolean
-          variable: can_answer_directly
-        - value_selector:
-          - '1776000000001'
-          - has_last_context
-          value_type: boolean
-          variable: has_last_context
-        - value_selector:
-          - '1776000000004'
-          - intent_valid
-          value_type: boolean
-          variable: intent_valid
-        - value_selector:
-          - '1776000000004'
-          - intent_error
-          value_type: string
-          variable: intent_error
-        - value_selector:
-          - '1776000000004'
-          - missing_info
-          value_type: string
-          variable: missing_info
-        - value_selector:
-          - '1776000000004'
-          - normalized_turn_intent_json
-          value_type: string
-          variable: normalized_turn_intent_json
-      height: 80
-      id: '1776000000013'
-      position:
-        x: 2300
-        "y": 0
-      positionAbsolute:
-        x: 2300
-        "y": 0
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 8192
-            temperature: 0
-            think: false
-          mode: chat
-          name: qwen3.5:35b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: chart-system
-          role: system
-          text: |-
-            你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段，不要输出 Mongo plan / Mongo pipeline。用户通常是在上一轮查询结果基础上修改图表展示方式。只修改 chart_type / title / style / 排序 / TopN / 标签 / 百分比等展示属性时，才属于 chart_only，不要修改查询条件，不要触发重新查询。若用户修改 x_field / y_field / group / metric / filter / time_range，则不是 chart_only，必须标记为 full_replan/需要重新查询，由语义计划链路重新生成 semantic_plan_contract。
-            如果用户没有明确指定 x_field/y_field，请输出空字符串，表示沿用上一轮字段；空字符串表示“不修改”，不是“清空”。不得编造字段。支持 chart_type: bar, pie, line, area, scatter。bar/pie/line/area 通常需要一个类别或时间字段 + 一个数值字段；scatter 需要两个数值字段。
-        - id: chart-user
-          role: user
-          text: |-
-            当前用户问题：{{#sys.query#}}
-            上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
-            上一轮图表请求（标准扁平 chart_request）：{{#conversation.last_chart_request_json#}}
-            图表修改意图：{{#1776000000004.chart_modification_json#}}
-            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            additionalProperties: false
-            required:
-            - chart_request
-            - user_message
-            - recommended_chart_type
-            - warning
-            properties:
-              chart_request:
-                type: object
-                additionalProperties: true
-              user_message:
-                type: string
-              recommended_chart_type:
-                type: string
-              warning:
-                type: string
-        structured_output_enabled: true
-        title: LLM_图表修改规划
-        type: llm
-        vision:
-          enabled: false
-      height: 98
-      id: '1776000000014'
-      position:
-        x: 3220
-        "y": 1120
-      positionAbsolute:
-        x: 3220
-        "y": 1120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json, re
-          SUPPORTED={'bar','line','pie','area','scatter'}
-          ALIASES={
-              'column':'bar','bar':'bar','柱状图':'bar','柱状':'bar','条形图':'bar','条形':'bar',
-              'pie':'pie','饼图':'pie',
-              'line':'line','折线图':'line','折线':'line','趋势图':'line','趋势':'line',
-              'area':'area','面积图':'area','面积':'area',
-              'scatter':'scatter','散点图':'scatter','散点':'scatter',
-          }
-          DEFAULTS={'enabled': True, 'renderer':'echarts', 'chart_type':'bar', 'x_field':'', 'y_field':'', 'title':'上一轮结果图表', 'series_name':'', 'top_n':0, 'sort':{}, 'label':{}, 'warning':''}
-
-          def _extract(text):
-              text=str(text or '').strip()
-              m=re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I|re.S)
-              if m: text=m.group(1).strip()
-              s,e=text.find('{'),text.rfind('}')
-              return text[s:e+1] if s>=0 and e>=s else text
-
-          def _loads(v, fb):
-              if isinstance(v,(dict,list)): return v
-              if isinstance(v,str) and v.strip():
-                  try: return json.loads(_extract(v))
-                  except Exception: return fb
-              return fb
-
-          def _norm_type(v):
-              raw=str(v or '').lower().strip()
-              if raw in ALIASES: return ALIASES[raw]
-              for k,val in ALIASES.items():
-                  if k in raw: return val
-              return raw if raw in SUPPORTED else ''
-
-          def _non_empty(v, key=''):
-              if v is None: return False
               if isinstance(v, str): return bool(v.strip())
               if isinstance(v, (dict, list)): return bool(v)
               if key == 'top_n':
@@ -299,12 +81,12 @@
         type: code
         variables:
         - value_selector:
-          - '1776200000036'
+          - '1776000000014'
           - structured_output
           value_type: object
           variable: chart_structured
         - value_selector:
-          - '1776200000036'
+          - '1776000000014'
           - text
           value_type: string
           variable: chart_text
@@ -332,10 +114,10 @@
       id: '1776000000015'
       position:
         x: 3680
-        "y": 1120
+        y: 1120
       positionAbsolute:
         x: 3680
-        "y": 1120
+        y: 1120
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -425,7 +207,8 @@
               final=(md+'\n\n'+note).strip() if md else note
               return {'chart_payload_json':_dumps(payload),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':md,'chart_summary':payload.get('summary') or '','chart_warning':payload.get('warning') or '','chart_enabled':bool(payload.get('enabled')),'data_profile_json':_dumps(payload.get('data_profile') or {}),'chart_debug_json':_dumps(payload.get('chart_debug') or {}),'final_answer_markdown':final,'final_answer_summary':note,'updated_at':datetime.now(timezone.utc).isoformat()}
         code_language: python3
-        desc: Phase 12 chart-only：compact_context.last_chart_request + last_result_profile.preview_rows -> chart_payload_contract；不查 Mongo、不改查询语义。
+        desc: Phase 12 chart-only：compact_context.last_chart_request + last_result_profile.preview_rows
+          -> chart_payload_contract；不查 Mongo、不改查询语义。
         outputs:
           chart_payload_json:
             children:
@@ -483,10 +266,10 @@
       id: '1776000000016'
       position:
         x: 4140
-        "y": 1120
+        y: 1120
       positionAbsolute:
         x: 4140
-        "y": 1120
+        y: 1120
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -564,10 +347,10 @@
       id: '1776000000017'
       position:
         x: 3220
-        "y": 1480
+        y: 1480
       positionAbsolute:
         x: 3220
-        "y": 1480
+        y: 1480
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -716,12 +499,12 @@
         type: code
         variables:
         - value_selector:
-          - '1776200000046'
+          - '1776000000017'
           - structured_output
           value_type: object
           variable: analysis_structured
         - value_selector:
-          - '1776200000046'
+          - '1776000000017'
           - text
           value_type: string
           variable: analysis_text
@@ -734,10 +517,10 @@
       id: '1776000000018'
       position:
         x: 3680
-        "y": 1480
+        y: 1480
       positionAbsolute:
         x: 3680
-        "y": 1480
+        y: 1480
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -923,8 +706,195 @@
               last_cr = compact_context.get('last_chart_request') if isinstance(compact_context, dict) and isinstance(compact_context.get('last_chart_request'), dict) else {}
               fields.extend([last_cr.get('x_field'), last_cr.get('y_field')])
               result = []
-
               for f in fields:
                   s = str(f or '').strip()
                   if s and s not in result:
                       result.append(s)
+              return result
+
+
+          def _detect_negated_old_fields(q, refine, old, compact_context):
+              known = _collect_known_fields(old, compact_context)
+              neg = [str(x or '').strip() for x in _as_list(refine.get('negative_fields')) if str(x or '').strip()]
+              text = str(q or '')
+              for pat in NEGATION_PATTERNS:
+                  for m in re.finditer(pat, text):
+                      neg.append(m.group(1).strip())
+              reasons = []
+              if refine.get('negative_fields'):
+                  reasons.append('query_refinement_json.negative_fields')
+              if any(x in text for x in ('不再按', '不要按', '不按', '不是', '不看', '改按')):
+                  if neg:
+                      for n in neg:
+                          for old_field in known:
+                              if n and (n == old_field or n in old_field or old_field in n):
+                                  reasons.append('negated_old_field:%s' % old_field)
+                  else:
+                      reasons.append('ambiguous_negated_old_field')
+              if '不看' in text and any(x in text for x in ('订单数', '销售额', '指标', 'metric')):
+                  reasons.append('negated_metric')
+              return _unique_keep_order(reasons)
+
+
+          def _detect_structural_change(q, refine, old=None, compact_context=None):
+              reasons = []
+              for key in _has_non_empty(refine, STRUCTURAL_KEYS):
+                  reasons.append('query_refinement_json.%s' % key)
+              for path in STRUCTURAL_NESTED_PATHS:
+                  if _non_empty(_path_value(refine, path)):
+                      reasons.append('query_refinement_json.%s' % '.'.join(path))
+              for key in UNCHANGED_GUARDS:
+                  if key in refine and not _bool(refine.get(key)):
+                      reasons.append('query_refinement_json.%s=false' % key)
+
+              text = str(q or '')
+              for pattern in STRUCTURAL_PATTERNS:
+                  if re.search(pattern, text):
+                      reasons.append('user_pattern:%s' % pattern)
+              if old:
+                  reasons.extend(_detect_negated_old_fields(q, refine, old, compact_context or {}))
+
+              return {'structural_change': bool(reasons), 'reasons': _unique_keep_order(reasons)}
+
+
+          def _extract_chart_type(q):
+              text = str(q or '')
+              for chart_type, terms in CHART_TYPE_TERMS.items():
+                  if any(term in text for term in terms):
+                      return chart_type
+              return ''
+
+
+          def _is_chart_type_only(q, refine, need_requery, structural_change):
+              if structural_change:
+                  return False
+              if _parse_relative_time(q) or _bool(refine.get('time_range_change')) or _non_empty(refine.get('time_range')):
+                  return False
+              chart_req = refine.get('chart_request') if isinstance(refine.get('chart_request'), dict) else {}
+              if _non_empty(chart_req.get('x_field')) or _non_empty(chart_req.get('y_field')):
+                  return False
+              chart_type = refine.get('chart_type') or refine.get('visualization_type') or chart_req.get('chart_type') or _extract_chart_type(q)
+              return bool(chart_type)
+
+
+          def _can_apply_time_only_patch(refine, parsed_time, structural_change):
+              if structural_change or not parsed_time:
+                  return False
+              explicit_safe = (
+                  _bool(refine.get('time_range_change'))
+                  and _bool(refine.get('group_fields_unchanged'))
+                  and _bool(refine.get('metric_unchanged'))
+                  and _bool(refine.get('filters_unchanged'))
+                  and _bool(refine.get('collection_unchanged'))
+              )
+              has_any_guard = any(k in refine for k in ('time_range_change',) + UNCHANGED_GUARDS)
+              return explicit_safe or not has_any_guard or (_bool(refine.get('time_range_change')) and not _has_non_empty(refine, STRUCTURAL_KEYS))
+
+
+          def _set_all_stage_time(plan, days=None, mode=None):
+              changed = False
+              for st in _stages(plan):
+                  if not isinstance(st, dict):
+                      continue
+                  tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
+                  if days:
+                      tr.update({'mode': 'relative_days', 'relative_days': int(days), 'start': '', 'end': ''})
+                  elif mode:
+                      tr.update({'mode': mode, 'start': '', 'end': ''})
+                  st['time_range'] = tr
+                  changed = True
+              return changed
+
+
+          def _patch_title_time(plan, new_source, debug):
+              cr = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else None
+              if not cr or not isinstance(cr.get('title'), str) or not cr.get('title'):
+                  debug['title_patch'] = 'no_chart_title'
+                  return False
+              title = cr['title']
+              for old_text in OLD_TITLE_TIME_PATTERNS:
+                  if old_text in title:
+                      cr['title'] = title.replace(old_text, new_source, 1)
+                      debug['title_patch'] = {'from': old_text, 'to': new_source}
+                      return cr['title'] != title
+              debug['title_patch'] = 'no_safe_old_time_text_found'
+              return False
+
+
+          def _patch_limit(plan, n):
+              changed = False
+              try:
+                  limit = int(n)
+              except Exception:
+                  return False
+              if limit <= 0:
+                  return False
+              for st in _stages(plan):
+                  if isinstance(st, dict):
+                      st['limit'] = min(limit, 500)
+                      changed = True
+              return changed
+
+
+          def _parse_sort_request(q):
+              text = str(q or '')
+              direction = ''
+              if any(x in text for x in ('升序', '从小到大', '从低到高')):
+                  direction = 'asc'
+              elif any(x in text for x in ('降序', '倒序', '从大到小', '从高到低')):
+                  direction = 'desc'
+              if not direction:
+                  return None
+              m = re.search(r'按\s*([^，。,.\s]+)\s*(?:升序|降序|排序|排列)', text)
+              return {'direction': direction, 'target': m.group(1).strip() if m else ''}
+
+
+          def _target_matches_known_field(target, known_fields):
+              t = str(target or '').strip()
+              if not t:
+                  return True
+              for f in known_fields:
+                  fs = str(f or '').strip()
+                  if fs and (t == fs or t in fs or fs in t):
+                      return True
+              return False
+
+
+          def _patch_sort(plan, direction, target='', known_fields=None):
+              known_fields = known_fields or []
+              if not _target_matches_known_field(target, known_fields):
+                  return False
+              changed = False
+              for st in _stages(plan):
+                  if not isinstance(st, dict):
+                      continue
+                  sort = st.get('sort') if isinstance(st.get('sort'), list) else []
+                  if not sort:
+                      fallback = st.get('metric_alias') or st.get('metric_field') or (known_fields[0] if known_fields else '')
+                      sort = [{'field': fallback, 'direction': direction}]
+                  for item in sort:
+                      if isinstance(item, dict):
+                          item['direction'] = direction
+                  st['sort'] = sort
+                  changed = True
+              return changed
+
+
+          def _patch_display(plan, q):
+              changed = []
+              text = str(q or '')
+              m = re.search(r'标题(?:改成|改为|换成)\s*([^，。,.]+)', text)
+              if m:
+                  if not isinstance(plan.get('chart_request'), dict):
+                      plan['chart_request'] = {}
+                  plan['chart_request']['title'] = m.group(1).strip()
+                  changed.append('chart_request.title')
+              if any(x in text for x in ('回答详细一点', '详细一点', '加分析', '简单分析')):
+                  plan['answer_mode'] = 'data_with_analysis'
+                  changed.append('answer_mode')
+              if '只描述结果' in text:
+                  plan['answer_mode'] = 'data_only'
+                  changed.append('answer_mode')
+              return changed
+
+

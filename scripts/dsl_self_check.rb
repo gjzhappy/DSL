@@ -76,56 +76,26 @@ nodes.each do |n|
   code_invalid += added if n.dig('data', 'type') == 'code'
 end
 
-full_cond = nodes.select { |n| n.dig('data', 'title').to_s.start_with?('条件分支_是否使用满血LLM_') }
-full_http = nodes.select { |n| n.dig('data', 'title').to_s.start_with?('HTTP请求_调用满血LLM_') }
-full_check = nodes.select { |n| n.dig('data', 'title').to_s.start_with?('代码执行_检查满血LLM响应_') }
-full_success = nodes.select { |n| n.dig('data', 'title').to_s.start_with?('条件分支_满血LLM是否成功_') }
-full_unify = nodes.select { |n| n.dig('data', 'title').to_s.start_with?('代码执行_统一LLM输出_') }
-full_cond.each do |n|
-  sel = n.dig('data', 'cases', 0, 'conditions', 0, 'variable_selector')
-  errors << "bad full condition #{n['id']}" unless sel && sel[0] == '1776100000000' && sel[1].to_s.start_with?('effective_use_full_llm_')
-end
-full_http.each do |n|
-  data = n['data']; body = data.dig('body', 'data', 0, 'value') rescue nil
-  json_ok = begin JSON.parse(body.to_s.gsub(/\{\{#[^#]+#\}\}/, 'PLACEHOLDER')); true rescue false end
-  ok = data['method'].to_s.downcase == 'post' && data['url'].to_s.strip != '' &&
-       data['headers'].to_s.include?('Content-Type') && data['headers'].to_s.match?(/Authorization|API-Key/i) &&
-       body && json_ok && body.include?('"model"') && body.include?('"messages"') && body.include?('"stream": false')
-  errors << "bad http #{n['id']} #{data['title']}" unless ok
-end
-full_check.each do |n|
-  suffix = n.dig('data', 'title').sub('代码执行_检查满血LLM响应_', '')
-  http = by_title["HTTP请求_调用满血LLM_#{suffix}"]
-  unless http
-    errors << "full check missing http #{n['id']} #{suffix}"
-    next
-  end
-  selectors = (n.dig('data', 'variables') || []).map { |v| [v['variable'], v['value_selector']] }.to_h
-  %w[status_code body].each do |name|
-    sel = selectors[name]
-    errors << "full check #{n['id']} missing #{name} from #{http['id']}" unless sel == [http['id'], name]
-  end
-  if selectors['headers'] && selectors['headers'] != [http['id'], 'headers']
-    errors << "full check #{n['id']} bad headers selector"
-  end
-  selectors.each do |name, sel|
-    next unless sel.is_a?(Array)
-    errors << "full check #{n['id']} references non-http input #{name}" if %w[status_code body headers].include?(name) && sel[0] != http['id']
-    errors << "full check #{n['id']} references invalid http output #{sel[1]}" if sel[0] == http['id'] && !%w[status_code body headers].include?(sel[1])
+forbidden_patterns = [
+  'global_' + 'use_' + 'full_' + 'llm',
+  'effective_' + 'use_' + 'full_' + 'llm',
+  'HTTP请求_' + '调用满血LLM',
+  '代码执行_' + '检查满血LLM响应',
+  '条件分支_' + '是否使用满血LLM'
+]
+forbidden_hits = []
+nodes.each do |n|
+  text = n.to_s
+  forbidden_patterns.each do |pat|
+    forbidden_hits << [n['id'], n.dig('data', 'title'), pat] if text.include?(pat)
   end
 end
-full_success.each do |n|
-  suffix = n.dig('data', 'title').sub('条件分支_满血LLM是否成功_', '')
-  check = by_title["代码执行_检查满血LLM响应_#{suffix}"]
-  sel = n.dig('data', 'cases', 0, 'conditions', 0, 'variable_selector')
-  errors << "bad full success condition #{n['id']} #{suffix}" unless check && sel == [check['id'], 'success']
-end
+errors += forbidden_hits.map { |id, title, pat| "forbidden full-llm artifact #{id} #{title} #{pat}" }
 
 summary = { orphan_nodes: orphan.length, dangling_edges: edge_errors.length, invalid_variables: invalid.length,
   answer_invalid_variables: answer_invalid.length, condition_invalid_variables: cond_invalid.length,
   http_invalid_variables: http_invalid.length, code_invalid_variables: code_invalid.length,
-  llm_nodes: nodes.count { |n| n.dig('data', 'type') == 'llm' }, full_conditions: full_cond.length,
-  full_http: full_http.length, full_checks: full_check.length, full_success_conditions: full_success.length,
-  full_unify_nodes: full_unify.length, errors: errors, invalid_details: invalid.first(20) }
+  llm_nodes: nodes.count { |n| n.dig('data', 'type') == 'llm' },
+  forbidden_artifacts: forbidden_hits.length, errors: errors, invalid_details: invalid.first(20) }
 puts JSON.pretty_generate(summary)
 exit(errors.empty? && invalid.empty? ? 0 : 1)

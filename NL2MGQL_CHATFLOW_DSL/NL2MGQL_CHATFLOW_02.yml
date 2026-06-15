@@ -1,521 +1,3 @@
-        title: 用户输入
-        type: start
-        variables:
-        - label: global_use_full_llm
-          variable: global_use_full_llm
-          required: false
-          type: text-input
-          max_length: 48
-        - label: ENABLE_FULL_LLM
-          variable: ENABLE_FULL_LLM
-          required: false
-          type: text-input
-          max_length: 48
-        - label: use_full_llm_query_plan
-          variable: use_full_llm_query_plan
-          required: false
-          type: text-input
-          max_length: 48
-        - label: use_full_llm_semantic_plan_fallback
-          variable: use_full_llm_semantic_plan_fallback
-          required: false
-          type: text-input
-          max_length: 48
-        - label: use_full_llm_multi_turn_intent
-          variable: use_full_llm_multi_turn_intent
-          required: false
-          type: text-input
-          max_length: 48
-        - label: use_full_llm_chart_plan
-          variable: use_full_llm_chart_plan
-          required: false
-          type: text-input
-          max_length: 48
-        - label: use_full_llm_continue_analysis
-          variable: use_full_llm_continue_analysis
-          required: false
-          type: text-input
-          max_length: 48
-        - label: use_full_llm_refine_query_plan
-          variable: use_full_llm_refine_query_plan
-          required: false
-          type: text-input
-          max_length: 48
-      height: 109
-      id: '1773909192919'
-      position:
-        x: 0
-        "y": 0
-      positionAbsolute:
-        x: 0
-        "y": 0
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 8192
-            temperature: 0
-            think: false
-          mode: chat
-          name: qwen3.5:35b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: planner-system
-          role: system
-          text: |
-            你是 Phase 7 的 LLM_查询规划节点：只生成 semantic_plan_contract JSON，不再承担 collection 初判职责。
-
-            输入包含用户问题、collection_selection_json、compact_context_json 以及已裁剪的 selected schema context / schema metadata / alias index。
-
-            硬性规则：
-            - 只输出 JSON；不要输出 markdown、解释、代码块。
-            - 顶层 contract_version 必须为 semantic_plan_contract。
-            - primary_collection 必须来自 collection_selection_json.selected_primary_collection。
-            - related_collections 只能填写本次查询实际需要读取、过滤、分组、投影、排序、merge/enrich 的集合。
-            - selected_related_collections 是可选候选，不是强制使用；如果 primary_collection 已经覆盖用户问题所需字段/指标/维度，则 related_collections 必须为空。
-            - final_merge.merge_mode="none" 且所有 stage 都在 primary_collection 时，related_collections 应为空。
-            - related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。
-            - 只能使用 schema_context / schema_metadata 中存在的 collection、field、metric、relation；别名必须解析为 canonical name。
-            - 不确定 collection/field/metric/relation 时，不要猜，输出 requires_clarification=true 或 needs_schema_retrieval=true。
-            - compact_context_json 只能作为弱上下文，不得继承当前用户已否定的旧字段。
-            - 不输出 Mongo pipeline、MQL、MGQL pipeline、AST、patch diff，也不要输出 $match、$group、$project、$lookup 等 Mongo stage。
-            - intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related。
-            - intent_type 不得使用 aggregate_group_by / aggregate / aggregation / group_by / group_by_metric / group_by_dimension / group_by_metric_with_time_filter / group_by_dimension_with_time_range_and_aggregation 这类泛化或别名值；按维度分组统计、按字段分组统计、group by 聚合统计必须统一使用 aggregate_summary，明细查询必须使用 detail_query；不要输出 aggregate_group_by 这类非 canonical intent_type。
-
-            必须输出完整 semantic_plan_contract：
-            {
-              "contract_version":"semantic_plan_contract",
-              "primary_collection":"",
-              "related_collections":[],
-              "execution_mode":"single_stage",
-              "answer_mode":"data",
-              "needs_chart":false,
-              "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],
-              "final_merge":{"merge_mode":"none"},
-              "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},
-              "requires_clarification":false,
-              "clarification_question":"",
-              "needs_schema_retrieval":false,
-              "warnings":[]
-            }
-        - id: planner-user
-          role: user
-          text: |
-            question:
-            {{#sys.query#}}
-
-            collection_selection_json:
-            {{#1777000000001.collection_selection_json#}}
-
-            compact_context_json（弱上下文，不继承用户已否定字段）:
-            {{#1776000000001.last_context_json#}}
-
-            schema_context（已按 selected collections 裁剪）:
-            {{#1777100000005.schema_context#}}
-
-            schema_metadata_json（仅使用 canonical field/metric/relation/query_rules）:
-            {{#1777100000005.schema_metadata_json#}}
-
-            schema_alias_index_json（用于别名到 canonical name 映射）:
-            {{#1777100000005.schema_alias_index_json#}}
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            additionalProperties: true
-            required:
-            - contract_version
-            - primary_collection
-            - related_collections
-            - execution_mode
-            - answer_mode
-            - needs_chart
-            - stages
-            - final_merge
-            - chart_request
-            - requires_clarification
-            - clarification_question
-            - needs_schema_retrieval
-            - warnings
-            properties:
-              contract_version:
-                const: semantic_plan_contract
-              primary_collection:
-                type: string
-              related_collections:
-                type: array
-                items:
-                  type: string
-              execution_mode:
-                type: string
-              answer_mode:
-                type: string
-              needs_chart:
-                type: boolean
-              stages:
-                type: array
-                minItems: 1
-                items:
-                  type: object
-                  additionalProperties: true
-                  required:
-                  - stage_name
-                  - stage_type
-                  - collection
-                  - intent_type
-                  - time_range
-                  - filters
-                  - group_fields
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - sort
-                  - limit
-                  - projection_fields
-                  properties:
-                    stage_name:
-                      type: string
-                    stage_type:
-                      type: string
-                    collection:
-                      type: string
-                    intent_type:
-                      type: string
-                    time_range:
-                      type: object
-                    filters:
-                      type: array
-                      items:
-                        type: object
-                    group_fields:
-                      type: array
-                      items:
-                        type: string
-                    metric_function:
-                      type: string
-                    metric_field:
-                      type: string
-                    metric_alias:
-                      type: string
-                    sort:
-                      type: array
-                      items:
-                        type: object
-                    limit:
-                      type: integer
-                    projection_fields:
-                      type: array
-                      items:
-                        type: string
-              final_merge:
-                type: object
-              chart_request:
-                type: object
-              requires_clarification:
-                type: boolean
-              clarification_question:
-                type: string
-              needs_schema_retrieval:
-                type: boolean
-              warnings:
-                type: array
-                items:
-                  type: string
-        structured_output_enabled: true
-        title: LLM_查询规划
-        type: llm
-        vision:
-          enabled: false
-      height: 88
-      id: '1773975766025'
-      position:
-        x: 6110
-        "y": -620
-      positionAbsolute:
-        x: 6110
-        "y": -620
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          def main(question: str):
-              q = str(question or '').strip()
-              query = (
-                  '用户问题：' + q + '\n'
-                  '请根据用户问题检索最相关的 Mongo schema 文档，用于确定 collection、字段、指标和关联关系。'
-                  '优先返回包含 metadata_type: mongo_schema 的完整 schema 文档；'
-                  '文档需要包含 collection_name、collection_label、fields、metrics、relations、query_rules；'
-                  '不要只返回普通解释文本。'
-              )
-              return {'query_text': query}
-        code_language: python3
-        desc: 为一次性 CandidateSchemas schema retrieval 构造查询，不依赖独立 collection catalog 文档。
-        outputs:
-          query_text:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_构建CandidateSchemas检索查询
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-      height: 80
-      id: '1777099999998'
-      position:
-        x: 2910
-        "y": -620
-      positionAbsolute:
-        x: 2910
-        "y": -620
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
-        metadata_filtering_conditions:
-          conditions: []
-          logical_operator: and
-        metadata_filtering_mode: disabled
-        multiple_retrieval_config:
-          reranking_enable: false
-          reranking_mode: weighted_score
-          top_k: 6
-          weights:
-            keyword_setting:
-              keyword_weight: 0.4
-            vector_setting:
-              embedding_model_name: nomic-embed-text:v1.5
-              embedding_provider_name: langgenius/ollama/ollama
-              vector_weight: 0.6
-            weight_type: customized
-        query_attachment_selector: []
-        query_variable_selector:
-        - '1777099999998'
-        - query_text
-        retrieval_mode: multiple
-        selected: false
-        title: 知识检索_CandidateSchemas
-        type: knowledge-retrieval
-      height: 90
-      id: '1777099999999'
-      position:
-        x: 3310
-        "y": -620
-      positionAbsolute:
-        x: 3310
-        "y": -620
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import hashlib
-          import re
-
-          SCHEMA_CONTRACT_VERSION = 'schema_metadata_contract'
-          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
-          CATALOG_VERSION = 'collection_catalog_contract'
-
-
-          def _strip_quotes(v):
-              v = str(v or '').strip()
-              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
-                  return v[1:-1]
-              return v
-
-
-          def _split_inline_list(body):
-              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
-
-
-          def _parse_scalar(v):
-              v = str(v or '').strip()
-              if not v:
-                  return ''
-              if v in {'|', '>', '|-', '>-'}:
-                  return ''
-              if v in {'true', 'True'}:
-                  return True
-              if v in {'false', 'False'}:
-                  return False
-              if v in {'null', 'Null', 'NULL', '~'}:
-                  return None
-              if v.startswith('[') and v.endswith(']'):
-                  return _split_inline_list(v[1:-1].strip())
-              if v.startswith('{') and v.endswith('}'):
-                  try:
-                      return json.loads(v)
-                  except Exception:
-                      return _strip_quotes(v)
-              if re.match(r'^-?\d+$', v):
-                  try:
-                      return int(v)
-                  except Exception:
-                      pass
-              if re.match(r'^-?\d+\.\d+$', v):
-                  try:
-                      return float(v)
-                  except Exception:
-                      pass
-              return _strip_quotes(v)
-
-
-          def _parse_simple_yaml(text):
-              root = {}
-              stack = [(-1, root)]
-              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
-              i = 0
-              while i < len(lines):
-                  raw = lines[i]
-                  if not raw.strip() or raw.lstrip().startswith('#'):
-                      i += 1
-                      continue
-                  indent = len(raw) - len(raw.lstrip(' '))
-                  s = raw.strip()
-                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
-                  if mblock:
-                      key = mblock.group(1)
-                      parts = []
-                      base = None
-                      j = i + 1
-                      while j < len(lines):
-                          nr = lines[j]
-                          if nr.strip():
-                              ni = len(nr) - len(nr.lstrip(' '))
-                              if ni <= indent:
-                                  break
-                              if base is None:
-                                  base = ni
-                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
-                          else:
-                              parts.append('')
-                          j += 1
-                      while stack and indent <= stack[-1][0]:
-                          stack.pop()
-                      parent = stack[-1][1]
-                      if isinstance(parent, dict):
-                          parent[key] = '\n'.join(parts).strip()
-                      i = j
-                      continue
-                  while stack and indent <= stack[-1][0]:
-                      stack.pop()
-                  parent = stack[-1][1]
-                  if s.startswith('- '):
-                      item = s[2:].strip()
-                      if not isinstance(parent, list):
-                          i += 1
-                          continue
-                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
-                          k, v = item.split(':', 1)
-                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
-                          parent.append(obj)
-                          stack.append((indent, obj))
-                          if not v.strip():
-                              stack.append((indent + 2, obj[k.strip()]))
-                      else:
-                          parent.append(_parse_scalar(item))
-                      i += 1
-                      continue
-                  if ':' in s:
-                      k, v = s.split(':', 1)
-                      key = k.strip()
-                      val = v.strip()
-                      if isinstance(parent, dict):
-                          if val:
-                              parent[key] = _parse_scalar(val)
-                              i += 1
-                              continue
-                          j = i + 1
-                          nxt = ''
-                          while j < len(lines):
-                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
-                                  nxt = lines[j].strip()
-                                  break
-                              j += 1
-                          container = [] if nxt.startswith('- ') else {}
-                          parent[key] = container
-                          stack.append((indent, container))
-                  i += 1
-              return root
-
-
-          def _content(doc):
-              if isinstance(doc, dict):
-                  return str(doc.get('content') or doc.get('text') or doc.get('document') or '')
-              return str(doc or '')
-
-
-          def _extract_blocks(text):
-              raw = str(text or '')
-              blocks = []
-              for pat in [
-                  r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```',
-                  r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema").*?)\n```',
-              ]:
-                  blocks.extend(m.group(2 if 'Schema Metadata' in pat else 1) for m in re.finditer(pat, raw, re.I | re.S))
-              if not blocks and re.search(r'metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"', raw, re.I):
-                  blocks.append(raw)
-              return blocks
-
-
-          def _parse_block(block):
-              text = str(block or '').strip()
-              if not text:
-                  return {}
-              if text.startswith('{'):
-                  return json.loads(text)
-              return _parse_simple_yaml(text)
-
-
-          def _as_list(value):
-              if value in (None, ''):
-                  return []
-              if isinstance(value, list):
-                  return [x for x in value if x is not None and str(x).strip()]
-              return [x for x in _split_inline_list(value) if str(x).strip()]
-
-
-          def _str_list(value, limit=0):
-              out, seen = [], set()
-              for item in _as_list(value):
-                  s = str(item or '').strip()
-                  if s and s not in seen:
-                      seen.add(s); out.append(s)
-                      if limit and len(out) >= limit:
-                          break
-              return out
-
-
-          def _named_map(value):
-              result = {}
-              if isinstance(value, dict):
-                  for name, item in value.items():
-                      if isinstance(item, dict):
-                          obj = dict(item); obj.setdefault('name', name); result[str(obj.get('name') or name).strip()] = obj
-              elif isinstance(value, list):
-                  for item in value:
                       if isinstance(item, dict) and str(item.get('name') or '').strip():
                           result[str(item.get('name')).strip()] = dict(item)
               return result
@@ -670,7 +152,8 @@
                   'catalog_parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
               }
         code_language: python3
-        desc: 解析 CandidateSchemas 检索结果中的 mongo_schema 文档，输出 schema metadata、alias index、派生 catalog 与 schema context ref。
+        desc: 解析 CandidateSchemas 检索结果中的 mongo_schema 文档，输出 schema metadata、alias index、派生
+          catalog 与 schema context ref。
         outputs:
           schema_context:
             children:
@@ -925,6 +408,493 @@
                   'collection_selection_json': json.dumps(selection, ensure_ascii=False),
                   'selected_primary_collection': selection['selected_primary_collection'],
                   'selected_related_collections': selection['selected_related_collections'],
-
                   'selection_confidence': float(selection.get('confidence') or 0),
                   'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                  'requires_clarification': bool(selection.get('requires_clarification')),
+                  'clarification_question': selection.get('clarification_question') or '',
+              }
+        code_language: python3
+        desc: 基于运行时 collection_catalog_contract 选择候选 collection；只做 collection 初判，不生成 semantic
+          plan。
+        outputs:
+          collection_catalog_json:
+            children:
+            type: string
+          collection_selection_json:
+            children:
+            type: string
+          selected_primary_collection:
+            children:
+            type: string
+          selected_related_collections:
+            children:
+            type: array[string]
+          selection_confidence:
+            children:
+            type: number
+          selector_warnings_json:
+            children:
+            type: string
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_CollectionCatalog候选选择
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: turn_intent_json
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1777100000000'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+        - value_selector:
+          - '1777100000000'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+      height: 80
+      id: '1777000000001'
+      position:
+        x: 4110
+        "y": -620
+      positionAbsolute:
+        x: 4110
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: has_primary
+          conditions:
+          - comparison_operator: not empty
+            id: collection-selection-primary-not-empty
+            value: ''
+            varType: string
+            variable_selector:
+            - '1777000000001'
+            - selected_primary_collection
+          - comparison_operator: is
+            id: collection-selection-not-clarification
+            value: 'false'
+            varType: boolean
+            variable_selector:
+            - '1777000000001'
+            - requires_clarification
+          id: has_primary
+          logical_operator: and
+        desc: selector 必须选出 primary collection 且不需要澄清；否则 safe stop。通过后继续裁剪 CandidateSchemas。
+        selected: false
+        title: 条件分支_CollectionSelection结果判断
+        type: if-else
+      height: 148
+      id: '1777100000001'
+      position:
+        x: 4510
+        "y": -620
+      positionAbsolute:
+        x: 4510
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+
+
+          def _loads(value, default):
+              if isinstance(value, (dict, list)):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return default
+              return default
+
+
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      if isinstance(parsed, list):
+                          return [str(x).strip() for x in parsed if str(x).strip()]
+                  except Exception:
+                      pass
+                  return [value.strip()]
+              return []
+
+
+          def _digest(obj, key):
+              tmp = json.loads(json.dumps(obj or {}, ensure_ascii=False))
+              if isinstance(tmp, dict):
+                  tmp.pop(key, None)
+              return hashlib.sha256(json.dumps(tmp, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+          def _filter_alias(alias, keep):
+              if not isinstance(alias, dict):
+                  return {}
+              result = {}
+              for k, v in alias.items():
+                  if k in {'aliases', 'collection_aliases', 'field_aliases', 'metric_aliases', 'value_aliases'} and isinstance(v, dict):
+                      kept = {}
+                      for a, entries in v.items():
+                          filtered = [e for e in (entries or []) if isinstance(e, dict) and str(e.get('collection') or '').strip() in keep]
+                          if filtered:
+                              kept[a] = filtered
+                      result[k] = kept
+                  elif k in {'fields', 'metrics'} and isinstance(v, dict):
+                      result[k] = {c: m for c, m in v.items() if c in keep}
+                  elif k == 'collections' and isinstance(v, dict):
+                      result[k] = {a: c for a, c in v.items() if c in keep}
+                  else:
+                      result[k] = v
+              return result
+
+
+          def _schema_context(meta):
+              sections = []
+              for cname, coll in (meta.get('collections') or {}).items():
+                  sections.append('## collection=' + cname + '\n```json\n' + json.dumps(coll, ensure_ascii=False, indent=2) + '\n```')
+              return '\n\n'.join(sections)
+
+
+          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}'):
+              warnings = []
+              meta = _loads(schema_metadata_json, {}) or {}
+              alias = _loads(schema_alias_index_json, {}) or {}
+              ref = _loads(schema_context_ref_json, {}) or {}
+              collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
+              primary = str(selected_primary_collection or '').strip()
+              if not primary:
+                  warnings.append('selected primary collection is empty')
+              if primary and primary not in collections:
+                  warnings.append('selected primary collection not found in candidate schemas')
+              if warnings:
+                  empty_meta = {'metadata_type': 'schema_metadata_contract', 'contract_version': 'schema_metadata_contract', 'schema_version': str(meta.get('schema_version') or ''), 'schema_digest': '', 'collections': {}, 'warnings': warnings, 'parse_errors': []}
+                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              keep = []
+              for name in [primary] + _list(selected_related_collections):
+                  if name in collections and name not in keep:
+                      keep.append(name)
+                  elif name and name not in collections:
+                      warnings.append('selected related collection not found in candidate schemas: ' + name)
+              selected = dict(meta)
+              selected['collections'] = {name: collections[name] for name in keep}
+              selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
+              selected_alias = _filter_alias(alias, set(keep))
+              selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
+              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+        code_language: python3
+        desc: 按 selector 结果裁剪 CandidateSchemas，只保留 selected primary 与存在于候选 schema metadata
+          中的 related collections。
+        outputs:
+          schema_context:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          selected_schema_ready:
+            children:
+            type: boolean
+          selected_schema_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_裁剪SelectedSchema上下文
+        type: code
+        variables:
+        - value_selector:
+          - '1777000000001'
+          - selected_primary_collection
+          value_type: string
+          variable: selected_primary_collection
+        - value_selector:
+          - '1777000000001'
+          - selected_related_collections
+          value_type: array[string]
+          variable: selected_related_collections
+        - value_selector:
+          - '1777100000000'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - '1777100000000'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1777100000000'
+          - schema_alias_index_json
+          value_type: string
+          variable: schema_alias_index_json
+        - value_selector:
+          - '1777100000000'
+          - schema_context_ref_json
+          value_type: string
+          variable: schema_context_ref_json
+        - value_selector:
+          - '1777100000000'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+      height: 80
+      id: '1777100000005'
+      position:
+        x: 4910
+        "y": -620
+      positionAbsolute:
+        x: 4910
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: schema_ready
+          conditions:
+          - comparison_operator: is
+            id: selected-schema-ready
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1777100000005'
+            - selected_schema_ready
+          id: schema_ready
+          logical_operator: and
+        desc: selected_schema_ready=true 才允许进入语义规划；否则 safe stop，不进入 planner/validator。
+        selected: false
+        title: 条件分支_SelectedSchema结果判断
+        type: if-else
+      height: 126
+      id: '1777100000004'
+      position:
+        x: 5310
+        "y": -620
+      positionAbsolute:
+        x: 5310
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          def _loads(value):
+              if isinstance(value, dict):
+                  return dict(value)
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+          def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = ''):
+              selection = _loads(collection_selection_json)
+              catalog = _loads(collection_catalog_json)
+              warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
+              if not catalog.get('collections'):
+                  text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
+              else:
+                  text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'
+              payload = {
+                  'contract_version': 'answer_payload_contract',
+                  'answer_type': 'clarification',
+                  'answer_text': text,
+                  'chart_echarts_markdown': '',
+                  'result_summary': text,
+                  'message': '',
+                  'chart_payload': {},
+                  'query_result_profile': {'row_count': 0, 'fields': [], 'preview_rows': []},
+                  'state_update': {'should_save_context': False, 'context_summary': {}},
+                  'warnings': warnings,
+              }
+              update = {'contract_version': 'context_update_contract', 'should_save_context': False, 'compact_context': {}, 'last_context_json': '', 'warnings': warnings, 'clear_fields': []}
+              return {
+                  'final_answer_markdown': text,
+                  'answer_payload_markdown': text,
+                  'answer_payload_json': json.dumps(payload, ensure_ascii=False),
+                  'context_update_json': json.dumps(update, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: Collection selector 或 selected schema 不可用时 safe stop，不进入 planner/schema
+          retrieval/validator，也不保存成功上下文。
+        outputs:
+          final_answer_markdown:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_payload_json:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_CollectionSelectionSafeStop
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1777000000001'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1777000000001'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+      height: 80
+      id: '1777100000002'
+      position:
+        x: 4910
+        "y": -300
+      positionAbsolute:
+        x: 4910
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: "{{#1777100000002.answer_payload_markdown#}}"
+        outputs: []
+        selected: false
+        title: Answer_CollectionSelectionSafeStop
+        type: answer
+      height: 180
+      id: '1777100000003'
+      position:
+        x: 5310
+        "y": -300
+      positionAbsolute:
+        x: 5310
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |-
+          import base64
+          import json
+          import uuid
+
+          SEMANTIC_PLAN_SYSTEM_PROMPT = '【角色约束】\n你不是聊天助手。你是 schema-driven + collection-selection-aware 的 semantic_plan_contract JSON 生成器。输出会被程序直接 JSON.parse 后交给 Phase 5 semantic_plan_normalizer 归一化。\n\n【唯一输出协议】\n只输出一个 semantic_plan_contract JSON 对象，顶层 contract_version 必须是 "semantic_plan_contract"。不得输出 markdown、解释文字、代码块、schema 原文、debug 大字段、rows、ECharts option，也不得输出 Mongo pipeline / MQL / MGQL pipeline / AST / patch diff。\n\n【必须输出的顶层结构】\n{\n  "contract_version":"semantic_plan_contract",\n  "primary_collection":"",\n  "related_collections":[],\n  "execution_mode":"single_stage",\n  "answer_mode":"data",\n  "needs_chart":false,\n  "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],\n  "final_merge":{"merge_mode":"none"},\n  "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},\n  "requires_clarification":false,\n  "clarification_question":"",\n  "needs_schema_retrieval":false,\n  "warnings":[]\n}\n\n【collection-selection 约束】\nprimary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。collection_selection_json 低置信或缺失时，不要猜 collection，设置 requires_clarification=true 或 needs_schema_retrieval=true。\n\n【schema 约束】\n只能使用 schema_context / schema_metadata 摘要中存在的 collection、field、metric、relation、query_rules。字段别名必须解析成 schema canonical field name；指标别名必须解析成 schema canonical metric name；relation 必须来自 schema relations。不得发明 collection / field / metric / relation。遇到未知字段、未知指标、敏感/PII 字段或 value_alias 不明确时，优先 requires_clarification=true，并在 clarification_question 或 warnings 中说明。\n\n【compact context 约束】\ncompact_context_json 只是弱上下文。当前用户问题和 collection_selection_json 优先级更高。不要从 compact_context_json 继承用户已否定的旧字段。\n\n【refine 约束】\n如果当前问题改变 group_fields，必须输出新的 group_fields，不能保留旧 group_fields；如果用户说“不再按 X”，必须删除旧字段 X；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 canonical field；metric、filter、time_range、chart_request 也必须与当前意图同步更新。输出完整新 semantic_plan_contract，不输出 patch diff。\n\n【图表约束】\n用户要求图表时 needs_chart=true 且 chart_request.enabled=true；chart_request.x_field 必须对齐 group_fields[0] 或时间字段；chart_request.y_field 必须对齐 metric_alias。\n\n【时间约束】\n相对时间使用 time_range.mode="relative_days" 与 relative_days；不要输出 {"$date":"..."}。current_date 仅用于理解相对时间，不要因此输出 Mongo 表达式。\n\n【最终输出再强调】\n只能输出 JSON 对象；禁止 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字、代码块。'
+          SEMANTIC_PLAN_CONTRACT_SCHEMA_JSON = r'''{"type":"object","additionalProperties":true,"required":["contract_version","primary_collection","related_collections","execution_mode","answer_mode","needs_chart","stages","final_merge","chart_request","requires_clarification","clarification_question","needs_schema_retrieval","warnings"],"properties":{"contract_version":{"const":"semantic_plan_contract"},"primary_collection":{"type":"string"},"related_collections":{"type":"array","items":{"type":"string"}},"execution_mode":{"type":"string"},"answer_mode":{"type":"string"},"needs_chart":{"type":"boolean"},"stages":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":true,"required":["stage_name","stage_type","collection","intent_type","time_range","filters","group_fields","metric_function","metric_field","metric_alias","sort","limit","projection_fields"],"properties":{"stage_name":{"type":"string"},"stage_type":{"type":"string"},"collection":{"type":"string"},"intent_type":{"type":"string"},"time_range":{"type":"object"},"filters":{"type":"array","items":{"type":"object"}},"group_fields":{"type":"array","items":{"type":"string"}},"metric_function":{"type":"string"},"metric_field":{"type":"string"},"metric_alias":{"type":"string"},"sort":{"type":"array","items":{"type":"object"}},"limit":{"type":"integer"},"projection_fields":{"type":"array","items":{"type":"string"}}}}},"final_merge":{"type":"object"},"chart_request":{"type":"object"},"requires_clarification":{"type":"boolean"},"clarification_question":{"type":"string"},"needs_schema_retrieval":{"type":"boolean"},"warnings":{"type":"array","items":{"type":"string"}}}}'''
+
+
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              text = str(value or "").strip().lower()
+              return text in {"1", "true", "yes", "y", "on"}
+
+
+          def _to_int(value, default):
+              try:
+                  return int(value)
+              except Exception:
+                  return int(default)
+
+
+          def main(
+              arg1: str = '',
+              arg2: str = '',
+              arg3: str = '',
+              schema_context: str = '',
+              collection_selection_json: str = '',
+              question: str = '',
+              schema_metadata_summary_json: str = '',
+              schema_alias_index_summary_json: str = '',
+              schema_context_ref_json: str = '',
+              compact_context_json: str = '',
+              normalized_turn_intent_json: str = '',
+              query_refinement_json: str = '',
+              llm_token_url: str = '',
+              llm_chat_url: str = '',
+              llm_app_id: str = '',
+              llm_static_token: str = '',
+              llm_model: str = '',
+              llm_user: str = '',
+              llm_basic_auth: str = '',
+              llm_timeout_ms=600000,
+              llm_temperature=0,
+              llm_top_p=1,
+              llm_max_completion_tokens=12288,
+              llm_stream='',
+              last_context_json: str = '',
+              turn_intent: str = '',
+              current_date: str = '',
+              **kwargs
+          ):
+              schema_context = schema_context or arg1
+              collection_selection_json = collection_selection_json or arg2
+              question = question or arg3
+              planner = json.loads(collection_selection_json) if isinstance(collection_selection_json, str) and collection_selection_json.strip() else (collection_selection_json or {})
+              schema_context_ref = {}
+              schema_context_ref_warning = ''
+              if schema_context_ref_json:
+                  try:
+                      schema_context_ref = json.loads(schema_context_ref_json) if isinstance(schema_context_ref_json, str) else (schema_context_ref_json or {})
+                  except Exception:
+                      schema_context_ref = {}
+                      schema_context_ref_warning = 'schema_context_ref_json parse failed'
+              if isinstance(schema_context, str):
+                  fresh_schema_context = schema_context
+              else:
+                  sections = []
+                  for raw in (schema_context or []):
+                      item = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                      collection_name = str(item.get("collection_name") or "").strip()
