@@ -1,3 +1,67 @@
+            properties:
+              chart_request:
+                type: object
+                additionalProperties: true
+              user_message:
+                type: string
+              recommended_chart_type:
+                type: string
+              warning:
+                type: string
+        structured_output_enabled: true
+        title: LLM_图表修改规划
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776000000014'
+      position:
+        x: 3220
+        y: 1120
+      positionAbsolute:
+        x: 3220
+        y: 1120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          SUPPORTED={'bar','line','pie','area','scatter'}
+          ALIASES={
+              'column':'bar','bar':'bar','柱状图':'bar','柱状':'bar','条形图':'bar','条形':'bar',
+              'pie':'pie','饼图':'pie',
+              'line':'line','折线图':'line','折线':'line','趋势图':'line','趋势':'line',
+              'area':'area','面积图':'area','面积':'area',
+              'scatter':'scatter','散点图':'scatter','散点':'scatter',
+          }
+          DEFAULTS={'enabled': True, 'renderer':'echarts', 'chart_type':'bar', 'x_field':'', 'y_field':'', 'title':'上一轮结果图表', 'series_name':'', 'top_n':0, 'sort':{}, 'label':{}, 'warning':''}
+
+          def _extract(text):
+              text=str(text or '').strip()
+              m=re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I|re.S)
+              if m: text=m.group(1).strip()
+              s,e=text.find('{'),text.rfind('}')
+              return text[s:e+1] if s>=0 and e>=s else text
+
+          def _loads(v, fb):
+              if isinstance(v,(dict,list)): return v
+              if isinstance(v,str) and v.strip():
+                  try: return json.loads(_extract(v))
+                  except Exception: return fb
+              return fb
+
+          def _norm_type(v):
+              raw=str(v or '').lower().strip()
+              if raw in ALIASES: return ALIASES[raw]
+              for k,val in ALIASES.items():
+                  if k in raw: return val
+              return raw if raw in SUPPORTED else ''
+
+          def _non_empty(v, key=''):
+              if v is None: return False
               if isinstance(v, str): return bool(v.strip())
               if isinstance(v, (dict, list)): return bool(v)
               if key == 'top_n':
@@ -834,67 +898,3 @@
                       st['limit'] = min(limit, 500)
                       changed = True
               return changed
-
-
-          def _parse_sort_request(q):
-              text = str(q or '')
-              direction = ''
-              if any(x in text for x in ('升序', '从小到大', '从低到高')):
-                  direction = 'asc'
-              elif any(x in text for x in ('降序', '倒序', '从大到小', '从高到低')):
-                  direction = 'desc'
-              if not direction:
-                  return None
-              m = re.search(r'按\s*([^，。,.\s]+)\s*(?:升序|降序|排序|排列)', text)
-              return {'direction': direction, 'target': m.group(1).strip() if m else ''}
-
-
-          def _target_matches_known_field(target, known_fields):
-              t = str(target or '').strip()
-              if not t:
-                  return True
-              for f in known_fields:
-                  fs = str(f or '').strip()
-                  if fs and (t == fs or t in fs or fs in t):
-                      return True
-              return False
-
-
-          def _patch_sort(plan, direction, target='', known_fields=None):
-              known_fields = known_fields or []
-              if not _target_matches_known_field(target, known_fields):
-                  return False
-              changed = False
-              for st in _stages(plan):
-                  if not isinstance(st, dict):
-                      continue
-                  sort = st.get('sort') if isinstance(st.get('sort'), list) else []
-                  if not sort:
-                      fallback = st.get('metric_alias') or st.get('metric_field') or (known_fields[0] if known_fields else '')
-                      sort = [{'field': fallback, 'direction': direction}]
-                  for item in sort:
-                      if isinstance(item, dict):
-                          item['direction'] = direction
-                  st['sort'] = sort
-                  changed = True
-              return changed
-
-
-          def _patch_display(plan, q):
-              changed = []
-              text = str(q or '')
-              m = re.search(r'标题(?:改成|改为|换成)\s*([^，。,.]+)', text)
-              if m:
-                  if not isinstance(plan.get('chart_request'), dict):
-                      plan['chart_request'] = {}
-                  plan['chart_request']['title'] = m.group(1).strip()
-                  changed.append('chart_request.title')
-              if any(x in text for x in ('回答详细一点', '详细一点', '加分析', '简单分析')):
-                  plan['answer_mode'] = 'data_with_analysis'
-                  changed.append('answer_mode')
-              if '只描述结果' in text:
-                  plan['answer_mode'] = 'data_only'
-                  changed.append('answer_mode')
-              return changed
-
-

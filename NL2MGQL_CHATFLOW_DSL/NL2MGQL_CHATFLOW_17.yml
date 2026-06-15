@@ -1,3 +1,157 @@
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1
+                      continue
+                  if ':' in s:
+                      k, v = s.split(':', 1)
+                      key = k.strip()
+                      val = v.strip()
+                      if isinstance(parent, dict):
+                          if val:
+                              parent[key] = _parse_scalar(val)
+                              i += 1
+                              continue
+                          j = i + 1
+                          nxt = ''
+                          while j < len(lines):
+                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
+                                  nxt = lines[j].strip()
+                                  break
+                              j += 1
+                          container = [] if nxt.startswith('- ') else {}
+                          parent[key] = container
+                          stack.append((indent, container))
+                  i += 1
+              return root
+
+
+          def _content(doc):
+              if isinstance(doc, dict):
+                  return str(doc.get('content') or doc.get('text') or doc.get('document') or '')
+              return str(doc or '')
+
+
+          def _extract_blocks(text):
+              raw = str(text or '')
+              blocks = []
+              for pat in [
+                  r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```',
+                  r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema").*?)\n```',
+              ]:
+                  blocks.extend(m.group(2 if 'Schema Metadata' in pat else 1) for m in re.finditer(pat, raw, re.I | re.S))
+              if not blocks and re.search(r'metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"', raw, re.I):
+                  blocks.append(raw)
+              return blocks
+
+
+          def _parse_block(block):
+              text = str(block or '').strip()
+              if not text:
+                  return {}
+              if text.startswith('{'):
+                  return json.loads(text)
+              return _parse_simple_yaml(text)
+
+
+          def _as_list(value):
+              if value in (None, ''):
+                  return []
+              if isinstance(value, list):
+                  return [x for x in value if x is not None and str(x).strip()]
+              return [x for x in _split_inline_list(value) if str(x).strip()]
+
+
+          def _str_list(value, limit=0):
+              out, seen = [], set()
+              for item in _as_list(value):
+                  s = str(item or '').strip()
+                  if s and s not in seen:
+                      seen.add(s); out.append(s)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
+          def _named_map(value):
+              result = {}
+              if isinstance(value, dict):
+                  for name, item in value.items():
+                      if isinstance(item, dict):
+                          obj = dict(item); obj.setdefault('name', name); result[str(obj.get('name') or name).strip()] = obj
+              elif isinstance(value, list):
+                  for item in value:
+                      if isinstance(item, dict) and str(item.get('name') or '').strip():
+                          result[str(item.get('name')).strip()] = dict(item)
+              return result
+
+
+          def _normalize_collection(doc):
+              cname = str((doc or {}).get('collection_name') or '').strip()
+              if not cname:
+                  return None
+              fields = _named_map(doc.get('fields'))
+              metrics = _named_map(doc.get('metrics'))
+              relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
+              normalized = dict(doc)
+              normalized.update({
+                  'collection_name': cname,
+                  'collection_label': str(doc.get('collection_label') or cname).strip() or cname,
+                  'collection_aliases': _str_list(doc.get('collection_aliases')),
+                  'fields': fields,
+                  'metrics': metrics,
+                  'relations': [r for r in relations if isinstance(r, dict)],
                   'query_rules': doc.get('query_rules') if isinstance(doc.get('query_rules'), dict) else {},
               })
               return normalized
@@ -744,157 +898,3 @@
             children:
             type: string
           replan_input_valid:
-            children:
-            type: boolean
-          replan_input_error:
-            children:
-            type: string
-          patch_reason:
-            children:
-            type: string
-          changed_fields_json:
-            children:
-            type: string
-          replan_prompt_debug_json:
-            children:
-            type: string
-          schema_metadata_json:
-            children:
-            type: string
-          schema_alias_index_json:
-            children:
-            type: string
-          schema_warning:
-            children:
-            type: string
-          schema_context_ref_json:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_合并Schema上下文并准备Refine语义计划提示词
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1776000000025'
-          - old_normalized_semantic_plan_json
-          value_type: string
-          variable: old_normalized_semantic_plan_json
-        - value_selector:
-          - '1776000000025'
-          - query_refinement_json
-          value_type: string
-          variable: query_refinement_json
-        - value_selector:
-          - '1776000000025'
-          - patch_reason
-          value_type: string
-          variable: patch_reason
-        - value_selector:
-          - '1776000000025'
-          - changed_fields_json
-          value_type: string
-          variable: changed_fields_json
-        - value_selector:
-          - '1776000000025'
-          - refine_query_debug_json
-          value_type: string
-          variable: refine_planning_json
-        - value_selector:
-          - '1777100000105'
-          - schema_context
-          value_type: string
-          variable: refine_schema_context
-        - value_selector:
-          - '1777100000105'
-          - selected_schema_warnings_json
-          value_type: string
-          variable: refine_schema_warning
-        - value_selector:
-          - '1776000000001'
-          - last_chart_request_json
-          value_type: string
-          variable: last_chart_request_json
-        - value_selector:
-          - '1776000000001'
-          - last_query_result_json
-          value_type: string
-          variable: last_query_result_json
-        - value_selector:
-          - '1776000000004'
-          - normalized_turn_intent_json
-          value_type: string
-          variable: normalized_turn_intent_json
-        - value_selector:
-          - '1777000000002'
-          - collection_selection_json
-          value_type: string
-          variable: collection_selection_json
-        - value_selector:
-          - '1776000000001'
-          - compact_context_json
-          value_type: string
-          variable: compact_context_json
-        - value_selector:
-          - '1777100000105'
-          - schema_context_ref_json
-          value_type: string
-          variable: schema_context_ref_json
-        - value_selector:
-          - '1777100000105'
-          - selected_schema_ready
-          value_type: boolean
-          variable: replan_input_valid
-        - value_selector:
-          - '1777100000105'
-          - selected_schema_warnings_json
-          value_type: string
-          variable: replan_input_error
-      height: 80
-      id: '1776000000027'
-      position:
-        x: 5520
-        "y": 2200
-      positionAbsolute:
-        x: 5520
-        "y": 2200
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json, re
-          def _strip(s):
-              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,flags=re.S|re.I)
-              return m.group(1).strip() if m else s
-          def _loads(v):
-              if isinstance(v,dict): return v
-              if isinstance(v,str) and v.strip():
-                  try:
-                      x=json.loads(_strip(v)); return x if isinstance(x,dict) else {}
-                  except Exception: return {}
-              return {}
-          BIG_FIELD_KEYS = {
-              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
-              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
-              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
-              'echarts_markdown','debug'
-          }
-
-          def _deepcopy_json(value):
-              try:
-                  return json.loads(json.dumps(value, ensure_ascii=False))
-              except Exception:
-                  return value if isinstance(value, dict) else {}
-
-          def _as_list(value):
-              return value if isinstance(value, list) else []
-
-          def _as_dict(value):
-              return value if isinstance(value, dict) else {}

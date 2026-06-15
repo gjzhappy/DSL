@@ -1,3 +1,67 @@
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1
+                      continue
+                  if ':' in s:
+                      k, v = s.split(':', 1)
+                      key = k.strip()
+                      val = v.strip()
+                      if isinstance(parent, dict):
+                          if val:
+                              parent[key] = _parse_scalar(val)
+                              i += 1
+                              continue
+                          j = i + 1
+                          nxt = ''
+                          while j < len(lines):
+                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
+                                  nxt = lines[j].strip()
+                                  break
+                              j += 1
                           container = [] if nxt.startswith('- ') else {}
                           parent[key] = container
                           stack.append((indent, container))
@@ -834,67 +898,3 @@
 
           def _first_stage_for_context(plan):
               stages = _execution_stages(plan if isinstance(plan, dict) else {})
-              return stages[0] if stages and isinstance(stages[0], dict) else {}
-
-
-          COMPACT_CONTEXT_TARGET_BYTES = 12000
-          COMPACT_CONTEXT_HARD_BYTES = 60000
-          MAX_PREVIEW_ROWS = 5
-          MAX_PREVIEW_FIELDS = 20
-          MAX_PREVIEW_STRING = 200
-
-
-          def _safe_int_value(value, default=0):
-              try:
-                  return int(value)
-              except Exception:
-                  return default
-
-
-          def _dedupe_values(values, limit=50):
-              out = []
-              for value in values or []:
-                  text = str(value or '').strip()
-                  if text and text not in out:
-                      out.append(text)
-                      if limit and len(out) >= limit:
-                          break
-              return out
-
-
-          def _compact_value(value, max_len=MAX_PREVIEW_STRING):
-              if isinstance(value, str):
-                  return value[:max_len]
-              if isinstance(value, (int, float, bool)) or value is None:
-                  return value
-              try:
-                  return json.dumps(value, ensure_ascii=False, default=str)[:max_len]
-              except Exception:
-                  return str(value)[:max_len]
-
-
-          def _normalize_time_range(value):
-              value = value if isinstance(value, dict) else {}
-              return {
-                  'field': str(value.get('field') or ''),
-                  'mode': str(value.get('mode') or ''),
-                  'relative_days': _safe_int_value(value.get('relative_days'), 0),
-                  'start': str(value.get('start') or ''),
-                  'end': str(value.get('end') or ''),
-              }
-
-
-          def _compact_rows_profile(rows):
-              fields = []
-              numeric_fields = []
-              dimension_fields = []
-              preview_rows = []
-              for row in rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  for key, value in row.items():
-                      name = str(key)
-                      if name not in fields:
-                          fields.append(name)
-                      if isinstance(value, (int, float)) and not isinstance(value, bool):
-                          if name not in numeric_fields:

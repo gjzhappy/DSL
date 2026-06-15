@@ -1,3 +1,86 @@
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_统一准备Mongo执行输入
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000004'
+          - turn_intent
+          value_type: string
+          variable: turn_intent
+        - value_selector:
+          - '1776000000013'
+          - refine_like_requery
+          value_type: boolean
+          variable: refine_like_requery
+        - value_selector:
+          - '1776000000019'
+          - patch_applied
+          value_type: boolean
+          variable: patch_applied
+        - value_selector:
+          - '1775000000013'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: original_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000019'
+          - patched_normalized_semantic_plan_json
+          value_type: string
+          variable: patched_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000021'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: guarded_normalized_semantic_plan_json
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: original_planner
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: original_schema_context
+        - value_selector:
+          - '1776000000027'
+          - schema_context_for_replan
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000021'
+          - guard_valid
+          value_type: boolean
+          variable: guard_valid
+        - value_selector:
+          - '1776000000021'
+          - guard_error
+          value_type: string
+          variable: guard_error
+      height: 80
+      id: '1776000000024'
+      position:
+        x: 11320
+        y: 120
+      positionAbsolute:
+        x: 11320
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          """Phase 9 runtime schema context helper for semantic_plan_validator.
+
+          Builds a transient schema_runtime_context_contract immediately before validation.
           It never persists full schema metadata or alias index into compact conversation context.
           """
 
@@ -815,151 +898,3 @@
               confidence = float(selection.get("confidence") or 0) if isinstance(selection, dict) else 0.0
               if not primary or primary not in collections:
                   errors.append(f"primary_collection={primary or '<empty>'} 不存在于 schema metadata。")
-              if selected and primary and selected != primary:
-                  msg = f"collection_selection.selected_primary_collection={selected} 与 plan.primary_collection={primary} 不一致。"
-                  if confidence and confidence < 0.6:
-                      return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
-                  errors.append(msg)
-              related = _prune_unused_related_collections(plan, autofixes)
-              for rc in related:
-                  if rc not in collections:
-                      errors.append(f"related_collection={rc} 不存在于 schema metadata。")
-
-              route_hint = "valid"
-              for i, stage in enumerate(plan.get("stages") or []):
-                  if not isinstance(stage, dict):
-                      errors.append(f"stage[{i}] 不是对象。")
-                      continue
-                  coll = _str(stage.get("collection") or primary)
-                  stage["collection"] = coll
-                  if coll not in collections:
-                      errors.append(f"stage[{i}].collection={coll} 不存在。")
-                      continue
-                  if primary and coll != primary and coll not in related:
-                      errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
-                  coll_meta = collections.get(coll) or {}
-                  rules = coll_meta.get("query_rules") or {}
-
-                  raw_intent_type = _str(stage.get("intent_type"))
-                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
-                  if canonical_intent_type != raw_intent_type:
-                      stage["intent_type"] = canonical_intent_type
-                      autofixes.append({
-                          "type": "intent_type_canonicalize",
-                          "from": raw_intent_type,
-                          "to": canonical_intent_type,
-                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
-                      })
-                  elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
-                      errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
-
-                  group_fields = []
-                  for gf in _list(stage.get("group_fields")):
-                      group_fields.append(_canonical_field(_str(gf), schema, coll, "group_fields", errors, warnings, autofixes, "groupable"))
-                  stage["group_fields"] = group_fields
-
-                  metric_alias = _str(stage.get("metric_alias"))
-                  derived_fields = set()
-                  for alias in _list(stage.get("metric_alias")):
-                      if _str(alias):
-                          derived_fields.add(_str(alias))
-                  for metric_item in _list(stage.get("metrics")):
-                      if isinstance(metric_item, dict):
-                          for alias_key in ("alias", "metric_alias", "name", "output_field"):
-                              if _str(metric_item.get(alias_key)):
-                                  derived_fields.add(_str(metric_item.get(alias_key)))
-                  if metric_alias:
-                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll)
-                      if msrc == "ambiguous":
-                          errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
-                      elif msrc == "unresolved":
-                          if _stage_is_aggregate(stage) and _str(stage.get("metric_function")):
-                              derived_fields.add(metric_alias)
-                              warnings.append(f"允许聚合派生字段 {metric_alias} 用于 sort/projection/chart.y_field。")
-                              autofixes.append({"type": "derived_metric_alias_allow", "field": metric_alias, "places": ["sort", "projection_fields", "chart_request.y_field"]})
-                          else:
-                              errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
-                      else:
-                          if mname != metric_alias:
-                              autofixes.append({"type": "metric_alias_canonicalize", "from": metric_alias, "to": mname, "collection": coll})
-                              if metric_alias in derived_fields:
-                                  derived_fields.remove(metric_alias)
-                              derived_fields.add(mname)
-                          stage["metric_alias"] = mname
-                          metric_alias = mname
-                          metric = _metric(schema, coll, mname)
-                          if not _str(stage.get("metric_function")) and _str(metric.get("function")):
-                              stage["metric_function"] = _str(metric.get("function")); autofixes.append({"type": "metric_function_fill", "metric": mname, "value": stage["metric_function"]})
-                          elif _str(stage.get("metric_function")) and _str(metric.get("function")) and _str(stage.get("metric_function")) != _str(metric.get("function")):
-                              errors.append(f"metric_function 与 schema metric {mname}.function 不一致。")
-                          if not _str(stage.get("metric_field")) and _str(metric.get("field")):
-                              stage["metric_field"] = _str(metric.get("field")); autofixes.append({"type": "metric_field_fill", "metric": mname, "value": stage["metric_field"]})
-                          elif _str(stage.get("metric_field")) and _str(metric.get("field")) and _str(stage.get("metric_field")) != _str(metric.get("field")):
-                              errors.append(f"metric_field 与 schema metric {mname}.field 不一致。")
-                          for sf in _list(metric.get("source_fields")):
-                              if sf not in (coll_meta.get("fields") or {}):
-                                  errors.append(f"metric {mname}.source_field={sf} 不存在。")
-                          allowed_dims = [_str(x) for x in _list(metric.get("allowed_dimensions"))]
-                          if allowed_dims:
-                              for gf in group_fields:
-                                  if gf not in allowed_dims:
-                                      errors.append(f"字段 {gf} 不在 metric {mname}.allowed_dimensions 中。")
-                  elif _stage_is_aggregate(stage) and _str(stage.get("metric_field")):
-                      mf = _canonical_field(_str(stage.get("metric_field")), schema, coll, "metric_field", errors, warnings, autofixes, "")
-                      stage["metric_field"] = mf
-
-                  filters = []
-                  for f in _list(stage.get("filters")):
-                      if not isinstance(f, dict):
-                          errors.append("filter 不是对象，已拒绝。")
-                          continue
-                      nf = copy.deepcopy(f)
-                      fname = _canonical_field(_str(nf.get("field")), schema, coll, "filters", errors, warnings, autofixes, "filterable")
-                      nf["field"] = fname
-                      field = _field(schema, coll, fname)
-                      op = _str(nf.get("operator") or nf.get("op") or "eq")
-                      if op not in ALLOWED_OPERATORS:
-                          errors.append(f"filter operator={op} 不在允许范围。")
-                      nf["operator"] = op
-                      if _is_sensitive(field) and not bool((rules.get("allow_sensitive_filter") or rules.get("allow_pii_filter"))):
-                          errors.append(f"敏感/PII 字段 {fname} 默认不允许 filter。")
-                      if "value" in nf:
-                          new_value, changed = _value_alias(nf.get("value"), field)
-                          if changed:
-                              autofixes.append({"type": "value_alias_canonicalize", "field": fname, "from": nf.get("value"), "to": new_value})
-                              nf["value"] = new_value
-                          allowed_values = [_str(x) for x in _list(field.get("allowed_values"))]
-                          vals = _list(nf.get("value")) if op in {"in", "nin"} else [nf.get("value")]
-                          if allowed_values:
-                              for val in vals:
-                                  if _str(val) not in allowed_values:
-                                      errors.append(f"字段 {fname} 的枚举值 {val} 不在 allowed_values 中。")
-                      filters.append(nf)
-                  stage["filters"] = filters
-
-                  projections = []
-                  for pf in _list(stage.get("projection_fields")):
-                      pf_str = _str(pf)
-                      if pf_str in derived_fields:
-                          projections.append(pf_str)
-                          autofixes.append({"type": "derived_metric_alias_allow", "field": pf_str, "place": "projection_fields"})
-                      else:
-                          projections.append(_canonical_field(pf_str, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
-                  stage["projection_fields"] = projections
-
-                  tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
-                  if _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
-                      return _finalize(_result("requires_clarification", plan, ["聚合查询按 query_rules 要求必须提供 time_range。"], clarification="我需要确认一下：这个聚合查询要统计哪个时间范围？", debug=debug))
-                  if tr:
-                      tf = _str(tr.get("field"))
-                      if not tf and _str(coll_meta.get("default_time_field")):
-                          tr["field"] = _str(coll_meta.get("default_time_field")); autofixes.append({"type": "time_range_field_fill", "value": tr["field"], "collection": coll})
-                      elif tf:
-                          tr["field"] = _canonical_field(tf, schema, coll, "time_range", errors, warnings, autofixes, "")
-                      if _str(tr.get("field")):
-                          fld = _field(schema, coll, _str(tr.get("field")))
-                          if _str(fld.get("semantic_type") or fld.get("role") or fld.get("type")).lower() not in {"time", "date", "datetime", "timestamp"}:
-                              warnings.append(f"time_range.field={tr.get('field')} 未显式标记为时间字段。")
-                      try:
-                          rd = int(tr.get("relative_days") or 0)
-                      except Exception:

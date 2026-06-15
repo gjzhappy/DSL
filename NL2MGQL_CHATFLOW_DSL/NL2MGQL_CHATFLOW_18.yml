@@ -1,3 +1,157 @@
+            children:
+            type: boolean
+          replan_input_error:
+            children:
+            type: string
+          patch_reason:
+            children:
+            type: string
+          changed_fields_json:
+            children:
+            type: string
+          replan_prompt_debug_json:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_warning:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并Schema上下文并准备Refine语义计划提示词
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000025'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000025'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000025'
+          - patch_reason
+          value_type: string
+          variable: patch_reason
+        - value_selector:
+          - '1776000000025'
+          - changed_fields_json
+          value_type: string
+          variable: changed_fields_json
+        - value_selector:
+          - '1776000000025'
+          - refine_query_debug_json
+          value_type: string
+          variable: refine_planning_json
+        - value_selector:
+          - '1777100000105'
+          - schema_context
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1777100000105'
+          - selected_schema_warnings_json
+          value_type: string
+          variable: refine_schema_warning
+        - value_selector:
+          - '1776000000001'
+          - last_chart_request_json
+          value_type: string
+          variable: last_chart_request_json
+        - value_selector:
+          - '1776000000001'
+          - last_query_result_json
+          value_type: string
+          variable: last_query_result_json
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1777000000002'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1776000000001'
+          - compact_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1777100000105'
+          - schema_context_ref_json
+          value_type: string
+          variable: schema_context_ref_json
+        - value_selector:
+          - '1777100000105'
+          - selected_schema_ready
+          value_type: boolean
+          variable: replan_input_valid
+        - value_selector:
+          - '1777100000105'
+          - selected_schema_warnings_json
+          value_type: string
+          variable: replan_input_error
+      height: 80
+      id: '1776000000027'
+      position:
+        x: 5520
+        "y": 2200
+      positionAbsolute:
+        x: 5520
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,flags=re.S|re.I)
+              return m.group(1).strip() if m else s
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(_strip(v)); return x if isinstance(x,dict) else {}
+                  except Exception: return {}
+              return {}
+          BIG_FIELD_KEYS = {
+              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
+              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
+              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
+              'echarts_markdown','debug'
+          }
+
+          def _deepcopy_json(value):
+              try:
+                  return json.loads(json.dumps(value, ensure_ascii=False))
+              except Exception:
+                  return value if isinstance(value, dict) else {}
+
+          def _as_list(value):
+              return value if isinstance(value, list) else []
+
+          def _as_dict(value):
+              return value if isinstance(value, dict) else {}
 
           def _clean_for_contract(value, warnings, path=''):
               if isinstance(value, dict):
@@ -330,6 +484,7 @@
                           'clarification_question': '',
                           'needs_schema_retrieval': True,
                           'needs_schema_hydration': True,
+                          'schema_hydration_collections': [base],
                           'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog',
                           'warnings': ['inherited_primary_collection_missing_from_candidate_catalog'],
                       })
@@ -340,6 +495,7 @@
                           'selected_related_collections': [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                          'schema_hydration_collections': selection.get('schema_hydration_collections') or ([base] if base else []),
                           'requires_clarification': False,
                           'clarification_question': '',
                       }
@@ -387,6 +543,7 @@
                   else:
                       selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog'})
                       warnings.append('inherited_primary_collection_missing_from_candidate_catalog')
+                      selection['schema_hydration_collections'] = [base]
                       selection['warnings'] = warnings
                       return {
                           'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
@@ -689,7 +846,10 @@
                   warnings.append('selected primary collection not found in candidate schemas')
               if warnings:
                   empty_meta = {'metadata_type': 'schema_metadata_contract', 'contract_version': 'schema_metadata_contract', 'schema_version': str(meta.get('schema_version') or ''), 'schema_digest': '', 'collections': {}, 'warnings': warnings, 'parse_errors': []}
-                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+                  hydration_needed = bool(primary and primary not in collections)
+                  hydration_collections = [primary] if hydration_needed else []
+                  hydration_reason = 'selected_primary_collection_missing_from_candidate_schemas' if hydration_needed else ''
+                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
               keep = []
               for name in [primary] + _list(selected_related_collections):
                   if name in collections and name not in keep:
@@ -701,7 +861,7 @@
               selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
               selected_alias = _filter_alias(alias, set(keep))
               selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
-              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'schema_hydration_needed': False, 'schema_hydration_reason': '', 'schema_hydration_collections': [], 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
         code_language: python3
         desc: 按 refine selector 结果裁剪 CandidateSchemas，只保留 selected primary 与必要 related
           collections。
@@ -721,6 +881,15 @@
           selected_schema_ready:
             children:
             type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections:
+            children:
+            type: array[string]
           selected_schema_warnings_json:
             children:
             type: string
@@ -729,172 +898,3 @@
         type: code
         variables:
         - value_selector:
-          - '1777000000002'
-          - selected_primary_collection
-          value_type: string
-          variable: selected_primary_collection
-        - value_selector:
-          - '1777000000002'
-          - selected_related_collections
-          value_type: array[string]
-          variable: selected_related_collections
-        - value_selector:
-          - '1776000000026'
-          - schema_context
-          value_type: string
-          variable: schema_context
-        - value_selector:
-          - '1776000000026'
-          - schema_metadata_json
-          value_type: string
-          variable: schema_metadata_json
-        - value_selector:
-          - '1776000000026'
-          - schema_alias_index_json
-          value_type: string
-          variable: schema_alias_index_json
-        - value_selector:
-          - '1776000000026'
-          - schema_context_ref_json
-          value_type: string
-          variable: schema_context_ref_json
-        - value_selector:
-          - '1776000000026'
-          - collection_catalog_json
-          value_type: string
-          variable: collection_catalog_json
-      height: 80
-      id: '1777100000105'
-      position:
-        x: 4800
-        "y": 2200
-      positionAbsolute:
-        x: 4800
-        "y": 2200
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: schema_ready
-          conditions:
-          - comparison_operator: is
-            id: selected-schema-ready
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1777100000105'
-            - selected_schema_ready
-          id: schema_ready
-          logical_operator: and
-        desc: refine selected_schema_ready=true 才允许进入重规划；否则 safe stop，不进入 LLM/validator。
-        selected: false
-        title: 条件分支_SelectedSchema结果判断_Refine
-        type: if-else
-      height: 126
-      id: '1777100000104'
-      position:
-        x: 5160
-        "y": 2200
-      positionAbsolute:
-        x: 5160
-        "y": 2200
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-
-          def _loads(value):
-              if isinstance(value, dict):
-                  return dict(value)
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(value)
-                      return parsed if isinstance(parsed, dict) else {}
-                  except Exception:
-                      return {}
-              return {}
-
-          def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = ''):
-              selection = _loads(collection_selection_json)
-              catalog = _loads(collection_catalog_json)
-              warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
-              if not catalog.get('collections'):
-                  text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
-              else:
-                  text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'
-              payload = {
-                  'contract_version': 'answer_payload_contract',
-                  'answer_type': 'clarification',
-                  'answer_text': text,
-                  'chart_echarts_markdown': '',
-                  'result_summary': text,
-                  'message': '',
-                  'chart_payload': {},
-                  'query_result_profile': {'row_count': 0, 'fields': [], 'preview_rows': []},
-                  'state_update': {'should_save_context': False, 'context_summary': {}},
-                  'warnings': warnings,
-              }
-              update = {'contract_version': 'context_update_contract', 'should_save_context': False, 'compact_context': {}, 'last_context_json': '', 'warnings': warnings, 'clear_fields': []}
-              return {
-                  'final_answer_markdown': text,
-                  'answer_payload_markdown': text,
-                  'answer_payload_json': json.dumps(payload, ensure_ascii=False),
-                  'context_update_json': json.dumps(update, ensure_ascii=False),
-              }
-        code_language: python3
-        desc: Collection selector 或 selected schema 不可用时 safe stop，不进入 planner/schema
-          retrieval/validator，也不保存成功上下文。
-        outputs:
-          final_answer_markdown:
-            children:
-            type: string
-          answer_payload_markdown:
-            children:
-            type: string
-          answer_payload_json:
-            children:
-            type: string
-          context_update_json:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_CollectionSelectionSafeStop_Refine
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1777000000002'
-          - collection_selection_json
-          value_type: string
-          variable: collection_selection_json
-        - value_selector:
-          - '1776000000026'
-          - collection_catalog_json
-          value_type: string
-          variable: collection_catalog_json
-      height: 80
-      id: '1777100000102'
-      position:
-        x: 4800
-        "y": 2460
-      positionAbsolute:
-        x: 4800
-        "y": 2460
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        answer: "{{#1777100000102.answer_payload_markdown#}}"

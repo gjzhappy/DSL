@@ -1,3 +1,67 @@
+              raw = str(text or '')
+              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
+              return raw.strip()
+
+
+          def _ast_candidate_score(obj):
+              if not isinstance(obj, dict):
+                  return -1
+              score = 0
+              keys = set(obj.keys())
+              if 'execution_plan' in keys:
+                  score += 10
+              stages = (obj.get('execution_plan') or {}).get('stages') if isinstance(obj.get('execution_plan'), dict) else None
+              if isinstance(stages, list) and stages:
+                  score += 10
+              if keys:
+                  score += 1
+              return score
+
+
+          def _try_decode_object(raw):
+              try:
+                  decoder = json.JSONDecoder()
+                  obj, end = decoder.raw_decode(raw)
+                  if isinstance(obj, dict):
+                      return obj, raw[:end], raw[end:].strip()
+              except Exception:
+                  return None
+              return None
+
+
+          def _extract_json_object_text(text):
+              raw = _remove_think_blocks(_strip_code_fence(text))
+
+              if not raw:
+                  raise ValueError('LLM返�内容为空')
+              direct = _try_decode_object(raw)
+              if direct and not direct[2]:
+                  return direct[1]
+              candidates = []
+              for block in re.findall(r'```(?:json)?\s*(.*?)```', raw, flags=re.IGNORECASE | re.DOTALL):
+                  parsed = _try_decode_object(block.strip())
+                  if parsed:
+                      obj, obj_text, tail = parsed
+                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
+              seen_positions = set()
+              for match in re.finditer(r'\{', raw):
+                  pos = match.start()
+
+                  if pos in seen_positions:
+                      continue
+                  seen_positions.add(pos)
+                  parsed = _try_decode_object(raw[pos:])
+                  if parsed:
+                      obj, obj_text, tail = parsed
+                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
+              if candidates:
+                  candidates.sort(key=lambda item: (-item[0], item[1], -len(item[2])))
+                  return candidates[0][2]
+              raise ValueError(f'LLM返�内容不是合法JSON对象: {_truncate_text(raw, 1200)}')
+
+
+          def _pick_response(full_status_code, full_body, local_status_code, local_body):
+              local_body_text = '' if local_body is None else str(local_body).strip()
               if local_body_text:
                   return int(local_status_code or 0), local_body, 'local_llm'
               return int(full_status_code or 0), full_body, 'full_llm'
@@ -834,67 +898,3 @@
               while i < len(lines):
                   raw = lines[i]
                   if not raw.strip() or raw.lstrip().startswith('#'):
-                      i += 1
-                      continue
-                  indent = len(raw) - len(raw.lstrip(' '))
-                  s = raw.strip()
-                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
-                  if mblock:
-                      key = mblock.group(1)
-                      parts = []
-                      base = None
-                      j = i + 1
-                      while j < len(lines):
-                          nr = lines[j]
-                          if nr.strip():
-                              ni = len(nr) - len(nr.lstrip(' '))
-                              if ni <= indent:
-                                  break
-                              if base is None:
-                                  base = ni
-                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
-                          else:
-                              parts.append('')
-                          j += 1
-                      while stack and indent <= stack[-1][0]:
-                          stack.pop()
-                      parent = stack[-1][1]
-                      if isinstance(parent, dict):
-                          parent[key] = '\n'.join(parts).strip()
-                      i = j
-                      continue
-                  while stack and indent <= stack[-1][0]:
-                      stack.pop()
-                  parent = stack[-1][1]
-                  if s.startswith('- '):
-                      item = s[2:].strip()
-                      if not isinstance(parent, list):
-                          i += 1
-                          continue
-                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
-                          k, v = item.split(':', 1)
-                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
-                          parent.append(obj)
-                          stack.append((indent, obj))
-                          if not v.strip():
-                              stack.append((indent + 2, obj[k.strip()]))
-                      else:
-                          parent.append(_parse_scalar(item))
-                      i += 1
-                      continue
-                  if ':' in s:
-                      k, v = s.split(':', 1)
-                      key = k.strip()
-                      val = v.strip()
-                      if isinstance(parent, dict):
-                          if val:
-                              parent[key] = _parse_scalar(val)
-                              i += 1
-                              continue
-                          j = i + 1
-                          nxt = ''
-                          while j < len(lines):
-                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
-                                  nxt = lines[j].strip()
-                                  break
-                              j += 1
