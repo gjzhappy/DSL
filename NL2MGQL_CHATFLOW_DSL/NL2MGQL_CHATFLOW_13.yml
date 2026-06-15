@@ -584,6 +584,27 @@
             variable_selector:
             - '1776000000019'
             - patch_route
+          - comparison_operator: is
+            id: patch-applied-true
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776000000019'
+            - patch_applied
+          - comparison_operator: is
+            id: patch-requires-full-replan-false
+            value: 'false'
+            varType: boolean
+            variable_selector:
+            - '1776000000019'
+            - requires_full_replan
+          - comparison_operator: not empty
+            id: patched-normalized-plan-present
+            value: ''
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patched_normalized_semantic_plan_json
           id: case_use_patch
           logical_operator: and
         - case_id: case_chart_only
@@ -597,9 +618,9 @@
             - patch_route
           id: case_chart_only
           logical_operator: and
-        desc: refine_query patch 结果只按 patch_route 分流：use_patch 进入 semantic_plan_normalizer/Mongo
-          输入准备；chart_only 复用上一轮结果进入改图分支；默认进入 collection selector + schema retrieval
-          + LLM_Refine查询规划。
+        desc: refine_query patch 结果分流：use_patch 必须同时满足 patch_applied=true、requires_full_replan=false
+          且 patched_normalized_semantic_plan_json 非空，才进入 semantic_plan_normalizer/Mongo
+          输入准备；默认进入 collection selector + schema retrieval + LLM_Refine查询规划。
         selected: false
         title: 条件分支_patch结果判断
         type: if-else
@@ -896,5 +917,3 @@
                   if k not in normalized and k not in NON_SEMANTIC_SCHEMA_KEYS:
                       normalized[k] = v
               return normalized
-
-
