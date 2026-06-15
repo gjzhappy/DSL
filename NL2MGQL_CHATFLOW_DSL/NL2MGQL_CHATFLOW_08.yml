@@ -284,9 +284,9 @@
                   return None
               primary_key = str(doc.get('primary_key') or '_id').strip() or '_id'
               fields = _normalize_named_map(doc.get('fields'), 'fields', warnings, cname)
-              fields = {name: _normalize_field(field, cname, warnings) for name, field in fields.items()}
+              fields = {field['name']: _normalize_field(field, cname, warnings) for field in fields.values()}
               metrics = _normalize_named_map(doc.get('metrics'), 'metrics', warnings, cname)
-              metrics = {name: _normalize_metric(metric, primary_key) for name, metric in metrics.items()}
+              metrics = {metric['name']: _normalize_metric(metric, primary_key) for metric in metrics.values()}
               relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
               if doc.get('relations') not in (None, '') and not isinstance(doc.get('relations'), list):
                   warnings.append(f'{cname}.relations 不是 list，已按空列表处理。')

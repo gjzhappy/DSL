@@ -52,7 +52,7 @@
                               if _str(metric_item.get(alias_key)):
                                   derived_fields.add(_str(metric_item.get(alias_key)))
                   if metric_alias:
-                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll)
+                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll, alias_index)
                       if msrc == "ambiguous":
                           errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
                       elif msrc == "unresolved":
@@ -79,8 +79,9 @@
                               stage["metric_field"] = _str(metric.get("field")); autofixes.append({"type": "metric_field_fill", "metric": mname, "value": stage["metric_field"]})
                           elif _str(stage.get("metric_field")) and _str(metric.get("field")) and _str(stage.get("metric_field")) != _str(metric.get("field")):
                               errors.append(f"metric_field 与 schema metric {mname}.field 不一致。")
+                          coll_field_map = _named_item_map(coll_meta.get("fields") or {})
                           for sf in _list(metric.get("source_fields")):
-                              if sf not in (coll_meta.get("fields") or {}):
+                              if sf not in coll_field_map:
                                   errors.append(f"metric {mname}.source_field={sf} 不存在。")
                           allowed_dims = [_str(x) for x in _list(metric.get("allowed_dimensions"))]
                           if allowed_dims:
@@ -204,8 +205,9 @@
                   stage["limit"] = limit
 
                   valid_sort_fields = set(group_fields + projections + [_str(stage.get("metric_alias"))])
-                  for fname, fld in (coll_meta.get("fields") or {}).items():
-                      if fld.get("sortable"):
+                  for fld in _iter_named_items(coll_meta.get("fields") or {}):
+                      fname = _str(fld.get("name")).strip()
+                      if fname and fld.get("sortable"):
                           valid_sort_fields.add(fname)
                   sorts = []
                   for s in _list(stage.get("sort")):
@@ -242,7 +244,7 @@
 
               # relations
               for rc in related:
-                  rels = [r for r in ((collections.get(primary) or {}).get("relations") or []) if _str(r.get("target_collection")) == rc]
+                  rels = [r for r in _iter_named_items((collections.get(primary) or {}).get("relations") or []) if _str(r.get("target_collection")) == rc]
                   if not rels:
                       errors.append(f"schema relations 未声明 {primary}->{rc}，禁止 LLM 发明 join。")
                       continue
@@ -250,9 +252,11 @@
                       if not rel.get("join_keys"):
                           errors.append(f"relation {primary}->{rc} 缺少 join_keys。")
                       for jk in rel.get("join_keys") or []:
-                          if _str(jk.get("source_field")) not in ((collections.get(primary) or {}).get("fields") or {}):
+                          primary_field_map = _named_item_map((collections.get(primary) or {}).get("fields") or {})
+                          target_field_map = _named_item_map((collections.get(rc) or {}).get("fields") or {})
+                          if _str(jk.get("source_field")) not in primary_field_map:
                               errors.append(f"relation source_field={jk.get('source_field')} 不存在。")
-                          if _str(jk.get("target_field")) not in ((collections.get(rc) or {}).get("fields") or {}):
+                          if _str(jk.get("target_field")) not in target_field_map:
                               errors.append(f"relation target_field={jk.get('target_field')} 不存在。")
                       intent_text = json.dumps(plan.get("stages") or [], ensure_ascii=False)
                       for forbidden in _list(rel.get("forbidden_usage")):
@@ -304,7 +308,7 @@
                   if not y and metric_alias:
                       chart["y_field"] = metric_alias; autofixes.append({"type": "chart_y_fill", "value": metric_alias})
                   elif y and metric_alias and y != metric_alias:
-                      ym, ysrc, _ = _metric_alias(y, schema, primary)
+                      ym, ysrc, _ = _metric_alias(y, schema, primary, alias_index)
                       if ym == metric_alias:
                           chart["y_field"] = metric_alias; autofixes.append({"type": "chart_y_metric_alias_align", "from": y, "to": metric_alias})
                       else:
@@ -320,7 +324,7 @@
               negative = _negative_fields(compact, patch, patch_debug, qref)
               canonical_negative = []
               for nf in negative:
-                  cn, _, _ = _field_alias(nf, schema, primary)
+                  cn, _, _ = _field_alias(nf, schema, primary, alias_index)
                   canonical_negative.append(cn)
               used = []
               for st in plan.get("stages") or []:

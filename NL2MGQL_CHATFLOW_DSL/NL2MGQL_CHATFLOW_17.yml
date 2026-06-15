@@ -501,10 +501,10 @@
           \       return None\n    cname = str(doc.get('collection_name') or '').strip()\n
           \   if not cname:\n        return None\n    primary_key = str(doc.get('primary_key')
           or '_id').strip() or '_id'\n    fields = _normalize_named_map(doc.get('fields'),
-          'fields', warnings, cname)\n    fields = {name: _normalize_field(field, cname,
-          warnings) for name, field in fields.items()}\n    metrics = _normalize_named_map(doc.get('metrics'),
-          'metrics', warnings, cname)\n    metrics = {name: _normalize_metric(metric,
-          primary_key) for name, metric in metrics.items()}\n    relations = doc.get('relations')
+          'fields', warnings, cname)\n    fields = {field['name']: _normalize_field(field, cname,
+          warnings) for field in fields.values()}\n    metrics = _normalize_named_map(doc.get('metrics'),
+          'metrics', warnings, cname)\n    metrics = {metric['name']: _normalize_metric(metric,
+          primary_key) for metric in metrics.values()}\n    relations = doc.get('relations')
           if isinstance(doc.get('relations'), list) else []\n    if doc.get('relations')
           not in (None, '') and not isinstance(doc.get('relations'), list):\n        warnings.append(f'{cname}.relations
           不是 list，已按空列表处理。')\n    normalized = {\n        'collection_name': cname,\n
