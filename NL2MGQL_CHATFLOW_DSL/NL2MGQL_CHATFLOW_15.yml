@@ -438,6 +438,9 @@
               "aggregate_group_by": "aggregate_summary",
               "group_aggregate": "aggregate_summary",
               "grouped_aggregate": "aggregate_summary",
+              "grouped_aggregation": "aggregate_summary",
+              "aggregation_grouped": "aggregate_summary",
+              "grouped_metric_aggregation": "aggregate_summary",
               "aggregate_by_group": "aggregate_summary",
               "aggregate_by_dimension": "aggregate_summary",
               "dimension_aggregate": "aggregate_summary",
@@ -822,16 +825,34 @@
                   stage["group_fields"] = group_fields
 
                   metric_alias = _str(stage.get("metric_alias"))
+                  derived_fields = set()
+                  for alias in _list(stage.get("metric_alias")):
+                      if _str(alias):
+                          derived_fields.add(_str(alias))
+                  for metric_item in _list(stage.get("metrics")):
+                      if isinstance(metric_item, dict):
+                          for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                              if _str(metric_item.get(alias_key)):
+                                  derived_fields.add(_str(metric_item.get(alias_key)))
                   if metric_alias:
                       mname, msrc, _ = _metric_alias(metric_alias, schema, coll)
                       if msrc == "ambiguous":
                           errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
                       elif msrc == "unresolved":
-                          errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
+                          if _stage_is_aggregate(stage) and _str(stage.get("metric_function")):
+                              derived_fields.add(metric_alias)
+                              warnings.append(f"允许聚合派生字段 {metric_alias} 用于 sort/projection/chart.y_field。")
+                              autofixes.append({"type": "derived_metric_alias_allow", "field": metric_alias, "places": ["sort", "projection_fields", "chart_request.y_field"]})
+                          else:
+                              errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
                       else:
                           if mname != metric_alias:
                               autofixes.append({"type": "metric_alias_canonicalize", "from": metric_alias, "to": mname, "collection": coll})
+                              if metric_alias in derived_fields:
+                                  derived_fields.remove(metric_alias)
+                              derived_fields.add(mname)
                           stage["metric_alias"] = mname
+                          metric_alias = mname
                           metric = _metric(schema, coll, mname)
                           if not _str(stage.get("metric_function")) and _str(metric.get("function")):
                               stage["metric_function"] = _str(metric.get("function")); autofixes.append({"type": "metric_function_fill", "metric": mname, "value": stage["metric_function"]})
@@ -884,7 +905,12 @@
 
                   projections = []
                   for pf in _list(stage.get("projection_fields")):
-                      projections.append(_canonical_field(_str(pf), schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                      pf_str = _str(pf)
+                      if pf_str in derived_fields:
+                          projections.append(pf_str)
+                          autofixes.append({"type": "derived_metric_alias_allow", "field": pf_str, "place": "projection_fields"})
+                      else:
+                          projections.append(_canonical_field(pf_str, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
                   stage["projection_fields"] = projections
 
                   tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
