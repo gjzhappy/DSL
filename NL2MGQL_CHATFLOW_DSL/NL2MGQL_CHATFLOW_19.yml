@@ -733,60 +733,55 @@
           def _dumps(v):
               return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
 
-          try:
-              import yaml
-          except Exception:
-              yaml = None
+          def _is_ast_like(obj):
+              if not isinstance(obj, dict):
+                  return False
+              if 'collection' in obj and any(k in obj for k in ('filters', 'group_by', 'sort', 'limit')):
+                  return True
+              return False
+
           def _looks_like_schema_doc(obj):
               if not isinstance(obj, dict): return False
-              keys = set(obj.keys())
-              if 'collection' in obj and not obj.get('collection_name') and keys.issubset({'collection', 'filters', 'group_by', 'sort', 'limit', 'metrics'}):
-                  return False
+              if _is_ast_like(obj): return False
               if str(obj.get('metadata_type') or '').strip() == 'mongo_schema': return True
               if str(obj.get('contract_version') or '').strip() == 'schema_metadata_contract': return True
-              if obj.get('collection_name') and any(k in obj for k in ('fields', 'metrics', 'relations', 'query_rules')): return True
-              if isinstance(obj.get('collections'), (dict, list)): return True
+              if obj.get('collection_name') and any(k in obj for k in ('fields', 'metrics', 'relations', 'query_rules', 'default_time_field', 'primary_key')): return True
+              if isinstance(obj.get('collections'), dict): return True
               return False
 
           def _extract_fenced_blocks(text):
-              raw = str(text or '')
-              fence_re = re.compile(r'```(?P<lang>[A-Za-z0-9_-]*)[^\n]*\n(?P<body>.*?)\n```', flags=re.S)
-              return [((m.group('lang') or '').lower(), (m.group('body') or '').strip()) for m in fence_re.finditer(raw)]
+              blocks = []
+              if not isinstance(text, str):
+                  return blocks
+              pattern = re.compile(r'```([^\n`]*)\n(.*?)```', flags=re.S)
+              for m in pattern.finditer(text):
+                  raw_lang = (m.group(1) or '').strip()
+                  lang = raw_lang.lower().split()[0] if raw_lang else ''
+                  body = (m.group(2) or '').strip()
+                  blocks.append({'lang': lang, 'raw_lang': raw_lang, 'body': body})
+              return blocks
 
           def _extract_schema_objects(text, warnings=None, errors=None):
-              out = []; blocks = _extract_fenced_blocks(text)
-              yaml_blocks = [(lang, body) for lang, body in blocks if lang in ('yaml', 'yml')]
-              if yaml_blocks and yaml is None:
-                  if errors is not None: errors.append({'type': 'hydration_yaml_parser_unavailable'})
-                  if warnings is not None: warnings.append({'type': 'hydration_yaml_parser_unavailable', 'action': 'fail_safe_no_schema_output'})
+              out = []
+              blocks = _extract_fenced_blocks(text)
+              json_blocks = [b for b in blocks if b.get('lang') == 'json']
+              if not json_blocks:
+                  if errors is not None: errors.append({'type': 'hydration_json_schema_block_missing'})
+                  if warnings is not None: warnings.append({'type': 'hydration_json_schema_block_missing', 'action': 'fail_safe_no_schema_output'})
                   return out
-              parse_blocks = yaml_blocks or [(lang, body) for lang, body in blocks if lang == 'json']
-              for lang, body in parse_blocks:
-                  obj = None
-                  if lang in ('yaml', 'yml'):
-                      try: obj = yaml.safe_load(body)
-                      except Exception as e:
-                          if errors is not None: errors.append({'type': 'hydration_yaml_parse_failed', 'error': str(e)})
-                          continue
-                  elif lang == 'json':
-                      try: obj = json.loads(body)
-                      except Exception as e:
-                          if warnings is not None: warnings.append({'type': 'hydration_json_parse_failed', 'error': str(e)})
-                          continue
+              for b in json_blocks:
+                  try:
+                      obj = json.loads(b.get('body') or '')
+                  except Exception as e:
+                      if warnings is not None: warnings.append({'type': 'hydration_json_block_parse_failed', 'error': str(e)[:300]})
+                      continue
                   if _looks_like_schema_doc(obj):
                       out.append(obj)
-                  elif obj is not None and warnings is not None:
-                      warnings.append({'type': 'hydration_non_schema_block_skipped', 'language': lang})
-              if out or blocks:
-                  return out
-              raw = str(text or '').strip()
-              if raw.startswith('{'):
-                  try:
-                      obj = json.loads(raw)
-                      if _looks_like_schema_doc(obj): out.append(obj)
-                      elif warnings is not None: warnings.append({'type': 'hydration_non_schema_json_skipped', 'reason': 'json_object_does_not_look_like_schema_metadata'})
-                  except Exception as e:
-                      if warnings is not None: warnings.append({'type': 'hydration_json_parse_failed', 'error': str(e)})
+                  elif warnings is not None:
+                      warnings.append({'type': 'hydration_non_schema_json_block_skipped'})
+              if not out:
+                  if errors is not None: errors.append({'type': 'hydration_json_schema_metadata_not_found'})
+                  if warnings is not None: warnings.append({'type': 'hydration_json_schema_metadata_not_found', 'action': 'fail_safe_no_schema_output'})
               return out
           def _first_non_empty(*vals):
               for v in vals:
@@ -851,7 +846,7 @@
                   _add_alias(ca, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
                   _add_alias(aliases, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
                   _add_alias(ca, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
-                  for a, _, _ in _iter_alias_entries(coll.get('collection_aliases') or coll.get('aliases')):
+                  for a, _, _ in _iter_alias_entries(coll.get('collection_aliases')):
                       _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
                       _add_alias(ca, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
                   for fname, f in _iter_named_items(coll.get('fields') or {}, ['name', 'field_name']):
@@ -896,7 +891,11 @@
               warnings = _loads(hydration_warnings_json, []) or []
               errors = []
               collections = {}
+              compact = _loads(compact_context_json, {}) or {}
+              ref = compact.get('schema_context_ref') if isinstance(compact.get('schema_context_ref'), dict) else {}
               wanted = [str(c or '').strip() for c in (hydration_collections or []) if str(c or '').strip()]
+              if not wanted:
+                  wanted = _as_ref_list(ref.get('collections'))
               wanted_set = set(wanted)
 
               def _add_collection(cname, coll, item_collection=''):
@@ -924,12 +923,10 @@
                       else:
                           warnings.append({'type': 'hydration_non_schema_json_skipped', 'reason': 'json_object_does_not_look_like_schema_metadata'})
               if not collections:
-                  errors.append('hydrated_schema_metadata_empty')
+                  errors.append({'type': 'hydrated_schema_metadata_empty'})
               meta = {'contract_version': 'schema_metadata_contract', 'schema_version': '', 'schema_digest': '', 'collections': collections, 'warnings': warnings, 'parse_errors': errors}
               meta['schema_digest'] = _digest(meta)
               alias = _build_alias(meta)
-              compact = _loads(compact_context_json, {}) or {}
-              ref = compact.get('schema_context_ref') if isinstance(compact.get('schema_context_ref'), dict) else {}
               if ref.get('schema_digest') and ref.get('schema_digest') != meta['schema_digest']:
                   warnings.append('hydrated_schema_digest_mismatch_with_compact_ref')
               version = str(meta.get('schema_version') or ref.get('schema_version') or '').strip()
