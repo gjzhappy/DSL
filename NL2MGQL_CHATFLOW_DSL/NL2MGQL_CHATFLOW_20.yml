@@ -47,7 +47,7 @@
               ref = _loads(hydrated_schema_context_ref_json, {}) or {}
               ref = _prune_ref_to_parsed(ref, meta, warnings)
               ready = bool(hydration_success and meta.get('collections') and alias)
-              ctx = {
+              runtime_ctx = {
                   'contract_version': 'schema_runtime_context_contract',
                   'schema_context_ready': ready,
                   'validator_schema_context_ready': ready,
@@ -64,8 +64,24 @@
                   'warnings': warnings,
                   'errors': errors,
               }
-              ctx['schema_runtime_context_json'] = _dumps(ctx)
-              return ctx
+              return {
+                  'contract_version': runtime_ctx['contract_version'],
+                  'schema_context_ready': ready,
+                  'validator_schema_context_ready': ready,
+                  'schema_hydration_needed': False,
+                  'schema_hydration_reason': '',
+                  'schema_hydration_collections_json': _dumps([]),
+                  'schema_metadata_json': runtime_ctx['schema_metadata_json'],
+                  'schema_alias_index_json': runtime_ctx['schema_alias_index_json'],
+                  'schema_digest': runtime_ctx['schema_digest'],
+                  'schema_version': runtime_ctx['schema_version'],
+                  'catalog_digest': runtime_ctx['catalog_digest'],
+                  'schema_source': runtime_ctx['schema_source'],
+                  'schema_context_ref_json': _dumps(ref),
+                  'warnings_json': _dumps(warnings),
+                  'errors_json': _dumps(errors),
+                  'schema_runtime_context_json': _dumps(runtime_ctx),
+              }
         code_language: python3
         desc: Phase 10：把 hydrated metadata/alias 注入 validator runtime context；仅运行时使用，不写入
           compact context。
@@ -85,9 +101,9 @@
           schema_hydration_reason:
             children:
             type: string
-          schema_hydration_collections:
+          schema_hydration_collections_json:
             children:
-            type: array[string]
+            type: string
           schema_metadata_json:
             children:
             type: string
@@ -106,15 +122,15 @@
           schema_source:
             children:
             type: string
-          schema_context_ref:
+          schema_context_ref_json:
             children:
-            type: object
-          warnings:
+            type: string
+          warnings_json:
             children:
-            type: array[string]
-          errors:
+            type: string
+          errors_json:
             children:
-            type: array[string]
+            type: string
           schema_runtime_context_json:
             children:
             type: string
@@ -219,16 +235,16 @@
                   'validator_schema_context_ready': bool(ctx.get('validator_schema_context_ready') or ctx.get('schema_context_ready')),
                   'schema_hydration_needed': bool(ctx.get('schema_hydration_needed')),
                   'schema_hydration_reason': str(ctx.get('schema_hydration_reason') or ''),
-                  'schema_hydration_collections': ctx.get('schema_hydration_collections') or [],
+                  'schema_hydration_collections_json': _dumps(ctx.get('schema_hydration_collections') or []),
                   'schema_metadata_json': ctx.get('schema_metadata_json') or '{}',
                   'schema_alias_index_json': ctx.get('schema_alias_index_json') or '{}',
                   'schema_digest': str(ctx.get('schema_digest') or ''),
                   'schema_version': str(ctx.get('schema_version') or ''),
                   'catalog_digest': str(ctx.get('catalog_digest') or ''),
                   'schema_source': str(ctx.get('schema_source') or 'missing'),
-                  'schema_context_ref': ctx.get('schema_context_ref') or {},
-                  'warnings': ctx.get('warnings') or [],
-                  'errors': ctx.get('errors') or [],
+                  'schema_context_ref_json': _dumps(ctx.get('schema_context_ref') or {}),
+                  'warnings_json': _dumps(ctx.get('warnings') or []),
+                  'errors_json': _dumps(ctx.get('errors') or []),
                   'schema_runtime_context_json': ctx['schema_runtime_context_json'],
               }
         code_language: python3
@@ -250,9 +266,9 @@
           schema_hydration_reason:
             children:
             type: string
-          schema_hydration_collections:
+          schema_hydration_collections_json:
             children:
-            type: array[string]
+            type: string
           schema_metadata_json:
             children:
             type: string
@@ -271,15 +287,15 @@
           schema_source:
             children:
             type: string
-          schema_context_ref:
+          schema_context_ref_json:
             children:
-            type: object
-          warnings:
+            type: string
+          warnings_json:
             children:
-            type: array[string]
-          errors:
+            type: string
+          errors_json:
             children:
-            type: array[string]
+            type: string
           schema_runtime_context_json:
             children:
             type: string

@@ -733,62 +733,61 @@
           def _dumps(v):
               return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
 
-
+          try:
+              import yaml
+          except Exception:
+              yaml = None
           def _looks_like_schema_doc(obj):
               if not isinstance(obj, dict): return False
+              keys = set(obj.keys())
+              if 'collection' in obj and not obj.get('collection_name') and keys.issubset({'collection', 'filters', 'group_by', 'sort', 'limit', 'metrics'}):
+                  return False
               if str(obj.get('metadata_type') or '').strip() == 'mongo_schema': return True
-              if obj.get('collection_name') and ('fields' in obj or 'metrics' in obj or 'relations' in obj or 'query_rules' in obj or 'default_time_field' in obj): return True
-              if 'collections' in obj: return True
+              if str(obj.get('contract_version') or '').strip() == 'schema_metadata_contract': return True
+              if obj.get('collection_name') and any(k in obj for k in ('fields', 'metrics', 'relations', 'query_rules')): return True
+              if isinstance(obj.get('collections'), (dict, list)): return True
               return False
 
-          def _parse_simple_yaml_schema(body):
-              obj, current_key, current_item = {}, None, None
-              for raw_line in str(body or '').splitlines():
-                  if not raw_line.strip() or raw_line.lstrip().startswith('#'): continue
-                  indent = len(raw_line) - len(raw_line.lstrip(' ')); line = raw_line.strip()
-                  if indent == 0 and ':' in line:
-                      key, val = line.split(':', 1); key = key.strip(); val = val.strip().strip('"\'')
-                      current_key, current_item = key, None; obj[key] = val if val else [] if key in ('fields', 'metrics', 'relations') else {}
-                  elif current_key and isinstance(obj.get(current_key), list) and line.startswith('- '):
-                      rest = line[2:].strip()
-                      current_item = dict([tuple(x.strip() for x in rest.split(':', 1))]) if ':' in rest else {'name': rest.strip('"\'')}
-                      for k, v in list(current_item.items()): current_item[k] = str(v or '').strip().strip('"\'')
-                      obj[current_key].append(current_item)
-                  elif current_key and isinstance(obj.get(current_key), list) and current_item is not None and ':' in line:
-                      key, val = line.split(':', 1); current_item[key.strip()] = val.strip().strip('"\'') if val.strip() else []
-                  elif current_key and isinstance(obj.get(current_key), list) and current_item is not None and line.startswith('- '):
-                      for k in ('aliases', 'value_aliases'):
-                          if isinstance(current_item.get(k), list): current_item[k].append(line[2:].strip().strip('"\'')); break
-              return obj
+          def _extract_fenced_blocks(text):
+              raw = str(text or '')
+              fence_re = re.compile(r'```(?P<lang>[A-Za-z0-9_-]*)[^\n]*\n(?P<body>.*?)\n```', flags=re.S)
+              return [((m.group('lang') or '').lower(), (m.group('body') or '').strip()) for m in fence_re.finditer(raw)]
 
-          def _extract_schema_objects(text, warnings=None):
-              out = []; raw = str(text or '')
-              fence_re = re.compile(r'```(?P<lang>json|yaml|yml)?\s*\n(?P<body>.*?)\n```', flags=re.I|re.S)
-              for m in fence_re.finditer(raw):
-                  lang = (m.group('lang') or '').lower(); body = (m.group('body') or '').strip(); obj = None
-                  if lang == 'json' or body.startswith('{'):
+          def _extract_schema_objects(text, warnings=None, errors=None):
+              out = []; blocks = _extract_fenced_blocks(text)
+              yaml_blocks = [(lang, body) for lang, body in blocks if lang in ('yaml', 'yml')]
+              if yaml_blocks and yaml is None:
+                  if errors is not None: errors.append({'type': 'hydration_yaml_parser_unavailable'})
+                  if warnings is not None: warnings.append({'type': 'hydration_yaml_parser_unavailable', 'action': 'fail_safe_no_schema_output'})
+                  return out
+              parse_blocks = yaml_blocks or [(lang, body) for lang, body in blocks if lang == 'json']
+              for lang, body in parse_blocks:
+                  obj = None
+                  if lang in ('yaml', 'yml'):
+                      try: obj = yaml.safe_load(body)
+                      except Exception as e:
+                          if errors is not None: errors.append({'type': 'hydration_yaml_parse_failed', 'error': str(e)})
+                          continue
+                  elif lang == 'json':
                       try: obj = json.loads(body)
                       except Exception as e:
                           if warnings is not None: warnings.append({'type': 'hydration_json_parse_failed', 'error': str(e)})
-                  elif lang in ('yaml', 'yml'):
-                      try:
-                          import yaml
-                          obj = yaml.safe_load(body)
-                      except Exception as e:
-                          obj = _parse_simple_yaml_schema(body)
-                          if not _looks_like_schema_doc(obj) and warnings is not None: warnings.append({'type': 'hydration_yaml_parse_failed', 'error': str(e)})
-                  if _looks_like_schema_doc(obj): out.append(obj)
-                  elif obj is not None and warnings is not None: warnings.append({'type': 'hydration_non_schema_block_skipped'})
-              s = raw.strip()
-              if s.startswith('{'):
+                          continue
+                  if _looks_like_schema_doc(obj):
+                      out.append(obj)
+                  elif obj is not None and warnings is not None:
+                      warnings.append({'type': 'hydration_non_schema_block_skipped', 'language': lang})
+              if out or blocks:
+                  return out
+              raw = str(text or '').strip()
+              if raw.startswith('{'):
                   try:
-                      obj = json.loads(s)
+                      obj = json.loads(raw)
                       if _looks_like_schema_doc(obj): out.append(obj)
                       elif warnings is not None: warnings.append({'type': 'hydration_non_schema_json_skipped', 'reason': 'json_object_does_not_look_like_schema_metadata'})
                   except Exception as e:
                       if warnings is not None: warnings.append({'type': 'hydration_json_parse_failed', 'error': str(e)})
               return out
-
           def _first_non_empty(*vals):
               for v in vals:
                   s = str(v or '').strip()
@@ -900,27 +899,28 @@
               wanted = [str(c or '').strip() for c in (hydration_collections or []) if str(c or '').strip()]
               wanted_set = set(wanted)
 
-              def _add_collection(cname, coll):
+              def _add_collection(cname, coll, item_collection=''):
                   cname = str(cname or '').strip()
+                  item_collection = str(item_collection or '').strip()
                   if not cname:
-                      return
+                      warnings.append({'type': 'hydrated_schema_collection_missing', 'action': 'discarded'}); return
+                  if item_collection and cname != item_collection:
+                      warnings.append({'type': 'hydrated_schema_collection_mismatch', 'expected': item_collection, 'actual': cname, 'action': 'discarded'}); return
                   if wanted_set and cname not in wanted_set:
-                      warnings.append({'type': 'hydrated_schema_collection_mismatch', 'expected': wanted, 'actual': cname, 'action': 'discarded'})
-                      return
+                      warnings.append({'type': 'hydrated_schema_collection_mismatch', 'expected': wanted, 'actual': cname, 'action': 'discarded'}); return
                   collections[cname] = _normalize_collection(cname, coll)
 
               for raw in hydrated_schema_results or []:
                   item = _loads(raw, {}) or {}
                   cname_hint = str(item.get('collection_name') or '').strip()
                   text = str(item.get('context_text') or '')
-                  for obj in _extract_schema_objects(text, warnings):
+                  for obj in _extract_schema_objects(text, warnings, errors):
                       if isinstance(obj, dict) and 'collections' in obj:
                           for cname, coll in _iter_named_items(obj.get('collections'), ['collection_name', 'name']):
-                              _add_collection(cname, coll)
+                              _add_collection(cname, coll, cname_hint)
                       elif isinstance(obj, dict) and _looks_like_schema_doc(obj):
-                          cname = str(obj.get('collection_name') or cname_hint).strip()
-                          if cname:
-                              _add_collection(cname, obj)
+                          cname = str(obj.get('collection_name') or '').strip()
+                          _add_collection(cname, obj, cname_hint)
                       else:
                           warnings.append({'type': 'hydration_non_schema_json_skipped', 'reason': 'json_object_does_not_look_like_schema_metadata'})
               if not collections:
