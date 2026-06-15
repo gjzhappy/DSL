@@ -718,16 +718,79 @@
               return kept
 
 
-          def _field_alias(raw: str, schema: Dict[str, Any], collection: str) -> Tuple[str, str, List[Dict[str, Any]]]:
-              raw = _str(raw)
-              coll = (schema.get("collections") or {}).get(collection) or {}
-              if raw in (coll.get("fields") or {}):
+          def _iter_named_items(v: Any):
+              """Support dict[name -> meta] and list[{"name": ..., ...}] schema sections."""
+              if isinstance(v, dict):
+                  for name, meta in v.items():
+                      if isinstance(meta, dict):
+                          item = dict(meta)
+                          item.setdefault("name", name)
+                          yield item
+                      else:
+                          yield {"name": _str(name), "value": meta}
+              elif isinstance(v, list):
+                  for item in v:
+                      if isinstance(item, dict):
+                          yield item
+
+
+          def _named_item_map(v: Any) -> Dict[str, Dict[str, Any]]:
+              out: Dict[str, Dict[str, Any]] = {}
+              for item in _iter_named_items(v):
+                  name = _str(item.get("name")).strip()
+                  if name:
+                      out[name] = item
+              return out
+
+
+          def _alias_hits(alias_index: Any, section: str, raw: str, collection: str, kind: str) -> List[Dict[str, Any]]:
+              if not isinstance(alias_index, dict):
+                  return []
+              bucket = alias_index.get(section)
+              if not isinstance(bucket, dict):
+                  return []
+              hits = bucket.get(raw) or []
+              if isinstance(hits, dict):
+                  hits = [hits]
+              out = []
+              for hit in hits if isinstance(hits, list) else []:
+                  if not isinstance(hit, dict):
+                      continue
+                  if collection and hit.get("collection") != collection:
+                      continue
+                  if hit.get("kind") and hit.get("kind") != kind:
+                      continue
+                  name = _str(hit.get("name")).strip()
+                  if name:
+                      out.append({"name": name, "source": section, "label": hit.get("label")})
+              return out
+
+
+          def _field_alias(raw: str, schema: Dict[str, Any], collection: str, alias_index: Any = None) -> Tuple[str, str, List[Dict[str, Any]]]:
+              raw = _str(raw).strip()
+              if not raw:
+                  return raw, "unresolved", []
+              hits = _alias_hits(alias_index, "field_aliases", raw, collection, "field")
+              if not hits:
+                  hits = _alias_hits(alias_index, "aliases", raw, collection, "field")
+              if len(hits) == 1:
+                  return hits[0]["name"], hits[0]["source"], hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              fields = coll.get("fields") or []
+              field_map = _named_item_map(fields)
+              if raw in field_map:
                   return raw, "schema_field_name", []
-              hits = []
-              for fname, field in (coll.get("fields") or {}).items():
-                  aliases = [fname, field.get("label")] + _list(field.get("aliases"))
-                  if raw and raw in [_str(x) for x in aliases]:
-                      hits.append({"name": fname, "source": "field_alias", "label": field.get("label")})
+              for field in _iter_named_items(fields):
+                  name = _str(field.get("name")).strip()
+                  label = _str(field.get("label")).strip()
+                  aliases = field.get("aliases") or []
+                  if isinstance(aliases, str):
+                      aliases = [aliases]
+                  candidates = [name, label] + [_str(x).strip() for x in aliases if _str(x).strip()]
+                  if raw in candidates:
+                      hits.append({"name": name, "source": "field_alias", "label": field.get("label")})
               if len(hits) == 1:
                   return hits[0]["name"], "field_alias", hits
               if len(hits) > 1:
@@ -735,16 +798,31 @@
               return raw, "unresolved", []
 
 
-          def _metric_alias(raw: str, schema: Dict[str, Any], collection: str) -> Tuple[str, str, List[Dict[str, Any]]]:
-              raw = _str(raw)
-              coll = (schema.get("collections") or {}).get(collection) or {}
-              if raw in (coll.get("metrics") or {}):
+          def _metric_alias(raw: str, schema: Dict[str, Any], collection: str, alias_index: Any = None) -> Tuple[str, str, List[Dict[str, Any]]]:
+              raw = _str(raw).strip()
+              if not raw:
+                  return raw, "unresolved", []
+              hits = _alias_hits(alias_index, "metric_aliases", raw, collection, "metric")
+              if not hits:
+                  hits = _alias_hits(alias_index, "aliases", raw, collection, "metric")
+              if len(hits) == 1:
+                  return hits[0]["name"], hits[0]["source"], hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              metrics = coll.get("metrics") or []
+              metric_map = _named_item_map(metrics)
+              if raw in metric_map:
                   return raw, "schema_metric_name", []
-              hits = []
-              for mname, metric in (coll.get("metrics") or {}).items():
-                  aliases = [mname, metric.get("label")] + _list(metric.get("aliases"))
-                  if raw and raw in [_str(x) for x in aliases]:
-                      hits.append({"name": mname, "source": "metric_alias", "label": metric.get("label")})
+              for metric in _iter_named_items(metrics):
+                  name = _str(metric.get("name")).strip()
+                  label = _str(metric.get("label")).strip()
+                  aliases = metric.get("aliases") or []
+                  if isinstance(aliases, str):
+                      aliases = [aliases]
+                  candidates = [name, label] + [_str(x).strip() for x in aliases if _str(x).strip()]
+                  if raw in candidates:
+                      hits.append({"name": name, "source": "metric_alias", "label": metric.get("label")})
               if len(hits) == 1:
                   return hits[0]["name"], "metric_alias", hits
               if len(hits) > 1:
@@ -761,19 +839,21 @@
 
 
           def _field(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
-              return ((schema.get("collections") or {}).get(collection) or {}).get("fields", {}).get(name) or {}
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              return _named_item_map(coll.get("fields") or {}).get(name) or {}
 
 
           def _metric(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
-              return ((schema.get("collections") or {}).get(collection) or {}).get("metrics", {}).get(name) or {}
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              return _named_item_map(coll.get("metrics") or {}).get(name) or {}
 
 
           def _is_sensitive(f: Dict[str, Any]) -> bool:
               return bool(f.get("sensitive") or f.get("pii") or f.get("pii_category"))
 
 
-          def _canonical_field(raw: str, schema: Dict[str, Any], collection: str, place: str, errors: List[str], warnings: List[str], autofixes: List[Dict[str, Any]], require_flag: str = "") -> str:
-              name, source, hits = _field_alias(raw, schema, collection)
+          def _canonical_field(raw: str, schema: Dict[str, Any], collection: str, place: str, errors: List[str], warnings: List[str], autofixes: List[Dict[str, Any]], require_flag: str = "", alias_index: Any = None) -> str:
+              name, source, hits = _field_alias(raw, schema, collection, alias_index)
               if source == "ambiguous":
                   errors.append(f"字段 {raw} 在 collection={collection} 中存在多个候选，需要澄清。")
                   return raw
