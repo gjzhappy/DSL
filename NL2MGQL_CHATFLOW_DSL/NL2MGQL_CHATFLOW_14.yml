@@ -1,156 +1,3 @@
-                      continue
-                  if ':' in s:
-                      k, v = s.split(':', 1)
-                      key = k.strip()
-                      val = v.strip()
-                      if isinstance(parent, dict):
-                          if val:
-                              parent[key] = _parse_scalar(val)
-                              i += 1
-                              continue
-                          j = i + 1
-                          nxt = ''
-                          while j < len(lines):
-                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
-                                  nxt = lines[j].strip()
-                                  break
-                              j += 1
-                          container = [] if nxt.startswith('- ') else {}
-                          parent[key] = container
-                          stack.append((indent, container))
-                  i += 1
-              return root
-
-
-          def _json_loads_maybe(text):
-              text = str(text or '').strip()
-              if not text:
-                  raise ValueError('empty JSON text')
-              return json.loads(text)
-
-
-          def _parse_metadata_block(block):
-              block = str(block or '').strip()
-              if not block:
-                  return {}
-              if block.startswith('{') or block.startswith('['):
-                  return json.loads(block)
-              return _parse_simple_yaml(block)
-
-
-          def extract_schema_metadata_blocks(text):
-              raw = str(text or '')
-              blocks = []
-              # Prefer explicit Schema Metadata fenced blocks, YAML or JSON.
-              pattern = re.compile(r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```', re.I | re.S)
-              blocks.extend(m.group(2) for m in pattern.finditer(raw))
-              if blocks:
-                  return blocks
-              # Then accept any fenced YAML/JSON block that declares mongo/schema contract metadata.
-              pattern2 = re.compile(r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"|"contract_version"\s*:\s*"schema_metadata_contract").*?)\n```', re.I | re.S)
-              blocks.extend(m.group(1) for m in pattern2.finditer(raw))
-              return blocks
-
-
-          def _as_list(value):
-              if value is None or value == '':
-                  return []
-              if isinstance(value, list):
-                  return [x for x in value if x is not None and str(x).strip()]
-              return [x for x in _split_inline_list(value) if str(x).strip()]
-
-
-          def _as_str_list(value):
-              return [str(x).strip() for x in _as_list(value) if str(x).strip()]
-
-
-          def _as_dict(value):
-              return value if isinstance(value, dict) else {}
-
-
-          def _normalize_named_map(value, kind, warnings, collection_name):
-              result = {}
-              if value is None or value == '':
-                  return result
-              if isinstance(value, dict):
-                  iterable = []
-                  for name, item in value.items():
-                      if isinstance(item, dict):
-                          merged = dict(item)
-                          merged.setdefault('name', name)
-                          iterable.append(merged)
-                      else:
-                          warnings.append(f'{collection_name}.{kind}.{name} 不是对象，已忽略。')
-                  source_shape = 'dict'
-              elif isinstance(value, list):
-                  iterable = value
-                  source_shape = 'list'
-              else:
-                  warnings.append(f'{collection_name}.{kind} 不是 list/dict，已按空对象处理。')
-                  return result
-              for item in iterable:
-                  if not isinstance(item, dict):
-                      warnings.append(f'{collection_name}.{kind} 中存在非对象条目，已忽略。')
-                      continue
-                  name = str(item.get('name') or '').strip()
-                  if not name:
-                      warnings.append(f'{collection_name}.{kind} 中存在缺少 name 的条目，已忽略。')
-                      continue
-                  normalized = copy.deepcopy(item)
-                  normalized['name'] = name
-                  result[name] = normalized
-              return result
-
-
-          def _infer_function(expression):
-              expr = str(expression or '').strip().lower()
-              m = re.match(r'^\s*([a-z_][\w]*)\s*\(', expr)
-              return m.group(1) if m else ''
-
-
-          def _normalize_field(field, collection_name, warnings):
-              item = copy.deepcopy(field) if isinstance(field, dict) else {}
-              name = str(item.get('name') or '').strip()
-              sensitive = bool(item.get('sensitive', False))
-              pii = bool(item.get('pii', False))
-              role = str(item.get('role') or 'dimension').strip() or 'dimension'
-              if 'returnable' not in item:
-                  item['returnable'] = False if sensitive or pii else True
-                  if not (sensitive or pii):
-                      warnings.append(f'{collection_name}.{name}.returnable 缺失，C-MVP 兼容期默认 true。')
-              if 'projectable' not in item:
-                  item['projectable'] = False if sensitive or pii else True
-                  if not (sensitive or pii):
-                      warnings.append(f'{collection_name}.{name}.projectable 缺失，C-MVP 兼容期默认 true。')
-              normalized = {
-                  'name': name,
-                  'label': str(item.get('label') or name).strip(),
-                  'type': str(item.get('type') or '').strip(),
-                  'role': role,
-                  'semantic_type': str(item.get('semantic_type') or role).strip() or role,
-                  'description': str(item.get('description') or '').strip(),
-                  'aliases': _as_str_list(item.get('aliases')),
-                  'allowed_values': _as_str_list(item.get('allowed_values')),
-                  'value_aliases': {str(k).strip(): str(v).strip() for k, v in _as_dict(item.get('value_aliases')).items() if str(k).strip() and str(v).strip()},
-                  'filterable': bool(item.get('filterable', False)),
-                  'groupable': False if (sensitive or pii) and 'groupable' not in item else bool(item.get('groupable', False)),
-                  'sortable': False if (sensitive or pii) and 'sortable' not in item else bool(item.get('sortable', False)),
-                  'returnable': bool(item.get('returnable', False)),
-                  'projectable': bool(item.get('projectable', False)),
-                  'chartable': bool(item.get('chartable', False)),
-                  'aggregatable': _as_str_list(item.get('aggregatable')),
-                  'sensitive': sensitive,
-                  'pii': pii,
-                  'pii_category': str(item.get('pii_category') or '').strip(),
-                  'default_display': bool(item.get('default_display', False)),
-              }
-              # Preserve current/forward-compatible extra field properties.
-              for k, v in item.items():
-                  if k not in normalized and k not in NON_SEMANTIC_SCHEMA_KEYS:
-                      normalized[k] = v
-              return normalized
-
-
           def _normalize_metric(metric, primary_key):
               item = copy.deepcopy(metric) if isinstance(metric, dict) else {}
               name = str(item.get('name') or '').strip()
@@ -923,8 +770,131 @@
                   'execution_input_error': execution_input_error or '',
                   'answer_mode': str(plan.get('answer_mode') or '') if isinstance(plan, dict) else '',
                   'schema_metadata_json': json.dumps(schema_metadata or {}, ensure_ascii=False),
-
                   'schema_alias_index_json': json.dumps(schema_alias_index or {}, ensure_ascii=False),
               }
         code_language: python3
-        desc: 将 new_query 原始语义计划、refine_query 确定性 patch、refine_query 重规划差异保护三种来源统一为 Mongo 编译节点固定输入变量。
+        desc: 将 new_query 原始语义计划、refine_query 确定性 patch、refine_query 重规划差异保护三种来源统一为
+          Mongo 编译节点固定输入变量。
+        outputs:
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_contract_json:
+            children:
+            type: string
+          normalizer_valid:
+            children:
+            type: boolean
+          normalizer_route:
+            children:
+            type: string
+          normalizer_error:
+            children:
+            type: string
+          normalizer_warnings_json:
+            children:
+            type: string
+          planner:
+            children:
+            type: object
+          semantic_plan_source:
+            children:
+            type: string
+          schema_context:
+            children:
+            type: string
+          execution_input_valid:
+            children:
+            type: boolean
+          execution_input_error:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_统一准备Mongo执行输入
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000004'
+          - turn_intent
+          value_type: string
+          variable: turn_intent
+        - value_selector:
+          - '1776000000013'
+          - refine_like_requery
+          value_type: boolean
+          variable: refine_like_requery
+        - value_selector:
+          - '1776000000019'
+          - patch_applied
+          value_type: boolean
+          variable: patch_applied
+        - value_selector:
+          - '1775000000013'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: original_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000019'
+          - patched_normalized_semantic_plan_json
+          value_type: string
+          variable: patched_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000021'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: guarded_normalized_semantic_plan_json
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: original_planner
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: original_schema_context
+        - value_selector:
+          - '1776000000027'
+          - schema_context_for_replan
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000021'
+          - guard_valid
+          value_type: boolean
+          variable: guard_valid
+        - value_selector:
+          - '1776000000021'
+          - guard_error
+          value_type: string
+          variable: guard_error
+      height: 80
+      id: '1776000000024'
+      position:
+        x: 11320
+        y: 120
+      positionAbsolute:
+        x: 11320
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          """Phase 9 runtime schema context helper for semantic_plan_validator.
+
+          Builds a transient schema_runtime_context_contract immediately before validation.

@@ -1,95 +1,3 @@
-                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
-                      })
-                  elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
-                      errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
-
-                  group_fields = []
-                  for gf in _list(stage.get("group_fields")):
-                      group_fields.append(_canonical_field(_str(gf), schema, coll, "group_fields", errors, warnings, autofixes, "groupable"))
-                  stage["group_fields"] = group_fields
-
-                  metric_alias = _str(stage.get("metric_alias"))
-                  if metric_alias:
-                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll)
-                      if msrc == "ambiguous":
-                          errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
-                      elif msrc == "unresolved":
-                          errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
-                      else:
-                          if mname != metric_alias:
-                              autofixes.append({"type": "metric_alias_canonicalize", "from": metric_alias, "to": mname, "collection": coll})
-                          stage["metric_alias"] = mname
-                          metric = _metric(schema, coll, mname)
-                          if not _str(stage.get("metric_function")) and _str(metric.get("function")):
-                              stage["metric_function"] = _str(metric.get("function")); autofixes.append({"type": "metric_function_fill", "metric": mname, "value": stage["metric_function"]})
-                          elif _str(stage.get("metric_function")) and _str(metric.get("function")) and _str(stage.get("metric_function")) != _str(metric.get("function")):
-                              errors.append(f"metric_function 与 schema metric {mname}.function 不一致。")
-                          if not _str(stage.get("metric_field")) and _str(metric.get("field")):
-                              stage["metric_field"] = _str(metric.get("field")); autofixes.append({"type": "metric_field_fill", "metric": mname, "value": stage["metric_field"]})
-                          elif _str(stage.get("metric_field")) and _str(metric.get("field")) and _str(stage.get("metric_field")) != _str(metric.get("field")):
-                              errors.append(f"metric_field 与 schema metric {mname}.field 不一致。")
-                          for sf in _list(metric.get("source_fields")):
-                              if sf not in (coll_meta.get("fields") or {}):
-                                  errors.append(f"metric {mname}.source_field={sf} 不存在。")
-                          allowed_dims = [_str(x) for x in _list(metric.get("allowed_dimensions"))]
-                          if allowed_dims:
-                              for gf in group_fields:
-                                  if gf not in allowed_dims:
-                                      errors.append(f"字段 {gf} 不在 metric {mname}.allowed_dimensions 中。")
-                  elif _stage_is_aggregate(stage) and _str(stage.get("metric_field")):
-                      mf = _canonical_field(_str(stage.get("metric_field")), schema, coll, "metric_field", errors, warnings, autofixes, "")
-                      stage["metric_field"] = mf
-
-                  filters = []
-                  for f in _list(stage.get("filters")):
-                      if not isinstance(f, dict):
-                          errors.append("filter 不是对象，已拒绝。")
-                          continue
-                      nf = copy.deepcopy(f)
-                      fname = _canonical_field(_str(nf.get("field")), schema, coll, "filters", errors, warnings, autofixes, "filterable")
-                      nf["field"] = fname
-                      field = _field(schema, coll, fname)
-                      op = _str(nf.get("operator") or nf.get("op") or "eq")
-                      if op not in ALLOWED_OPERATORS:
-                          errors.append(f"filter operator={op} 不在允许范围。")
-                      nf["operator"] = op
-                      if _is_sensitive(field) and not bool((rules.get("allow_sensitive_filter") or rules.get("allow_pii_filter"))):
-                          errors.append(f"敏感/PII 字段 {fname} 默认不允许 filter。")
-                      if "value" in nf:
-                          new_value, changed = _value_alias(nf.get("value"), field)
-                          if changed:
-                              autofixes.append({"type": "value_alias_canonicalize", "field": fname, "from": nf.get("value"), "to": new_value})
-                              nf["value"] = new_value
-                          allowed_values = [_str(x) for x in _list(field.get("allowed_values"))]
-                          vals = _list(nf.get("value")) if op in {"in", "nin"} else [nf.get("value")]
-                          if allowed_values:
-                              for val in vals:
-                                  if _str(val) not in allowed_values:
-                                      errors.append(f"字段 {fname} 的枚举值 {val} 不在 allowed_values 中。")
-                      filters.append(nf)
-                  stage["filters"] = filters
-
-                  projections = []
-                  for pf in _list(stage.get("projection_fields")):
-                      projections.append(_canonical_field(_str(pf), schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
-                  stage["projection_fields"] = projections
-
-                  tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
-                  if _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
-                      return _finalize(_result("requires_clarification", plan, ["聚合查询按 query_rules 要求必须提供 time_range。"], clarification="我需要确认一下：这个聚合查询要统计哪个时间范围？", debug=debug))
-                  if tr:
-                      tf = _str(tr.get("field"))
-                      if not tf and _str(coll_meta.get("default_time_field")):
-                          tr["field"] = _str(coll_meta.get("default_time_field")); autofixes.append({"type": "time_range_field_fill", "value": tr["field"], "collection": coll})
-                      elif tf:
-                          tr["field"] = _canonical_field(tf, schema, coll, "time_range", errors, warnings, autofixes, "")
-                      if _str(tr.get("field")):
-                          fld = _field(schema, coll, _str(tr.get("field")))
-                          if _str(fld.get("semantic_type") or fld.get("role") or fld.get("type")).lower() not in {"time", "date", "datetime", "timestamp"}:
-                              warnings.append(f"time_range.field={tr.get('field')} 未显式标记为时间字段。")
-                      try:
-                          rd = int(tr.get("relative_days") or 0)
-                      except Exception:
                           rd = 0
                       if _str(tr.get("mode")) == "relative_days" and rd <= 0:
                           errors.append("time_range.relative_days 必须大于 0。")
@@ -293,8 +201,10 @@
 
           def main(**kwargs: Any) -> Dict[str, Any]:
               return semantic_plan_validator(**kwargs)
+
         code_language: python3
-        desc: Phase 8 semantic_plan_validator：在 Mongo 编译执行前校验 collection/field/metric/filter/time_range/relation/PII/chart/negative residue，并输出 validator_result_contract。
+        desc: Phase 8 semantic_plan_validator：在 Mongo 编译执行前校验 collection/field/metric/filter/time_range/relation/PII/chart/negative
+          residue，并输出 validator_result_contract。
         outputs:
           contract_version:
             children:
@@ -433,10 +343,10 @@
       id: '1778000000001'
       position:
         x: 14540
-        "y": 120
+        y: 120
       positionAbsolute:
         x: 14540
-        "y": 120
+        y: 120
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -496,10 +406,10 @@
       id: '1778000000002'
       position:
         x: 15000
-        "y": 120
+        y: 120
       positionAbsolute:
         x: 15000
-        "y": 120
+        y: 120
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -677,7 +587,8 @@
                   'target_semantic_terms_json': json.dumps(positive, ensure_ascii=False),
               }
         code_language: python3
-        desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine 语义。
+        desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine
+          语义。
         outputs:
           query_text:
             children:
@@ -923,8 +834,67 @@
               blocks = []
               for pat in [
                   r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```',
-
                   r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema").*?)\n```',
               ]:
                   blocks.extend(m.group(2 if 'Schema Metadata' in pat else 1) for m in re.finditer(pat, raw, re.I | re.S))
               if not blocks and re.search(r'metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"', raw, re.I):
+                  blocks.append(raw)
+              return blocks
+
+
+          def _parse_block(block):
+              text = str(block or '').strip()
+              if not text:
+                  return {}
+              if text.startswith('{'):
+                  return json.loads(text)
+              return _parse_simple_yaml(text)
+
+
+          def _as_list(value):
+              if value in (None, ''):
+                  return []
+              if isinstance(value, list):
+                  return [x for x in value if x is not None and str(x).strip()]
+              return [x for x in _split_inline_list(value) if str(x).strip()]
+
+
+          def _str_list(value, limit=0):
+              out, seen = [], set()
+              for item in _as_list(value):
+                  s = str(item or '').strip()
+                  if s and s not in seen:
+                      seen.add(s); out.append(s)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
+          def _named_map(value):
+              result = {}
+              if isinstance(value, dict):
+                  for name, item in value.items():
+                      if isinstance(item, dict):
+                          obj = dict(item); obj.setdefault('name', name); result[str(obj.get('name') or name).strip()] = obj
+              elif isinstance(value, list):
+                  for item in value:
+                      if isinstance(item, dict) and str(item.get('name') or '').strip():
+                          result[str(item.get('name')).strip()] = dict(item)
+              return result
+
+
+          def _normalize_collection(doc):
+              cname = str((doc or {}).get('collection_name') or '').strip()
+              if not cname:
+                  return None
+              fields = _named_map(doc.get('fields'))
+              metrics = _named_map(doc.get('metrics'))
+              relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
+              normalized = dict(doc)
+              normalized.update({
+                  'collection_name': cname,
+                  'collection_label': str(doc.get('collection_label') or cname).strip() or cname,
+                  'collection_aliases': _str_list(doc.get('collection_aliases')),
+                  'fields': fields,
+                  'metrics': metrics,
+                  'relations': [r for r in relations if isinstance(r, dict)],

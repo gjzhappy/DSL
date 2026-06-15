@@ -1,313 +1,3 @@
-              groups = ast.get('group_by') if isinstance(ast, dict) else []
-              if not isinstance(groups, list):
-                  return ''
-              for item in groups:
-                  if isinstance(item, dict):
-                      field = str(item.get('alias') or item.get('field') or '').strip()
-                      if field:
-                          return field
-                  elif isinstance(item, str) and item.strip():
-                      return item.strip()
-              return ''
-
-
-          def _field_from_ast_metric(ast):
-              aggs = ast.get('aggregations') if isinstance(ast, dict) else []
-              if not isinstance(aggs, list):
-                  return ''
-              for item in aggs:
-                  if isinstance(item, dict):
-                      field = str(item.get('alias') or item.get('field') or '').strip()
-                      if field:
-                          return field
-                  elif isinstance(item, str) and item.strip():
-                      return item.strip()
-              return ''
-
-
-          def _pick_group_field(rows, normalized_plan=None):
-              normalized_plan = normalized_plan or {}
-              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
-              row_key_set = set(row_keys)
-              for stage in _execution_stages(normalized_plan):
-                  group_fields = stage.get('group_fields') if isinstance(stage, dict) else []
-                  if isinstance(group_fields, list) and group_fields:
-                      group = str(group_fields[0] or '').strip()
-                      if group and (not row_keys or group in row_key_set):
-                          return group
-              ast_group = _field_from_ast_group(_validated_ast(normalized_plan))
-              if ast_group and (not row_keys or ast_group in row_key_set):
-                  return ast_group
-              chart_x = str(_chart_request(normalized_plan).get('x_field') or _chart_request(normalized_plan).get('x_axis') or '').strip()
-              if chart_x and (not row_keys or chart_x in row_key_set):
-                  return chart_x
-              if rows:
-                  for key in row_keys:
-                      if not isinstance(rows[0].get(key), (int, float)) or isinstance(rows[0].get(key), bool):
-                          return key
-              return row_keys[0] if row_keys else ''
-
-
-          def _pick_metric_field(rows, group_field, normalized_plan=None):
-              normalized_plan = normalized_plan or {}
-              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
-              row_key_set = set(row_keys)
-              for stage in _execution_stages(normalized_plan):
-                  metric_alias = str((stage or {}).get('metric_alias') or '').strip() if isinstance(stage, dict) else ''
-                  if metric_alias and (not row_keys or metric_alias in row_key_set):
-                      return metric_alias
-              ast_metric = _field_from_ast_metric(_validated_ast(normalized_plan))
-              if ast_metric and (not row_keys or ast_metric in row_key_set):
-                  return ast_metric
-              chart_y = str(_chart_request(normalized_plan).get('y_field') or _chart_request(normalized_plan).get('y_axis') or '').strip()
-              if chart_y and (not row_keys or chart_y in row_key_set):
-                  return chart_y
-              if rows:
-                  for key in row_keys:
-                      value = rows[0].get(key)
-                      if key != group_field and isinstance(value, (int, float)) and not isinstance(value, bool):
-                          return key
-              for key in row_keys:
-                  if key != group_field:
-                      return key
-              return ''
-
-
-          def _prettify(field):
-              text = str(field or '').strip()
-              if not text:
-                  return '字段'
-              return text.replace('_', ' ')
-
-
-          def _schema_metadata_from_plan(plan):
-              if not isinstance(plan, dict):
-                  return {'collections': {}, 'warnings': []}
-              meta = plan.get('schema_metadata') or plan.get('schema_metadata_json')
-              if isinstance(meta, str) and meta.strip():
-                  try:
-                      meta = json.loads(meta)
-                  except Exception:
-                      meta = None
-              if isinstance(meta, dict) and isinstance(meta.get('collections'), dict):
-                  return meta
-              schema = plan.get('schema_context')
-              if isinstance(schema, str) and schema.strip():
-                  return extract_schema_metadata(schema)
-              return {'collections': {}, 'warnings': []}
-
-
-          def _collection_from_plan(plan):
-              stages = _execution_stages(plan)
-              stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}
-              return str(plan.get('primary_collection') or stage0.get('primary_collection') or stage0.get('collection') or '').strip() if isinstance(plan, dict) else ''
-
-
-          def _schema_label_map(plan):
-              labels = {}
-              meta = _schema_metadata_from_plan(plan)
-              collection_name = _collection_from_plan(plan)
-              for cname, coll in (meta.get('collections') or {}).items():
-                  if collection_name and cname != collection_name:
-                      continue
-                  for fname, field in (coll.get('fields') or {}).items():
-                      label = str(field.get('label') or '').strip()
-                      if label:
-                          labels[fname] = label
-                  for mname, metric in (coll.get('metrics') or {}).items():
-                      label = str(metric.get('label') or '').strip()
-                      if label:
-                          labels[mname] = label
-              return labels
-
-
-          def _ast_alias_map(plan):
-              aliases = {}
-              ast = _validated_ast(plan)
-              for item in (ast.get('group_by') or []) if isinstance(ast, dict) else []:
-                  if isinstance(item, dict):
-                      field = str(item.get('field') or '').strip()
-                      alias = str(item.get('alias') or '').strip()
-                      if field and alias:
-                          aliases[field] = alias
-              for item in (ast.get('aggregations') or []) if isinstance(ast, dict) else []:
-                  if isinstance(item, dict):
-                      field = str(item.get('field') or item.get('alias') or '').strip()
-                      alias = str(item.get('alias') or '').strip()
-                      if field and alias:
-                          aliases[field] = alias
-              return aliases
-
-
-          def _field_label(field, normalized_plan=None, role=''):
-              field = str(field or '').strip()
-              if not field:
-                  return '字段'
-              meta = _schema_metadata_from_plan(normalized_plan or {})
-              collection_name = _collection_from_plan(normalized_plan or {})
-              if role == 'metric':
-                  metric_label = resolve_metric_label(field, meta, collection_name)
-                  if metric_label and metric_label != _prettify(field):
-                      return metric_label
-              else:
-                  field_label = resolve_field_label(field, meta, collection_name)
-                  if field_label and field_label != _prettify(field):
-                      return field_label
-              labels = _schema_label_map(normalized_plan or {})
-              if field in labels:
-                  return labels[field]
-              aliases = _ast_alias_map(normalized_plan or {})
-              if field in aliases:
-                  return aliases[field]
-              chart = _chart_request(normalized_plan or {})
-              axis_key = 'x_label' if role == 'group' else 'y_label'
-              axis_label = str(chart.get(axis_key) or chart.get(role + '_label') or '').strip()
-              if axis_label:
-                  return axis_label
-              return _prettify(field)
-
-
-          def _fmt(value):
-              if isinstance(value, float):
-                  if value.is_integer():
-                      return str(int(value))
-                  return ('%.2f' % value).rstrip('0').rstrip('.')
-              return str(value)
-
-
-          def _summary(question, rows, normalized_plan=None):
-              row_count = len(rows)
-              group_field = _pick_group_field(rows, normalized_plan)
-              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
-              group_label = _field_label(group_field, normalized_plan, 'group')
-              metric_label = _field_label(metric_field, normalized_plan, 'metric')
-              title = '结果摘要'
-              if not rows:
-                  return title + '：\n- 当前筛选条件下未查询到符合条件的数据记录。'
-
-              bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
-              if group_field and metric_field:
-                  sorted_rows = sorted(rows, key=lambda row: row.get(metric_field) if isinstance(row.get(metric_field), (int, float)) else 0, reverse=True)
-                  top = sorted_rows[0]
-                  top_name = top.get(group_field, '未知')
-                  top_value = top.get(metric_field, '')
-                  bullets.append(f'- 按 {group_label} 分组后，{top_name} 的 {metric_label} 最高，为 {_fmt(top_value)}。')
-                  if row_count > 1:
-                      tail = sorted_rows[-1]
-                      bullets.append(f'- 排名靠后的分组是 {tail.get(group_field, "未知")}，{metric_label} 为 {_fmt(tail.get(metric_field, ""))}。')
-                  preview = '、'.join([f'{row.get(group_field, "未知")}({_fmt(row.get(metric_field, ""))})' for row in sorted_rows[:5]])
-                  if preview:
-                      bullets.append(f'- 主要分组数据：{preview}。')
-              return title + '：\n' + '\n'.join(bullets)
-
-
-          def _analysis(rows, normalized_plan=None, chart_available=False):
-              if not rows:
-                  return '简单分析：\n- 当前筛选条件下没有可用于对比的数据记录，建议放宽时间范围或检查筛选条件。'
-              group_field = _pick_group_field(rows, normalized_plan)
-              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
-              group_label = _field_label(group_field, normalized_plan, 'group')
-              metric_label = _field_label(metric_field, normalized_plan, 'metric')
-              if not group_field or not metric_field:
-                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合统计结果查看整体分布。'
-              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float)) and not isinstance(row.get(metric_field), bool)]
-              if len(numeric) < 2:
-                  return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
-              sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
-              top, second = sorted_rows[0], sorted_rows[1]
-              gap = top.get(metric_field) - second.get(metric_field)
-              prefix = '从图表看' if chart_available else '从统计结果看'
-              return (
-                  '简单分析：\n'
-                  f'- {prefix}，{top.get(group_field, "未知")} 的 {metric_label} 最高，比第二名 '
-                  f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
-                  f'- 可优先关注排名靠前的分组（{top.get(group_field, "未知")}、{second.get(group_field, "未知")}）以及排名靠后的分组，继续分析不同 {group_label} 的差异情况。'
-              )
-
-
-          def _result_fields_json(rows):
-              seen = []
-              for row in rows[:10]:
-                  for key in row.keys():
-                      if key not in seen:
-                          seen.append(key)
-              return json.dumps(seen, ensure_ascii=False)
-
-
-          def _plan_needs_chart(normalized_plan, semantic_plan, question):
-              viz = normalized_plan.get('visualization') if isinstance(normalized_plan.get('visualization'), dict) else {}
-              chart_request = normalized_plan.get('chart_request') if isinstance(normalized_plan.get('chart_request'), dict) else {}
-              text = str(question or '')
-              asked = any(k in text for k in ['图', '柱状图', '折线图', '饼图', '图表', '做图', '可视化'])
-              return bool(normalized_plan.get('needs_chart') or semantic_plan.get('needs_chart') or viz.get('enabled') or chart_request.get('enabled') or asked)
-
-
-          def _first_stage_for_context(plan):
-              stages = _execution_stages(plan if isinstance(plan, dict) else {})
-              return stages[0] if stages and isinstance(stages[0], dict) else {}
-
-
-          COMPACT_CONTEXT_TARGET_BYTES = 12000
-          COMPACT_CONTEXT_HARD_BYTES = 60000
-          MAX_PREVIEW_ROWS = 5
-          MAX_PREVIEW_FIELDS = 20
-          MAX_PREVIEW_STRING = 200
-
-
-          def _safe_int_value(value, default=0):
-              try:
-                  return int(value)
-              except Exception:
-                  return default
-
-
-          def _dedupe_values(values, limit=50):
-              out = []
-              for value in values or []:
-                  text = str(value or '').strip()
-                  if text and text not in out:
-                      out.append(text)
-                      if limit and len(out) >= limit:
-                          break
-              return out
-
-
-          def _compact_value(value, max_len=MAX_PREVIEW_STRING):
-              if isinstance(value, str):
-                  return value[:max_len]
-              if isinstance(value, (int, float, bool)) or value is None:
-                  return value
-              try:
-                  return json.dumps(value, ensure_ascii=False, default=str)[:max_len]
-              except Exception:
-                  return str(value)[:max_len]
-
-
-          def _normalize_time_range(value):
-              value = value if isinstance(value, dict) else {}
-              return {
-                  'field': str(value.get('field') or ''),
-                  'mode': str(value.get('mode') or ''),
-                  'relative_days': _safe_int_value(value.get('relative_days'), 0),
-                  'start': str(value.get('start') or ''),
-                  'end': str(value.get('end') or ''),
-              }
-
-
-          def _compact_rows_profile(rows):
-              fields = []
-              numeric_fields = []
-              dimension_fields = []
-              preview_rows = []
-              for row in rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  for key, value in row.items():
-                      name = str(key)
-                      if name not in fields:
-                          fields.append(name)
-                      if isinstance(value, (int, float)) and not isinstance(value, bool):
-                          if name not in numeric_fields:
                               numeric_fields.append(name)
                       elif isinstance(value, (str, bool)) or value is None:
                           if name not in dimension_fields:
@@ -822,10 +512,10 @@
       id: '1775000000022'
       position:
         x: 16380
-        "y": -120
+        y: -120
       positionAbsolute:
         x: 16380
-        "y": -120
+        y: -120
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -924,7 +614,287 @@
                   p['warning']='图表字段不在查询结果中'; return p
               if not _numeric(rows,y):
                   p['warning']='图表纵轴字段不是数字，未生成图表。'; return p
-
               ctype=str(req.get('chart_type') or 'bar')
               if ctype not in {'bar','line','pie','scatter'}:
                   p['warning']='暂不支持该图表类型'; return p
+              title=_title(req); series=req.get('series_name') or y
+              if ctype=='pie':
+                  data=[{'name':str(r.get(x) if r.get(x) is not None else '未分类'),'value':_num(r.get(y)) or 0} for r in rows[:20]]
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'series':[{'name':series,'type':'pie','data':data}]}
+                  if len(rows)>20: p['warning']='饼图分类较多，仅展示前20项。'
+              elif ctype=='scatter':
+                  if not _numeric(rows,x): p['warning']='散点图横轴字段不是数字，未生成图表。'; return p
+                  data=[[_num(r.get(x)),_num(r.get(y))] for r in rows if _num(r.get(x)) is not None and _num(r.get(y)) is not None]
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'scatter','data':data}]}
+              else:
+                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
+                  if ctype=='line' and not re.search(r'date|time|day|month|year|日期|时间|日|月|年',x,re.I): p['warning']='折线图横轴不是明显时间或有序字段。'
+              p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':'已生成%s图表，共%s条数据。' % (ctype, len(rows))})
+              return p
+
+          def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str=''):
+              req=_chart_req(normalized_plan_json, semantic_plan_json, chart_request_json)
+              qr=_query_result(query_result_json, rows_json, row_count, fields_json, merged_rows_json)
+              p=_payload(req, qr, False)
+              return {'chart_payload_json':_dumps(p),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':p.get('echarts_markdown') or '', 'chart_summary':p.get('summary') or '', 'chart_warning':p.get('warning') or '', 'chart_enabled':bool(p.get('enabled')), 'data_profile_json':_dumps(p.get('data_profile') or {}), 'chart_debug_json':_dumps(p.get('chart_debug') or {})}
+        code_language: python3
+        desc: Phase 12：chart_request_contract + query_result_contract -> chart_payload_contract；不解析
+          alias、不推断业务字段、不改查询语义、不调用 Mongo。
+        outputs:
+          chart_payload_json:
+            children:
+            type: string
+          chart_payload_contract:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          chart_summary:
+            children:
+            type: string
+          chart_warning:
+            children:
+            type: string
+          chart_enabled:
+            children:
+            type: boolean
+          data_profile_json:
+            children:
+            type: string
+          chart_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_ChartPayloadBuilder
+        type: code
+        variables:
+        - value_selector:
+          - '1778000000001'
+          - normalized_plan_json
+          value_type: string
+          variable: normalized_plan_json
+        - value_selector:
+          - '1778000000001'
+          - semantic_plan_json
+          value_type: string
+          variable: semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - chart_request_json
+          value_type: string
+          variable: chart_request_json
+        - value_selector:
+          - '1775000000007'
+          - query_result_json
+          value_type: string
+          variable: query_result_json
+        - value_selector:
+          - '1775000000007'
+          - rows_json
+          value_type: string
+          variable: rows_json
+        - value_selector:
+          - '1775000000007'
+          - row_count
+          value_type: number
+          variable: row_count
+        - value_selector:
+          - '1775000000007'
+          - fields_json
+          value_type: string
+          variable: fields_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows_json
+          value_type: string
+          variable: merged_rows_json
+      height: 80
+      id: '1781000000001'
+      position:
+        x: 15920
+        y: -120
+      positionAbsolute:
+        x: 15920
+        y: -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        assigned_variable_selector:
+        - conversation
+        - last_question
+        desc: ''
+        input_variable_selector:
+        - '1775000000007'
+        - question
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - question
+          variable_selector:
+          - conversation
+          - last_question
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          variable_selector:
+          - conversation
+          - last_normalized_semantic_plan_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          variable_selector:
+          - conversation
+          - last_normalized_execution_plan
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - query_result_json
+          variable_selector:
+          - conversation
+          - last_merged_rows
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - query_result_json
+          variable_selector:
+          - conversation
+          - last_query_result_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_request_flat_json
+          variable_selector:
+          - conversation
+          - last_chart_request_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - chart_request_flat_json
+          variable_selector:
+          - conversation
+          - last_chart
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1781000000001'
+          - chart_summary
+          variable_selector:
+          - conversation
+          - last_chart_echarts_markdown
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - final_answer_summary
+          variable_selector:
+          - conversation
+          - last_result_summary
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000007'
+          - last_error
+          variable_selector:
+          - conversation
+          - last_error
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - compact_context_json
+          variable_selector:
+          - conversation
+          - last_context_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - answer_payload_json
+          variable_selector:
+          - conversation
+          - last_answer_payload_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1775000000022'
+          - context_update_json
+          variable_selector:
+          - conversation
+          - last_context_update_json
+          write_mode: over-write
+        selected: false
+        title: 变量赋值_保存多轮上下文
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1775000000023'
+      position:
+        x: 16840
+        y: -120
+      positionAbsolute:
+        x: 16840
+        y: -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1775000000007'
+          - question
+          value_type: string
+          variable: last_question
+        - value_selector:
+          - '1775000000007'
+          - normalized_execution_plan_json
+          value_type: string
+          variable: last_normalized_execution_plan
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: last_normalized_semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - last_validated_ast_json
+          value_type: string
+          variable: last_validated_ast
+        - value_selector:
+          - '1775000000022'
+          - context_update_json
+          value_type: string
+          variable: last_pipeline_json
+        - value_selector:
+          - '1775000000007'
+          - query_result_json
+          value_type: string
+          variable: last_merged_rows

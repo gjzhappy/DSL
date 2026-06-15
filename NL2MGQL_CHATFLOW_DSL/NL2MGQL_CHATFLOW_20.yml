@@ -1,930 +1,116 @@
-              clarification_question:
-                type: string
-              needs_schema_retrieval:
-                type: boolean
-              warnings:
-                type: array
-                items:
-                  type: string
-        structured_output_enabled: true
-        title: LLM_本地兜底查询规划
-        type: llm
-        vision:
-          enabled: false
-      height: 88
-      id: '1776200000005'
-      position:
-        x: 7490
-        "y": -660
-      positionAbsolute:
-        x: 7490
-        "y": -660
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          def _loads(s):
-              if isinstance(s, dict): return s
-              if not s: return {}
-              try: return json.loads(str(s))
-              except Exception: return {}
-          def main(full_success=False, full_content='', local_text='', local_structured=None, fallback_text='', fallback_structured=None) -> dict:
-              if full_success and str(full_content or '').strip():
-                  text=str(full_content).strip(); return {'text':text,'structured_output':_loads(text),'llm_source':'full_llm'}
-              if str(fallback_text or '').strip() or fallback_structured:
-                  return {'text':str(fallback_text or ''),'structured_output': fallback_structured or _loads(fallback_text),'llm_source':'local_fallback'}
-              return {'text':str(local_text or ''),'structured_output': local_structured or _loads(local_text),'llm_source':'local_direct'}
-        code_language: python3
-        desc: 统一满血/本地兜底/直接本地输出，保持 text 和 structured_output 变量名。
-        outputs:
-          text:
-            type: string
-          structured_output:
-            type: object
-          llm_source:
-            type: string
-        selected: false
-        title: 代码执行_统一LLM输出_查询规划
-        type: code
-        variables:
-        - value_selector:
-          - '1776200000003'
-          - success
-          value_type: boolean
-          variable: full_success
-        - value_selector:
-          - '1776200000003'
-          - content
-          value_type: string
-          variable: full_content
-        - value_selector:
-          - '1773975766025'
-          - text
-          value_type: string
-          variable: local_text
-        - value_selector:
-          - '1773975766025'
-          - structured_output
-          value_type: object
-          variable: local_structured
-        - value_selector:
-          - '1776200000005'
-          - text
-          value_type: string
-          variable: fallback_text
-        - value_selector:
-          - '1776200000005'
-          - structured_output
-          value_type: object
-          variable: fallback_structured
-      height: 139
-      id: '1776200000006'
-      position:
-        x: 7950
-        "y": -620
-      positionAbsolute:
-        x: 7950
-        "y": -620
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: f87c7b90-dbae-4140-89f7-82255e72676d
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1776100000000'
-            - effective_use_full_llm_semantic_plan_fallback
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_是否使用满血LLM_本地兜底生成语义计划
-        type: if-else
-      height: 148
-      id: '1776200000011'
-      position:
-        x: 8560
-        "y": -320
-      positionAbsolute:
-        x: 8560
-        "y": -320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        authorization:
-          config:
-          type: no-auth
-        body:
-          data:
-          - id: 1776200000012-body
-            key: ''
-            type: text
-            value: |-
-              {
-                "model": "{{#env.FULL_LLM_MODEL#}}",
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": "{{#1775000000005.semantic_plan_system_prompt#}}\n\n{{#1775000000005.semantic_plan_user_prompt#}}"
-                  }
-                ],
-                "temperature": 0.1,
-                "stream": false
+                  ref['collections'] = kept
+              return ref
+
+          def main(base_schema_runtime_context_json='{}', hydrated_schema_runtime_context_json='{}'):
+              base = _loads(base_schema_runtime_context_json, {}) or {}
+              hydrated = _loads(hydrated_schema_runtime_context_json, {}) or {}
+              ctx = hydrated if hydrated.get('schema_context_ready') else base
+              warnings = ctx.get('warnings') if isinstance(ctx.get('warnings'), list) else []
+              meta = _loads(ctx.get('schema_metadata_json'), {}) or {}
+              if isinstance(ctx.get('schema_context_ref'), dict):
+                  ctx['schema_context_ref'] = _prune_ref_to_parsed(ctx.get('schema_context_ref'), meta, warnings)
+                  ctx['warnings'] = warnings
+              ctx.setdefault('contract_version', 'schema_runtime_context_contract')
+              ctx['schema_runtime_context_json'] = _dumps(ctx)
+              return {
+                  'contract_version': ctx.get('contract_version'),
+                  'schema_context_ready': bool(ctx.get('schema_context_ready')),
+                  'validator_schema_context_ready': bool(ctx.get('validator_schema_context_ready') or ctx.get('schema_context_ready')),
+                  'schema_hydration_needed': bool(ctx.get('schema_hydration_needed')),
+                  'schema_hydration_reason': str(ctx.get('schema_hydration_reason') or ''),
+                  'schema_hydration_collections': ctx.get('schema_hydration_collections') or [],
+                  'schema_metadata_json': ctx.get('schema_metadata_json') or '{}',
+                  'schema_alias_index_json': ctx.get('schema_alias_index_json') or '{}',
+                  'schema_digest': str(ctx.get('schema_digest') or ''),
+                  'schema_version': str(ctx.get('schema_version') or ''),
+                  'catalog_digest': str(ctx.get('catalog_digest') or ''),
+                  'schema_source': str(ctx.get('schema_source') or 'missing'),
+                  'schema_context_ref': ctx.get('schema_context_ref') or {},
+                  'warnings': ctx.get('warnings') or [],
+                  'errors': ctx.get('errors') or [],
+                  'schema_runtime_context_json': ctx['schema_runtime_context_json'],
               }
-          type: json
-        desc: OpenAI-compatible 满血LLM请求；失败由检查节点转本地兜底。
-        headers: Content-Type:application/json\nAuthorization:Bearer {{#env.FULL_LLM_API_KEY#}}
-        method: post
-        params: ''
-        retry_config:
-          max_retries: 1
-          retry_enabled: false
-          retry_interval: 100
-        selected: false
-        ssl_verify: true
-        timeout:
-          max_connect_timeout: 600000
-          max_read_timeout: 600000
-          max_write_timeout: 600000
-        title: HTTP请求_调用满血LLM_本地兜底生成语义计划
-        type: http-request
-        url: "{{#env.FULL_LLM_API_BASE#}}"
-        variables: []
-      height: 123
-      id: '1776200000012'
-      position:
-        x: 9020
-        "y": -580
-      positionAbsolute:
-        x: 9020
-        "y": -580
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json, re
-          def _strip(s):
-              s='' if s is None else str(s).strip()
-              m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
-              return m.group(1).strip() if m else s
-          def main(status_code=0, body='', headers=None) -> dict:
-              try:
-                  status=int(status_code or 0)
-                  if status and not (200 <= status < 300):
-                      return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':{}}
-                  if not body:
-                      return {'success':False,'content':'','error':'empty body','raw_response':{}}
-                  raw=json.loads(body) if isinstance(body,str) else (body or {})
-                  if not status and isinstance(raw,dict):
-                      alt_status=raw.get('status_code') or raw.get('status')
-                      if alt_status:
-                          status=int(alt_status or 0)
-                          if status and not (200 <= status < 300):
-                              return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':raw}
-                  content=''
-                  if isinstance(raw,dict):
-                      ch=raw.get('choices') or []
-                      if ch and isinstance(ch[0],dict):
-                          msg=ch[0].get('message') or {}
-                          content=msg.get('content') if isinstance(msg,dict) else ''
-                          content=content or ch[0].get('text') or ''
-                      content=content or raw.get('content') or raw.get('text') or ''
-                  content=_strip(content)
-                  if not content:
-                      return {'success':False,'content':'','error':'empty content','raw_response':raw if isinstance(raw,dict) else {}}
-                  json.loads(_strip(content))
-                  return {'success':True,'content':content,'error':'','raw_response':raw if isinstance(raw,dict) else {}}
-              except Exception as e:
-                  return {'success':False,'content':'','error':str(e),'raw_response':{}}
         code_language: python3
-        desc: 检查满血LLM HTTP响应，任何异常均返回 success=false。
+        desc: Phase 10：统一选择 validator 最终 runtime schema context。schema ready / no-hydration
+          使用 base；hydration 成功使用 hydrated runtime；失败则让 validator 走 non-valid，不绕过 validator。
         outputs:
-          success:
+          contract_version:
+            children:
+            type: string
+          schema_context_ready:
+            children:
             type: boolean
-          content:
-            type: string
-          error:
-            type: string
-          raw_response:
-            type: object
-        selected: false
-        title: 代码执行_检查满血LLM响应_本地兜底生成语义计划
-        type: code
-        variables:
-        - value_selector:
-          - '1776200000012'
-          - status_code
-          value_type: number
-          variable: status_code
-        - value_selector:
-          - '1776200000012'
-          - body
-          value_type: string
-          variable: body
-        - value_selector:
-          - '1776200000012'
-          - headers
-          value_type: object
-          variable: headers
-      height: 139
-      id: '1776200000013'
-      position:
-        x: 9480
-        "y": -580
-      positionAbsolute:
-        x: 9480
-        "y": -580
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 53e75aae-e10d-4ac9-8287-eced1e77483e
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1776200000013'
-            - success
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_满血LLM是否成功_本地兜底生成语义计划
-        type: if-else
-      height: 148
-      id: '1776200000014'
-      position:
-        x: 9940
-        "y": -580
-      positionAbsolute:
-        x: 9940
-        "y": -580
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        desc: 满血LLM关闭或失败时，使用本地模型保守生成 semantic_plan_contract
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 8192
-            temperature: 0
-            think: false
-          mode: chat
-          name: qwen3.5:35b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: local-plan-system
-          role: system
-          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
-        - id: local-plan-user
-          role: user
-          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            additionalProperties: true
-            required:
-            - contract_version
-            - primary_collection
-            - related_collections
-            - execution_mode
-            - answer_mode
-            - needs_chart
-            - stages
-            - final_merge
-            - chart_request
-            - requires_clarification
-            - clarification_question
-            - needs_schema_retrieval
-            - warnings
-            properties:
-              contract_version:
-                const: semantic_plan_contract
-              primary_collection:
-                type: string
-              related_collections:
-                type: array
-                items:
-                  type: string
-              execution_mode:
-                type: string
-              answer_mode:
-                type: string
-              needs_chart:
-                type: boolean
-              stages:
-                type: array
-                minItems: 1
-                items:
-                  type: object
-                  additionalProperties: true
-                  required:
-                  - stage_name
-                  - stage_type
-                  - collection
-                  - intent_type
-                  - time_range
-                  - filters
-                  - group_fields
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - sort
-                  - limit
-                  - projection_fields
-                  properties:
-                    stage_name:
-                      type: string
-                    stage_type:
-                      type: string
-                    collection:
-                      type: string
-                    intent_type:
-                      type: string
-                    time_range:
-                      type: object
-                    filters:
-                      type: array
-                      items:
-                        type: object
-                    group_fields:
-                      type: array
-                      items:
-                        type: string
-                    metric_function:
-                      type: string
-                    metric_field:
-                      type: string
-                    metric_alias:
-                      type: string
-                    sort:
-                      type: array
-                      items:
-                        type: object
-                    limit:
-                      type: integer
-                    projection_fields:
-                      type: array
-                      items:
-                        type: string
-              final_merge:
-                type: object
-              chart_request:
-                type: object
-              requires_clarification:
-                type: boolean
-              clarification_question:
-                type: string
-              needs_schema_retrieval:
-                type: boolean
-              warnings:
-                type: array
-                items:
-                  type: string
-        structured_output_enabled: true
-        title: LLM_本地兜底本地兜底生成语义计划
-        type: llm
-        vision:
-          enabled: false
-      height: 132
-      id: '1776200000015'
-      position:
-        x: 10400
-        "y": -360
-      positionAbsolute:
-        x: 10400
-        "y": -360
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          def _loads(s):
-              if isinstance(s, dict): return s
-              if not s: return {}
-              try: return json.loads(str(s))
-              except Exception: return {}
-          def main(full_success=False, full_content='', local_text='', local_structured=None, fallback_text='', fallback_structured=None) -> dict:
-              if full_success and str(full_content or '').strip():
-                  text=str(full_content).strip(); return {'text':text,'structured_output':_loads(text),'llm_source':'full_llm'}
-              if str(fallback_text or '').strip() or fallback_structured:
-                  return {'text':str(fallback_text or ''),'structured_output': fallback_structured or _loads(fallback_text),'llm_source':'local_fallback'}
-              return {'text':str(local_text or ''),'structured_output': local_structured or _loads(local_text),'llm_source':'local_direct'}
-        code_language: python3
-        desc: 统一满血/本地兜底/直接本地输出，保持 text 和 structured_output 变量名。
-        outputs:
-          text:
-            type: string
-          structured_output:
-            type: object
-          llm_source:
-            type: string
-        selected: false
-        title: 代码执行_统一LLM输出_本地兜底生成语义计划
-        type: code
-        variables:
-        - value_selector:
-          - '1776200000013'
-          - success
-          value_type: boolean
-          variable: full_success
-        - value_selector:
-          - '1776200000013'
-          - content
-          value_type: string
-          variable: full_content
-        - value_selector:
-          - '1775000000018'
-          - text
-          value_type: string
-          variable: local_text
-        - value_selector:
-          - '1775000000018'
-          - structured_output
-          value_type: object
-          variable: local_structured
-        - value_selector:
-          - '1776200000015'
-          - text
-          value_type: string
-          variable: fallback_text
-        - value_selector:
-          - '1776200000015'
-          - structured_output
-          value_type: object
-          variable: fallback_structured
-      height: 139
-      id: '1776200000016'
-      position:
-        x: 10860
-        "y": -320
-      positionAbsolute:
-        x: 10860
-        "y": -320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: 70762d95-ad49-45e4-ad62-e53b6c400a29
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1776100000000'
-            - effective_use_full_llm_multi_turn_intent
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_是否使用满血LLM_多轮意图识别
-        type: if-else
-      height: 148
-      id: '1776200000021'
-      position:
-        x: 920
-        "y": 0
-      positionAbsolute:
-        x: 920
-        "y": 0
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        authorization:
-          config:
-          type: no-auth
-        body:
-          data:
-          - id: 1776200000022-body
-            key: ''
-            type: text
-            value: |-
-              {
-                "model": "{{#env.FULL_LLM_MODEL#}}",
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": "你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n{{#1776000000002.intent_prompt#}}"
-                  }
-                ],
-                "temperature": 0.1,
-                "stream": false
-              }
-          type: json
-        desc: OpenAI-compatible 满血LLM请求；失败由检查节点转本地兜底。
-        headers: Content-Type:application/json\nAuthorization:Bearer {{#env.FULL_LLM_API_KEY#}}
-        method: post
-        params: ''
-        retry_config:
-          max_retries: 1
-          retry_enabled: false
-          retry_interval: 100
-        selected: false
-        ssl_verify: true
-        timeout:
-          max_connect_timeout: 600000
-          max_read_timeout: 600000
-          max_write_timeout: 600000
-        title: HTTP请求_调用满血LLM_多轮意图识别
-        type: http-request
-        url: "{{#env.FULL_LLM_API_BASE#}}"
-        variables: []
-      height: 123
-      id: '1776200000022'
-      position:
-        x: 1380
-        "y": -260
-      positionAbsolute:
-        x: 1380
-        "y": -260
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json, re
-          def _strip(s):
-              s='' if s is None else str(s).strip()
-              m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
-              return m.group(1).strip() if m else s
-          def main(status_code=0, body='', headers=None) -> dict:
-              try:
-                  status=int(status_code or 0)
-                  if status and not (200 <= status < 300):
-                      return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':{}}
-                  if not body:
-                      return {'success':False,'content':'','error':'empty body','raw_response':{}}
-                  raw=json.loads(body) if isinstance(body,str) else (body or {})
-                  if not status and isinstance(raw,dict):
-                      alt_status=raw.get('status_code') or raw.get('status')
-                      if alt_status:
-                          status=int(alt_status or 0)
-                          if status and not (200 <= status < 300):
-                              return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':raw}
-                  content=''
-                  if isinstance(raw,dict):
-                      ch=raw.get('choices') or []
-                      if ch and isinstance(ch[0],dict):
-                          msg=ch[0].get('message') or {}
-                          content=msg.get('content') if isinstance(msg,dict) else ''
-                          content=content or ch[0].get('text') or ''
-                      content=content or raw.get('content') or raw.get('text') or ''
-                  content=_strip(content)
-                  if not content:
-                      return {'success':False,'content':'','error':'empty content','raw_response':raw if isinstance(raw,dict) else {}}
-                  json.loads(_strip(content))
-                  return {'success':True,'content':content,'error':'','raw_response':raw if isinstance(raw,dict) else {}}
-              except Exception as e:
-                  return {'success':False,'content':'','error':str(e),'raw_response':{}}
-        code_language: python3
-        desc: 检查满血LLM HTTP响应，任何异常均返回 success=false。
-        outputs:
-          success:
+          validator_schema_context_ready:
+            children:
             type: boolean
-          content:
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
             type: string
-          error:
+          schema_hydration_collections:
+            children:
+            type: array[string]
+          schema_metadata_json:
+            children:
             type: string
-          raw_response:
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_digest:
+            children:
+            type: string
+          schema_version:
+            children:
+            type: string
+          catalog_digest:
+            children:
+            type: string
+          schema_source:
+            children:
+            type: string
+          schema_context_ref:
+            children:
             type: object
+          warnings:
+            children:
+            type: array[string]
+          errors:
+            children:
+            type: array[string]
+          schema_runtime_context_json:
+            children:
+            type: string
         selected: false
-        title: 代码执行_检查满血LLM响应_多轮意图识别
+        title: 代码执行_选择最终Validator运行时Schema上下文
         type: code
         variables:
         - value_selector:
-          - '1776200000022'
-          - status_code
-          value_type: number
-          variable: status_code
-        - value_selector:
-          - '1776200000022'
-          - body
+          - '1779000000001'
+          - schema_runtime_context_json
           value_type: string
-          variable: body
+          variable: base_schema_runtime_context_json
         - value_selector:
-          - '1776200000022'
-          - headers
-          value_type: object
-          variable: headers
-      height: 139
-      id: '1776200000023'
-      position:
-        x: 1840
-        "y": -260
-      positionAbsolute:
-        x: 1840
-        "y": -260
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: f24819aa-4396-4a63-bf08-7df178487564
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1776200000023'
-            - success
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_满血LLM是否成功_多轮意图识别
-        type: if-else
-      height: 148
-      id: '1776200000024'
-      position:
-        x: 2300
-        "y": -260
-      positionAbsolute:
-        x: 2300
-        "y": -260
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 8192
-            temperature: 0
-            think: false
-          mode: chat
-          name: qwen3.5:35b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: intent-system
-          role: system
-          text: 你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。
-        - id: intent-user
-          role: user
-          text: "{{#1776000000002.intent_prompt#}}"
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            additionalProperties: false
-            required:
-            - turn_intent
-            - need_previous_context
-            - need_requery
-            - need_rechart
-            - need_analysis
-            - can_answer_directly
-            - reason
-            - missing_info
-            - chart_modification
-            - query_refinement
-            - analysis_focus
-            properties:
-              turn_intent:
-                type: string
-                enum:
-                - new_query
-                - modify_chart
-                - refine_query
-                - explain_result
-                - reanalyze_result
-                - fix_result
-                - continue_previous
-                - clarify
-              need_previous_context:
-                type: boolean
-              need_requery:
-                type: boolean
-              need_rechart:
-                type: boolean
-              need_analysis:
-                type: boolean
-              can_answer_directly:
-                type: boolean
-              reason:
-                type: string
-              missing_info:
-                type: array
-                items:
-                  type: string
-              chart_modification:
-                type: object
-                additionalProperties: true
-              query_refinement:
-                type: object
-                additionalProperties: true
-              analysis_focus:
-                type: string
-        structured_output_enabled: true
-        title: LLM_本地兜底多轮意图识别
-        type: llm
-        vision:
-          enabled: false
-      height: 98
-      id: '1776200000025'
-      position:
-        x: 2760
-        "y": -40
-      positionAbsolute:
-        x: 2760
-        "y": -40
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          def _loads(s):
-              if isinstance(s, dict): return s
-              if not s: return {}
-              try: return json.loads(str(s))
-              except Exception: return {}
-          def main(full_success=False, full_content='', local_text='', local_structured=None, fallback_text='', fallback_structured=None) -> dict:
-              if full_success and str(full_content or '').strip():
-                  text=str(full_content).strip(); return {'text':text,'structured_output':_loads(text),'llm_source':'full_llm'}
-              if str(fallback_text or '').strip() or fallback_structured:
-                  return {'text':str(fallback_text or ''),'structured_output': fallback_structured or _loads(fallback_text),'llm_source':'local_fallback'}
-              return {'text':str(local_text or ''),'structured_output': local_structured or _loads(local_text),'llm_source':'local_direct'}
-        code_language: python3
-        desc: 统一满血/本地兜底/直接本地输出，保持 text 和 structured_output 变量名。
-        outputs:
-          text:
-            type: string
-          structured_output:
-            type: object
-          llm_source:
-            type: string
-        selected: false
-        title: 代码执行_统一LLM输出_多轮意图识别
-        type: code
-        variables:
-        - value_selector:
-          - '1776200000023'
-          - success
-          value_type: boolean
-          variable: full_success
-        - value_selector:
-          - '1776200000023'
-          - content
+          - '1780000000008'
+          - schema_runtime_context_json
           value_type: string
-          variable: full_content
-        - value_selector:
-          - '1776000000003'
-          - text
-          value_type: string
-          variable: local_text
-        - value_selector:
-          - '1776000000003'
-          - structured_output
-          value_type: object
-          variable: local_structured
-        - value_selector:
-          - '1776200000025'
-          - text
-          value_type: string
-          variable: fallback_text
-        - value_selector:
-          - '1776200000025'
-          - structured_output
-          value_type: object
-          variable: fallback_structured
-      height: 139
-      id: '1776200000026'
+          variable: hydrated_schema_runtime_context_json
+      height: 80
+      id: '1780000000009'
       position:
-        x: 3220
-        "y": 0
+        x: 14080
+        y: 120
       positionAbsolute:
-        x: 3220
-        "y": 0
+        x: 14080
+        y: 120
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
-    - data:
-        cases:
-        - case_id: 'true'
-          conditions:
-          - comparison_operator: is
-            id: f03d4a13-2da8-43ed-9a57-59ef3320d717
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1776100000000'
-            - effective_use_full_llm_chart_plan
-          id: 'true'
-          logical_operator: and
-        desc: ''
-        selected: false
-        title: 条件分支_是否使用满血LLM_图表修改规划
-        type: if-else
-      height: 148
-      id: '1776200000031'
-      position:
-        x: 2760
-        "y": 1120
-      positionAbsolute:
-        x: 2760
-        "y": 1120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        authorization:
-          config:
-          type: no-auth
-        body:
-          data:
-          - id: 1776200000032-body
-            key: ''
-            type: text
-            value: |-
-              {
-                "model": "{{#env.FULL_LLM_MODEL#}}",
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": "你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段，不要输出 Mongo plan / Mongo pipeline。用户通常是在上一轮查询结果基础上修改图表展示方式。只修改 chart_type / title / style / 排序 / TopN / 标签 / 百分比等展示属性时，才属于 chart_only，不要修改查询条件，不要触发重新查询。若用户修改 x_field / y_field / group / metric / filter / time_range，则不是 chart_only，必须标记为 full_replan/需要重新查询，由语义计划链路重新生成 semantic_plan_contract。\n如果用户没有明确指定 x_field/y_field，请输出空字符串，表示沿用上一轮字段；空字符串表示“不修改”，不是“清空”。不得编造字段。支持 chart_type: bar, pie, line, area, scatter。bar/pie/line/area 通常需要一个类别或时间字段 + 一个数值字段；scatter 需要两个数值字段。\n\n当前用户问题：{{#sys.query#}}\n上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}\n上一轮图表请求（标准扁平 chart_request）：{{#conversation.last_chart_request_json#}}\n图表修改意图：{{#1776000000004.chart_modification_json#}}\n上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}"
-                  }
-                ],
-                "temperature": 0.1,
-                "stream": false
-              }
-          type: json
-        desc: OpenAI-compatible 满血LLM请求；失败由检查节点转本地兜底。
-        headers: Content-Type:application/json\nAuthorization:Bearer {{#env.FULL_LLM_API_KEY#}}
-        method: post
-        params: ''
-        retry_config:
-          max_retries: 1
-          retry_enabled: false
-          retry_interval: 100
-        selected: false
-        ssl_verify: true
-        timeout:
-          max_connect_timeout: 600000
-          max_read_timeout: 600000
-          max_write_timeout: 600000
-        title: HTTP请求_调用满血LLM_图表修改规划
-        type: http-request
-        url: "{{#env.FULL_LLM_API_BASE#}}"
-        variables: []
-      height: 123
-      id: '1776200000032'
-      position:
-        x: 3220
-        "y": 860
-      positionAbsolute:
-        x: 3220
+    viewport:
+      x: -120
+      y: 80
+      zoom: 0.55
+  rag_pipeline_variables: []
