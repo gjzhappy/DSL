@@ -120,14 +120,49 @@
                       filters.append(nf)
                   stage["filters"] = filters
 
+                  stage_output_field_alias_map = {}
+                  canonical_metric_alias = _str(stage.get("metric_alias"))
+                  if canonical_metric_alias:
+                      stage_output_field_alias_map[canonical_metric_alias] = canonical_metric_alias
+                      for alias in _list(stage.get("metric_alias")):
+                          if _str(alias):
+                              stage_output_field_alias_map[_str(alias)] = canonical_metric_alias
+                      for metric_item in _list(stage.get("metrics")):
+                          if isinstance(metric_item, dict):
+                              for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                                  if _str(metric_item.get(alias_key)):
+                                      stage_output_field_alias_map[_str(metric_item.get(alias_key))] = canonical_metric_alias
+                      stage_chart_request = stage.get("chart_request") if isinstance(stage.get("chart_request"), dict) else {}
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(stage_chart_request.get(chart_key)):
+                              stage_output_field_alias_map[_str(stage_chart_request.get(chart_key))] = canonical_metric_alias
+                      top_chart_request = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(top_chart_request.get(chart_key)):
+                              stage_output_field_alias_map[_str(top_chart_request.get(chart_key))] = canonical_metric_alias
+                      for fix in autofixes:
+                          if isinstance(fix, dict) and _str(fix.get("to")) == canonical_metric_alias and _str(fix.get("from")):
+                              stage_output_field_alias_map[_str(fix.get("from"))] = canonical_metric_alias
+                  if stage_output_field_alias_map:
+                      debug.setdefault("stage_output_field_alias_maps", {})[_str(stage.get("stage_name") or i)] = dict(stage_output_field_alias_map)
+
+                  def _canonical_stage_output_field(raw: str, place: str) -> Tuple[str, bool]:
+                      value = _str(raw)
+                      canonical = stage_output_field_alias_map.get(value, value)
+                      if canonical != value:
+                          autofixes.append({"type": "aggregate_output_alias_canonicalize", "place": place, "from": value, "to": canonical, "collection": coll})
+                          return canonical, True
+                      return value, value in stage_output_field_alias_map
+
                   projections = []
                   for pf in _list(stage.get("projection_fields")):
                       pf_str = _str(pf)
-                      if pf_str in derived_fields:
-                          projections.append(pf_str)
-                          autofixes.append({"type": "derived_metric_alias_allow", "field": pf_str, "place": "projection_fields"})
+                      canonical_pf, is_stage_output = _canonical_stage_output_field(pf_str, "projection_fields")
+                      if is_stage_output or canonical_pf in derived_fields:
+                          projections.append(canonical_pf)
+                          autofixes.append({"type": "derived_metric_alias_allow", "field": canonical_pf, "place": "projection_fields"})
                       else:
-                          projections.append(_canonical_field(pf_str, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                          projections.append(_canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
                   stage["projection_fields"] = projections
 
                   tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
@@ -179,11 +214,14 @@
                           continue
                       ns = copy.deepcopy(s)
                       sf = _str(ns.get("field"))
-                      if sf and sf not in valid_sort_fields:
-                          cf = _canonical_field(sf, schema, coll, "sort", errors, warnings, autofixes, "sortable")
-                          ns["field"] = cf
-                          if cf not in valid_sort_fields and cf != _str(stage.get("metric_alias")):
-                              errors.append(f"sort.field={sf} 不是 group/metric/projection/schema sortable 字段。")
+                      if sf:
+                          canonical_sf, is_stage_output = _canonical_stage_output_field(sf, "sort.field")
+                          ns["field"] = canonical_sf
+                          if not is_stage_output and canonical_sf not in valid_sort_fields:
+                              cf = _canonical_field(canonical_sf, schema, coll, "sort", errors, warnings, autofixes, "sortable")
+                              ns["field"] = cf
+                              if cf not in valid_sort_fields and cf != _str(stage.get("metric_alias")):
+                                  errors.append(f"sort.field={sf} 不是 group/metric/projection/schema sortable 字段。")
                       d = ns.get("direction", ns.get("order", "desc"))
                       if d in (1, "1", "asc", "ASC", "ascending"):
                           nd = "asc"
@@ -231,6 +269,31 @@
                       errors.append(f"chart_type={ctype} 不支持。")
                   x = _str(chart.get("x_field"))
                   y = _str(chart.get("y_field"))
+                  chart_stage_output_field_alias_map = {}
+                  if metric_alias:
+                      chart_stage_output_field_alias_map[metric_alias] = metric_alias
+                      for alias in _list(first.get("metric_alias")):
+                          if _str(alias):
+                              chart_stage_output_field_alias_map[_str(alias)] = metric_alias
+                      for metric_item in _list(first.get("metrics")):
+                          if isinstance(metric_item, dict):
+                              for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                                  if _str(metric_item.get(alias_key)):
+                                      chart_stage_output_field_alias_map[_str(metric_item.get(alias_key))] = metric_alias
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(chart.get(chart_key)):
+                              chart_stage_output_field_alias_map[_str(chart.get(chart_key))] = metric_alias
+                      stage_chart_request = first.get("chart_request") if isinstance(first.get("chart_request"), dict) else {}
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(stage_chart_request.get(chart_key)):
+                              chart_stage_output_field_alias_map[_str(stage_chart_request.get(chart_key))] = metric_alias
+                      for fix in autofixes:
+                          if isinstance(fix, dict) and _str(fix.get("to")) == metric_alias and _str(fix.get("from")):
+                              chart_stage_output_field_alias_map[_str(fix.get("from"))] = metric_alias
+                      if y in chart_stage_output_field_alias_map and chart_stage_output_field_alias_map[y] != y:
+                          chart["y_field"] = chart_stage_output_field_alias_map[y]
+                          autofixes.append({"type": "aggregate_output_alias_canonicalize", "place": "chart_request.y_field", "from": y, "to": chart["y_field"], "collection": primary})
+                          y = chart["y_field"]
                   if not x and len(group_fields) == 1:
                       chart["x_field"] = group_fields[0]; autofixes.append({"type": "chart_x_fill", "value": group_fields[0]})
                   elif x and x not in group_fields:
