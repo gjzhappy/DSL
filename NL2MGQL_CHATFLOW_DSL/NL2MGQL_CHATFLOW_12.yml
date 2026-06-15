@@ -367,7 +367,7 @@
 
             如果结果行较少，需要明确说明样本量有限，不要过度解读。
             不要基于当前结果中不存在的字段做确定性归因。
-            促销、库存、渠道、地区、价格等如果不在结果字段中，只能作为“后续可验证方向”，不能作为已发生原因。
+            未出现在结果字段中的外部因素只能作为“后续可验证方向”，不能作为已发生原因。
             涉及占比时必须计算准确：例如 Huawei=4, Apple=3, Xiaomi=3，总计=10，则 Huawei=40%，Apple=30%，Xiaomi=30%。
             不要写出 “30% vs 40%” 这种方向混乱的表达。
 
@@ -630,7 +630,7 @@
               r'按.+统计', r'按.+排序', r'按.+口径', r'按.+维度', r'横轴改成', r'纵轴改成',
               r'换成.+维度', r'改成.+口径', r'只统计', r'只看(?!前\s*\d)',
               r'筛选', r'过滤', r'排除', r'条件', r'口径', r'真实口径', r'重新统计',
-              r'不看.+改成', r'改成.+销售额', r'改看', r'加上.+信息', r'关联', r'join|JOIN'
+              r'不看.+改成', r'改看', r'加上.+信息', r'关联', r'join|JOIN'
           )
           NEGATION_PATTERNS = (r'不再按\s*([^，。,.\s]+)', r'不要\s*([^，。,.\s]+)', r'不是\s*([^，。,.\s]+)', r'不看\s*([^，。,.\s]+)')
 
@@ -795,7 +795,7 @@
                                   reasons.append('negated_old_field:%s' % old_field)
                   else:
                       reasons.append('ambiguous_negated_old_field')
-              if '不看' in text and any(x in text for x in ('订单数', '销售额', '指标', 'metric')):
+              if '不看' in text and any(x in text for x in ('指标', 'metric')):
                   reasons.append('negated_metric')
               return _unique_keep_order(reasons)
 

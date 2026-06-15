@@ -111,7 +111,7 @@
                   r = str(reason or '')
                   if 'group' in r or '按.+统计' in r or '不再按' in r or '改按' in r or '不要按' in r or '不按' in r or '横轴改成' in r:
                       unapplied.append('group_by')
-                  if 'metric' in r or '不看' in r or '销售额' in r:
+                  if 'metric' in r or '不看' in r:
                       unapplied.append('metric')
                   if 'filter' in r or 'where' in r or '只看' in r or '筛选' in r or '过滤' in r or '排除' in r:
                       unapplied.append('filter')

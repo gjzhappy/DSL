@@ -640,20 +640,72 @@
       width: 242
     - data:
         code: |
-          def main(question: str):
-              q = str(question or '').strip()
-              query = (
-                  '用户问题：' + q + '\n'
-                  '请根据用户问题检索最相关的 Mongo schema 文档，用于确定 collection、字段、指标和关联关系。'
-                  '优先返回包含 metadata_type: mongo_schema 的完整 schema 文档；'
-                  '文档需要包含 collection_name、collection_label、fields、metrics、relations、query_rules；'
-                  '不要只返回普通解释文本。'
-              )
-              return {'query_text': query}
+          import json
+          def _loads(v):
+              if isinstance(v, dict): return v
+              try: return json.loads(v) if str(v or '').strip() else {}
+              except Exception: return {}
+          def _list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              return [] if v in (None, '', {}, []) else [str(v).strip()]
+          def _hit(q, v, w):
+              t = str(v or '').strip().lower()
+              return w if t and t in q.lower() else 0
+          def _match(q, reg):
+              scores = []
+              for item in reg.get('collections') or []:
+                  if not isinstance(item, dict): continue
+                  name = str(item.get('collection_name') or '').strip()
+                  if not name: continue
+                  score, reasons = 0, []
+                  for key, weight in [('collection_name',100), ('collection_label',90)]:
+                      if _hit(q, item.get(key), weight): score += weight; reasons.append(key)
+                  for key, weight in [('aliases',80), ('primary_terms',60), ('fields',45), ('metrics',45)]:
+                      hits = sum(1 for value in _list(item.get(key)) if _hit(q, value, weight))
+                      if hits: score += hits * weight; reasons.append(key)
+                  desc = str(item.get('description') or '').replace('，', ' ').replace('。', ' ').split()
+                  weak = sum(1 for token in desc if len(token) >= 2 and token in q)
+                  if weak: score += min(weak, 3) * 10; reasons.append('description')
+                  if score: scores.append({'collection_name': name, 'score': score, 'matched_fields': reasons})
+              scores.sort(key=lambda x: x.get('score', 0), reverse=True)
+              if not scores: return [], scores
+              top = scores[0].get('score', 0)
+              winners = [x.get('collection_name') for x in scores if x.get('score', 0) == top and x.get('collection_name')]
+              return (winners if len(winners) == 1 else []), scores
+          def main(question: str, collection_registry_json: str = ''):
+              q = str(question or '').strip(); names, scores = _match(q, _loads(collection_registry_json))
+              primary = names[0] if names else ''; ready = bool(primary)
+              query = '\n'.join(['用户问题：' + q, 'metadata_type: mongo_schema', 'collection_name: ' + primary, '只检索 candidate_collection_names 中 collection 对应的完整 schema metadata。'])
+              return {'query_text': query, 'candidate_collection_names': names, 'candidate_collection_name': primary, 'candidate_collection_ready': ready, 'candidate_collection_strategy': 'registry_match' if ready else 'registry_no_match', 'candidate_collection_scores_json': json.dumps(scores, ensure_ascii=False), 'candidate_collection_reason': 'matched by registry fields' if ready else 'no unique registry match', 'requires_clarification': not ready, 'clarification_question': '' if ready else '请明确要查询的业务对象或 collection。'}
         code_language: python3
         desc: 为一次性 CandidateSchemas schema retrieval 构造查询，不依赖独立 collection catalog 文档。
         outputs:
           query_text:
+            children:
+            type: string
+          candidate_collection_names:
+            children:
+              type: string
+            type: array
+          candidate_collection_name:
+            children:
+            type: string
+          candidate_collection_ready:
+            children:
+            type: boolean
+          candidate_collection_strategy:
+            children:
+            type: string
+          candidate_collection_scores_json:
+            children:
+            type: string
+          candidate_collection_reason:
+            children:
+            type: string
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
             children:
             type: string
         selected: false
@@ -665,6 +717,11 @@
           - query
           value_type: string
           variable: question
+        - value_selector:
+          - env
+          - COLLECTION_REGISTRY_JSON
+          value_type: string
+          variable: collection_registry_json
       height: 80
       id: '1777099999998'
       position:
@@ -688,6 +745,11 @@
             metadata_id: metadata_type
             name: metadata_type
             value: mongo_schema
+          - comparison_operator: is
+            id: candidate-schemas-collection-filter
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1777099999998.candidate_collection_name#}}"
           logical_operator: and
         metadata_filtering_mode: manual
         multiple_retrieval_config:

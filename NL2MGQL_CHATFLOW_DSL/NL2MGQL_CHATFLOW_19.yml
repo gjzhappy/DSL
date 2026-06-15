@@ -103,7 +103,6 @@
     - data:
         code: |
           import json
-
           def _loads(value):
               if isinstance(value, dict):
                   return dict(value)
@@ -114,7 +113,6 @@
                   except Exception:
                       return {}
               return {}
-
           def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = ''):
               selection = _loads(collection_selection_json)
               catalog = _loads(collection_catalog_json)
@@ -219,6 +217,11 @@
             metadata_id: metadata_type
             name: metadata_type
             value: mongo_schema
+          - comparison_operator: is
+            id: refine-candidate-schemas-collection-filter
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1776000000025.candidate_collection_name#}}"
           logical_operator: and
         metadata_filtering_mode: manual
         multiple_retrieval_config:
@@ -299,10 +302,8 @@
     - data:
         code: |
           import json
-
           MAX_COLLECTIONS = 3
           UNKNOWN = {'', 'unknown', 'UNKNOWN', 'null', 'None', '未确定', '未知'}
-
           def _loads(v, default=None):
               if default is None:
                   default = {}
@@ -314,7 +315,6 @@
                   except Exception:
                       return default
               return default
-
           def _list(v):
               if v is None or v == '':
                   return []
@@ -326,7 +326,6 @@
                       return parsed
                   return [x.strip() for x in v.split(',') if x.strip()]
               return [v]
-
           def _add(out, value):
               s = str(value or '').strip()
               if not s or s in UNKNOWN:
