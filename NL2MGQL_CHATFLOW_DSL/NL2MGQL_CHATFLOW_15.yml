@@ -426,6 +426,13 @@
               "summary": "aggregate_summary",
               "aggregate_summary": "aggregate_summary",
               "group_by": "aggregate_summary",
+              "group": "aggregate_summary",
+              "grouping": "aggregate_summary",
+              "group_count": "aggregate_summary",
+              "group_stat": "aggregate_summary",
+              "group_statistics": "aggregate_summary",
+              "count_by_group": "aggregate_summary",
+              "grouped_count": "aggregate_summary",
               "group_by_metric": "aggregate_summary",
               "group_and_metric": "aggregate_summary",
               "aggregation_by_group": "aggregate_summary",
@@ -468,6 +475,18 @@
           }
 
 
+          def _looks_like_grouped_aggregate(stage: Dict[str, Any] | None = None) -> bool:
+              stage = stage if isinstance(stage, dict) else {}
+              group_fields = stage.get("group_fields") or stage.get("group_by") or []
+              metrics = stage.get("metrics") or []
+              return bool(group_fields) and (
+                  bool(stage.get("metric_function"))
+                  or bool(stage.get("metric_field"))
+                  or bool(stage.get("metric_alias"))
+                  or bool(metrics)
+              )
+
+
           def canonicalize_intent_type(intent_type: Any, stage: Dict[str, Any] | None = None) -> str:
               raw = _str(intent_type).lower()
               stage = stage if isinstance(stage, dict) else {}
@@ -485,8 +504,10 @@
               has_group_token = bool(normalized_tokens & {"group", "grouped"})
               if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and has_aggregate_token and has_group_token:
                   return "aggregate_summary"
+              if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and _looks_like_grouped_aggregate(stage):
+                  return "aggregate_summary"
               if not raw:
-                  return "aggregate_summary" if (stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field")) else "detail_query"
+                  return "aggregate_summary" if (stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or stage.get("metrics")) else "detail_query"
               return raw
 
 
