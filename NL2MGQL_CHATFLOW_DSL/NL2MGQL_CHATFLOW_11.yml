@@ -1,150 +1,13 @@
-    - data:
-        code: |
-          import json, re
-          from datetime import datetime, timezone
-
-          def _loads(v, fb):
-              if isinstance(v, (dict, list)): return v
-              if isinstance(v, str) and v.strip():
-                  try: return json.loads(v)
-                  except Exception: return fb
-              return fb
-          def _dumps(v): return json.dumps(v, ensure_ascii=False)
-          def _bool(v):
-              if isinstance(v, bool): return v
-              if isinstance(v, str): return v.strip().lower() in {'true','1','yes','y'}
-              return bool(v)
-          def _num(v):
-              if v is None or isinstance(v,bool): return None
-              try:
-                  if isinstance(v,str) and not v.strip(): return None
-                  return float(v)
-              except Exception: return None
-          def _numeric(rows,f):
-              vals=[r.get(f) for r in rows[:200] if isinstance(r,dict) and r.get(f) is not None]
-              return bool(vals) and sum(1 for v in vals if _num(v) is not None)>=max(1,int(len(vals)*0.7))
-          def _markdown(option):
-              fence=chr(96)*3
-              return fence+'echarts\n'+json.dumps(option,ensure_ascii=False,indent=2)+'\n'+fence
-          def _chart_req(v):
-              default={'enabled':False,'chart_type':'','x_field':'','y_field':'','series_name':'','title':'','field_labels':{}}
-              obj=_loads(v,{})
-              cand=obj.get('chart_request') if isinstance(obj,dict) and isinstance(obj.get('chart_request'),dict) else obj
-              out=dict(default)
-              if isinstance(cand,dict):
-                  for k in default:
-                      if k in cand: out[k]=cand[k]
-              out['enabled']=_bool(out.get('enabled', True)); out['chart_type']=str(out.get('chart_type') or '').strip().lower()
-              out['x_field']=str(out.get('x_field') or '').strip(); out['y_field']=str(out.get('y_field') or '').strip()
-              out['series_name']=str(out.get('series_name') or '').strip(); out['title']=str(out.get('title') or '').strip()
-              out['field_labels']=out.get('field_labels') if isinstance(out.get('field_labels'),dict) else {}
-              return out
-          def _title(req):
-              if req.get('title'): return str(req.get('title'))
-              labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}
-              return '按%s统计%s' % (labels.get(req.get('x_field')) or req.get('x_field') or '维度', labels.get(req.get('y_field')) or req.get('series_name') or req.get('y_field') or '指标')
-          def _payload(req, rows, fields, chart_plan_warning=''):
-              fields=set([str(f) for f in (fields or [])])
-              for r in rows[:20]: fields.update(r.keys())
-              p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':len(rows),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{'mode':'chart_only'}}
-              if not req.get('enabled'):
-                  p['warning']='chart_request disabled'; return p
-              if not rows:
-                  p['warning']='上一轮结果摘要不足以重新生成图表'; return p
-              x=str(req.get('x_field') or ''); y=str(req.get('y_field') or '')
-              if not x or not y or x not in fields or y not in fields:
-                  p['warning']='图表字段不在查询结果中'; return p
-              if not _numeric(rows,y):
-                  p['warning']='图表纵轴字段不是数字，未生成图表。'; return p
-              ctype=str(req.get('chart_type') or 'bar')
-              if ctype not in {'bar','line','pie','scatter'}:
-                  p['warning']='暂不支持该图表类型'; return p
-              title=_title(req); series=req.get('series_name') or y
-              if ctype=='pie':
-                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'series':[{'name':series,'type':'pie','data':[{'name':str(r.get(x) if r.get(x) is not None else '未分类'),'value':_num(r.get(y)) or 0} for r in rows[:20]]}]}
-              elif ctype=='scatter':
-                  if not _numeric(rows,x): p['warning']='散点图横轴字段不是数字，未生成图表。'; return p
-                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'scatter','data':[[_num(r.get(x)),_num(r.get(y))] for r in rows if _num(r.get(x)) is not None and _num(r.get(y)) is not None]}]}
-              else:
-                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
-                  if ctype=='line' and not re.search(r'date|time|day|month|year|日期|时间|日|月|年',x,re.I): p['warning']='折线图横轴不是明显时间或有序字段。'
-              p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':'已基于上一轮结果摘要重新生成%s图表。' % ctype})
-              if chart_plan_warning and not p.get('warning'): p['warning']=str(chart_plan_warning)
-              return p
-          def main(chart_request_json: str, last_result_profile_json: str, chart_plan_warning: str=''):
-              req=_chart_req(chart_request_json); profile=_loads(last_result_profile_json,{})
-              rows=profile.get('preview_rows') if isinstance(profile.get('preview_rows'),list) else []
-              rows=[r for r in rows if isinstance(r,dict)]
-              fields=profile.get('fields') if isinstance(profile.get('fields'),list) else (list(rows[0].keys()) if rows else [])
-              payload=_payload(req, rows, fields, chart_plan_warning)
-              md=payload.get('echarts_markdown') or ''
-              note=payload.get('summary') or payload.get('warning') or '未生成图表。'
-              final=(md+'\n\n'+note).strip() if md else note
-              return {'chart_payload_json':_dumps(payload),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':md,'chart_summary':payload.get('summary') or '','chart_warning':payload.get('warning') or '','chart_enabled':bool(payload.get('enabled')),'data_profile_json':_dumps(payload.get('data_profile') or {}),'chart_debug_json':_dumps(payload.get('chart_debug') or {}),'final_answer_markdown':final,'final_answer_summary':note,'updated_at':datetime.now(timezone.utc).isoformat()}
-        code_language: python3
-        desc: Phase 12 chart-only：compact_context.last_chart_request + last_result_profile.preview_rows
-          -> chart_payload_contract；不查 Mongo、不改查询语义。
-        outputs:
-          chart_payload_json:
-            children:
-            type: string
-          chart_payload_contract:
-            children:
-            type: string
-          chart_echarts_markdown:
-            children:
-            type: string
-          chart_summary:
-            children:
-            type: string
-          chart_warning:
-            children:
-            type: string
-          chart_enabled:
-            children:
-            type: boolean
-          data_profile_json:
-            children:
-            type: string
-          chart_debug_json:
-            children:
-            type: string
-          final_answer_markdown:
-            children:
-            type: string
-          final_answer_summary:
-            children:
-            type: string
-          updated_at:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_ChartPayloadBuilder
-        type: code
-        variables:
-        - value_selector:
-          - '1776000000015'
-          - chart_request_json
           value_type: string
-          variable: chart_request_json
-        - value_selector:
-          - '1776000000001'
-          - last_result_profile_json
-          value_type: string
-          variable: last_result_profile_json
-        - value_selector:
-          - '1776000000015'
-          - chart_plan_warning
-          value_type: string
-          variable: chart_plan_warning
+          variable: last_context_json
       height: 80
-      id: '1776000000016'
+      id: '1776000000002'
       position:
-        x: 4140
-        y: 1120
+        x: 920
+        "y": 0
       positionAbsolute:
-        x: 4140
-        y: 1120
+        x: 920
+        "y": 0
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -164,200 +27,588 @@
           name: qwen3.5:35b
           provider: langgenius/ollama/ollama
         prompt_template:
-        - id: analysis-system
+        - id: intent-system
           role: system
-          text: |-
-            你是一个基于上一轮查询结果的分析助手。
-            必须基于已给出的结果行、字段、图表请求、用户本轮问题进行分析。
-            必须输出 JSON，不要 markdown 代码块，不要解释 JSON 之外的内容，不要输出 schema 之外字段。
-            不执行 Mongo；默认不重新画图。
-
-            analysis_markdown 必须非空，作为最终给用户看的自然语言分析。
-            analysis_debug_json 用于结构化调试，可包含 observations / insights / suggestions。
-            不能只填 analysis_debug_json 而让 analysis_markdown 为空。
-
-            如果结果行较少，需要明确说明样本量有限，不要过度解读。
-            不要基于当前结果中不存在的字段做确定性归因。
-            促销、库存、渠道、地区、价格等如果不在结果字段中，只能作为“后续可验证方向”，不能作为已发生原因。
-            涉及占比时必须计算准确：例如 Huawei=4, Apple=3, Xiaomi=3，总计=10，则 Huawei=40%，Apple=30%，Xiaomi=30%。
-            不要写出 “30% vs 40%” 这种方向混乱的表达。
-
-            输出结构：
-            {
-              "analysis_markdown": "非空 markdown 分析正文，建议包含：### 看到的现象、### 初步判断、### 建议下一步",
-              "analysis_debug_json": {
-                "observations": [],
-                "insights": [],
-                "suggestions": []
-              }
-            }
-        - id: analysis-user
+          text: 你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。
+        - id: intent-user
           role: user
-          text: |-
-            当前用户问题：{{#sys.query#}}
-            上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}
-            上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}
-            上一轮最终摘要：{{#conversation.last_result_summary#}}
-            分析关注点：{{#1776000000004.analysis_focus#}}
+          text: "{{#1776000000002.intent_prompt#}}"
         selected: false
         structured_output:
           schema:
             type: object
             additionalProperties: false
             required:
-            - analysis_markdown
-            - analysis_debug_json
+            - turn_intent
+            - need_previous_context
+            - need_requery
+            - need_rechart
+            - need_analysis
+            - can_answer_directly
+            - reason
+            - missing_info
+            - chart_modification
+            - query_refinement
+            - analysis_focus
             properties:
-              analysis_markdown:
+              turn_intent:
                 type: string
-              analysis_debug_json:
+                enum:
+                - new_query
+                - modify_chart
+                - refine_query
+                - explain_result
+                - reanalyze_result
+                - fix_result
+                - continue_previous
+                - clarify
+              need_previous_context:
+                type: boolean
+              need_requery:
+                type: boolean
+              need_rechart:
+                type: boolean
+              need_analysis:
+                type: boolean
+              can_answer_directly:
+                type: boolean
+              reason:
+                type: string
+              missing_info:
+                type: array
+                items:
+                  type: string
+              chart_modification:
                 type: object
                 additionalProperties: true
+              query_refinement:
+                type: object
+                additionalProperties: true
+              analysis_focus:
+                type: string
         structured_output_enabled: true
-        title: LLM_基于上一轮结果继续分析
+        title: LLM_多轮意图识别
         type: llm
         vision:
           enabled: false
       height: 98
-      id: '1776000000017'
+      id: '1776000000003'
       position:
-        x: 3220
-        y: 1480
+        x: 1380
+        "y": 0
       positionAbsolute:
-        x: 3220
-        y: 1480
+        x: 1380
+        "y": 0
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
     - data:
-        code: |+
-          import json, re
+        code: |
+          import json
+          import re
 
-          def _extract(text):
+          ALLOWED = {'new_query','modify_chart','refine_query','explain_result','reanalyze_result','fix_result','continue_previous','clarify'}
+          SCHEMA_KEYS = {'turn_intent','need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly','reason','missing_info','chart_modification','query_refinement','analysis_focus'}
+
+
+          def _strip_code_block(text):
               text = str(text or '').strip()
               m = re.match(r'^```(?:json)?\s*(.*?)\s*```$', text, flags=re.I | re.S)
-              if m:
-                  text = m.group(1).strip()
-              s, e = text.find('{'), text.rfind('}')
-              return text[s:e + 1] if s >= 0 and e >= s else text
+              return m.group(1).strip() if m else text
 
-          def _loads(v):
-              if isinstance(v, dict):
-                  return v
-              if isinstance(v, str) and v.strip():
+
+          def _extract_json(text):
+              text = _strip_code_block(text)
+              start, end = text.find('{'), text.rfind('}')
+              return text[start:end + 1] if start >= 0 and end >= start else text
+
+
+          def _loads_obj(value):
+              if isinstance(value, dict):
+                  return dict(value)
+              if isinstance(value, str) and value.strip():
                   try:
-                      return json.loads(_extract(v))
+                      parsed = json.loads(_extract_json(value))
+                      return parsed if isinstance(parsed, dict) else {}
                   except Exception:
                       return {}
               return {}
 
-          def _as_list(v):
-              if isinstance(v, list):
-                  return [str(x).strip() for x in v if str(x).strip()]
-              if isinstance(v, str) and v.strip():
-                  return [v.strip()]
-              return []
 
-          def _build_markdown_from_debug(debug):
-              if not isinstance(debug, dict):
-                  return ''
+          def _bool(value, default=False):
+              if isinstance(value, bool):
+                  return value
+              if value is None or value == '':
+                  return default
+              return str(value).strip().lower() in {'1','true','yes','y','on'}
 
-              observations = _as_list(debug.get('observations'))
-              insights = _as_list(debug.get('insights'))
-              suggestions = _as_list(debug.get('suggestions'))
 
-              parts = []
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if value in (None, ''):
+                  return []
+              return [str(value).strip()]
 
-              if observations:
-                  parts.append('### 看到的现象')
-                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(observations)])
+          def _first_stage(plan):
+              stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan, dict) else []
+              return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
 
-              if insights:
-                  if parts:
-                      parts.append('')
-                  parts.append('### 初步判断')
-                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(insights)])
+          def _add(out, value):
+              text = str(value or '').strip()
+              if text and text not in out:
+                  out.append(text)
 
-              if suggestions:
-                  if parts:
-                      parts.append('')
-                  parts.append('### 建议下一步')
-                  parts.extend([f'{i + 1}. {x}' for i, x in enumerate(suggestions)])
+          def _same_semantic(a, b):
+              def clean(v):
+                  if isinstance(v, dict):
+                      return {k: x for k, x in v.items() if x not in (None, '', [], {})}
+                  if isinstance(v, list):
+                      return [x for x in v if str(x or '').strip()]
+                  return str(v or '').strip()
+              return json.dumps(clean(a), ensure_ascii=False, sort_keys=True) == json.dumps(clean(b), ensure_ascii=False, sort_keys=True)
 
-              return '\n'.join(parts).strip()
+          def _context_binding(obj, old_plan):
+              qref = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
+              st = _first_stage(old_plan)
+              tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
+              base = str(old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection') or '').strip()
+              explicit_switch = bool(qref.get('collection_switch') or qref.get('target_collection') or qref.get('collection'))
+              changed, replaced, deprecated = [], {}, []
+              old_groups = _list(st.get('group_fields'))
+              new_group = qref.get('group_by_dimension') or qref.get('dimension') or qref.get('group_fields')
+              if new_group not in (None, '', [], {}) and old_groups:
+                  changed.append('group_by_dimension')
+                  replaced['group_by_dimension'] = {'old': old_groups, 'new_semantic': new_group}
+                  for f in old_groups: _add(deprecated, f)
+              old_metric = {'metric_alias': st.get('metric_alias'), 'metric_field': st.get('metric_field'), 'metric_function': st.get('metric_function')}
+              if qref.get('metric') not in (None, '', [], {}) and not _same_semantic(qref.get('metric'), old_metric):
+                  changed.append('metric')
+                  replaced['metric'] = {'old': {k: v for k, v in old_metric.items() if v not in (None, '')}, 'new_semantic': qref.get('metric')}
+              if qref.get('time_range') not in (None, '', [], {}):
+                  changed.append('time_range')
+                  replaced['time_range'] = {'old': tr, 'new_semantic': qref.get('time_range')}
+                  if isinstance(tr, dict): _add(deprecated, tr.get('field'))
+              inherit = obj.get('turn_intent') == 'refine_query' and bool(obj.get('need_previous_context')) and bool(base) and not explicit_switch
+              target_terms = []
+              for v in [qref.get('group_by_dimension'), qref.get('metric'), qref.get('time_range')]:
+                  if isinstance(v, dict):
+                      for x in v.values():
+                          _add(target_terms, x)
+                  elif isinstance(v, list):
+                      for x in v:
+                          _add(target_terms, x)
+                  else:
+                      _add(target_terms, v)
+              return {'inherit_previous_collection': inherit, 'collection_switch': explicit_switch, 'base_primary_collection': base, 'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '', 'old_primary_collection': base, 'old_stage_collection': str(st.get('collection') or ''), 'old_group_fields': old_groups, 'old_metric_field': str(st.get('metric_field') or ''), 'old_metric_alias': str(st.get('metric_alias') or ''), 'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '', 'target_group_dimension': qref.get('group_by_dimension'), 'target_metric': qref.get('metric'), 'target_time_range': qref.get('time_range'), 'changed_slots': changed, 'replaced_slots': replaced, 'deprecated_fields': deprecated, 'target_semantic_terms': target_terms}
 
-          def main(analysis_structured, analysis_text: str, last_context_json: str):
-              obj = _loads(analysis_structured) or _loads(analysis_text)
+          def _defaults(intent):
+              base = {'need_previous_context': False, 'need_requery': True, 'need_rechart': False, 'need_analysis': True, 'can_answer_directly': False}
+              if intent == 'modify_chart':
+                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': True, 'need_analysis': True})
+              elif intent in {'explain_result','reanalyze_result'}:
+                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': False, 'need_analysis': True})
+              elif intent == 'continue_previous':
+                  base.update({'need_previous_context': True, 'need_requery': False, 'need_rechart': False, 'need_analysis': True})
+              elif intent == 'clarify':
+                  base.update({'need_previous_context': False, 'need_requery': False, 'need_rechart': False, 'need_analysis': False, 'can_answer_directly': True})
+              elif intent == 'refine_query':
+                  base.update({'need_previous_context': True, 'need_requery': True, 'need_rechart': True, 'need_analysis': True})
+              elif intent == 'fix_result':
+                  base.update({'need_previous_context': True, 'need_requery': True, 'need_rechart': True, 'need_analysis': True})
+              return base
 
-              debug = obj.get('analysis_debug_json') if isinstance(obj.get('analysis_debug_json'), dict) else {}
-              text = str(obj.get('analysis_markdown') or '').strip()
 
-              if not text:
-                  text = _build_markdown_from_debug(debug)
+          def main(intent_structured, intent_text: str, last_context_json: str, question: str, old_normalized_semantic_plan_json: str = '{}', **kwargs):
+              ctx = _loads_obj(last_context_json)
+              old_plan = _loads_obj(old_normalized_semantic_plan_json)
+              obj = _loads_obj(intent_structured)
+              source = 'structured_output' if obj else 'text'
+              if not obj:
+                  obj = _loads_obj(intent_text)
+              valid = bool(obj)
+              err = '' if valid else 'intent json parse failed; fallback to new_query'
+              obj = {k: obj.get(k) for k in SCHEMA_KEYS}
+              intent = str(obj.get('turn_intent') or 'new_query').strip()
+              if intent not in ALLOWED:
+                  intent = 'new_query'; valid = False; err = (err + '; invalid intent').strip('; ')
+              d = _defaults(intent)
+              for k in ['need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly']:
+                  obj[k] = _bool(obj.get(k), d[k])
+              obj['turn_intent'] = intent
+              obj['missing_info'] = obj.get('missing_info') if isinstance(obj.get('missing_info'), list) else []
+              obj['chart_modification'] = obj.get('chart_modification') if isinstance(obj.get('chart_modification'), dict) else {}
+              obj['query_refinement'] = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
+              obj['analysis_focus'] = str(obj.get('analysis_focus') or '')
+              obj['reason'] = str(obj.get('reason') or '')
+              obj['source'] = source
 
-              fallback_used = False
-              if not text:
-                  fallback_used = True
-                  try:
-                      ctx = json.loads(last_context_json or '{}')
-                      count = int(ctx.get('result_rows_count') or 0)
-                      fields = ', '.join(ctx.get('result_fields') or [])
-                  except Exception:
-                      count = 0
-                      fields = ''
-
-                  text = '从当前统计结果看，已返回 %s 行结果%s。LLM 分析暂不可用，建议结合图表和结果摘要判断差异；如需验证原因，需要进一步补充筛选条件或重新查询。' % (
-                      count,
-                      ('，字段包括：' + fields) if fields else ''
-                  )
-
-              if fallback_used and not debug:
-                  debug = {'fallback': True}
-
-              compact = _loads(last_context_json)
-              if not isinstance(compact, dict) or compact.get('context_version') != 'compact_context_contract':
-                  compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':'','last_turn_intent':{},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':'','size_guard':{},'context_warnings':[]}
-              compact['answer_summary'] = text[:800]
-              compact_json = json.dumps(compact, ensure_ascii=False)
-              payload = {'contract_version':'answer_payload_contract','answer_type':'query_only','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':compact.get('last_result_profile') or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(compact.get('has_last_context')),'context_summary':compact}}
-              update = {'contract_version':'context_update_contract','should_save_context':bool(compact.get('has_last_context')),'compact_context':compact,'last_context_json':compact_json,'warnings':compact.get('context_warnings') or [],'clear_fields':[]}
+              q = str(question or '')
+              has_context = bool(ctx.get('has_last_context'))
+              rows_count = int(ctx.get('result_rows_count') or 0)
+              chart_words = ['换成饼图','改成饼图','折线图','柱状图','标题','标签','top','Top','排序']
+              analysis_words = ['分析','解释','为什么','说明什么','差异','继续','接着','刚才']
+              if obj['need_previous_context'] and not has_context:
+                  intent = 'clarify'; obj.update(_defaults('clarify')); obj['turn_intent'] = intent; obj['reason'] = '缺少可复用的上一轮上下文'
+              if any(w in q for w in chart_words) and rows_count <= 0 and intent in {'modify_chart','continue_previous','fix_result'}:
+                  intent = 'clarify'; obj.update(_defaults('clarify')); obj['turn_intent'] = intent; obj['reason'] = '没有可复用的上一轮查询结果用于改图'
+              if any(w in q for w in analysis_words) and rows_count <= 0 and intent in {'explain_result','reanalyze_result','continue_previous'}:
+                  intent = 'clarify'; obj.update(_defaults('clarify')); obj['turn_intent'] = intent; obj['reason'] = '没有可复用的上一轮查询结果用于分析'
+              if intent == 'fix_result':
+                  ref = obj.get('query_refinement') or {}
+                  mod = obj.get('chart_modification') or {}
+                  qkeys = {'field','fields','time_range','filters','group_fields','metric','metric_alias','metric_field','dimension','sort','limit'}
+                  obj['need_requery'] = any(k in ref and ref.get(k) not in ({}, [], '', None) for k in qkeys)
+                  obj['need_rechart'] = bool(obj['need_requery'] or mod)
+              cb = _context_binding(obj, old_plan)
+              obj['context_binding'] = cb
               return {
-                  'analysis_markdown': text,
-                  'analysis_debug_json': json.dumps(debug, ensure_ascii=False),
-                  'final_answer_markdown': text,
-                  'answer_payload_markdown': text,
-                  'answer_payload_json': json.dumps(payload, ensure_ascii=False),
-                  'context_update_json': json.dumps(update, ensure_ascii=False),
-                  'compact_context_json': compact_json,
-                  'answer_text': text,
-                  'result_summary': text[:800],
-                  'final_answer_summary': text[:4000]
+                  'normalized_turn_intent_json': json.dumps(obj, ensure_ascii=False),
+                  'turn_intent': str(obj.get('turn_intent') or 'new_query'),
+                  'need_previous_context': bool(obj.get('need_previous_context')),
+                  'need_requery': bool(obj.get('need_requery')),
+                  'need_rechart': bool(obj.get('need_rechart')),
+                  'need_analysis': bool(obj.get('need_analysis')),
+                  'can_answer_directly': bool(obj.get('can_answer_directly')),
+                  'intent_valid': valid,
+                  'intent_error': err,
+                  'missing_info': json.dumps(obj.get('missing_info') or [], ensure_ascii=False),
+                  'chart_modification_json': json.dumps(obj.get('chart_modification') or {}, ensure_ascii=False),
+                  'query_refinement_json': json.dumps(obj.get('query_refinement') or {}, ensure_ascii=False),
+                  'context_binding_json': json.dumps(cb, ensure_ascii=False),
+                  'analysis_focus': str(obj.get('analysis_focus') or ''),
               }
-
         code_language: python3
-        desc: 解析 LLM 继续分析输出；失败时生成可读降级分析。
+        desc: ''
         outputs:
-          analysis_markdown:
+          normalized_turn_intent_json:
             children:
             type: string
-          analysis_debug_json:
+          turn_intent:
             children:
             type: string
+          need_previous_context:
+            children:
+            type: boolean
+          need_requery:
+            children:
+            type: boolean
+          need_rechart:
+            children:
+            type: boolean
+          need_analysis:
+            children:
+            type: boolean
+          can_answer_directly:
+            children:
+            type: boolean
+          intent_valid:
+            children:
+            type: boolean
+          intent_error:
+            children:
+            type: string
+          chart_modification_json:
+            children:
+            type: string
+          query_refinement_json:
+            children:
+            type: string
+          context_binding_json:
+            children:
+            type: string
+          analysis_focus:
+            children:
+            type: string
+          missing_info:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_提取并规范化多轮意图结果
+        type: code
+        variables:
+        - value_selector:
+          - '1776200000026'
+          - structured_output
+          value_type: object
+          variable: intent_structured
+        - value_selector:
+          - '1776200000026'
+          - text
+          value_type: string
+          variable: intent_text
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000001'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+      height: 80
+      id: '1776000000004'
+      position:
+        x: 1840
+        "y": 0
+      positionAbsolute:
+        x: 1840
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: query
+          conditions:
+          - comparison_operator: is
+            id: route-query
+            value: query
+            varType: string
+            variable_selector:
+            - '1776000000013'
+            - route_name
+          id: query
+          logical_operator: and
+        - case_id: chart
+          conditions:
+          - comparison_operator: is
+            id: route-chart
+            value: chart
+            varType: string
+            variable_selector:
+            - '1776000000013'
+            - route_name
+          id: chart
+          logical_operator: and
+        - case_id: analysis
+          conditions:
+          - comparison_operator: is
+            id: route-analysis
+            value: analysis
+            varType: string
+            variable_selector:
+            - '1776000000013'
+            - route_name
+          id: analysis
+          logical_operator: and
+        - case_id: clarify
+          conditions:
+          - comparison_operator: is
+            id: route-clarify
+            value: clarify
+            varType: string
+            variable_selector:
+            - '1776000000013'
+            - route_name
+          id: clarify
+          logical_operator: and
+        - case_id: direct
+          conditions:
+          - comparison_operator: is
+            id: route-direct
+            value: direct
+            varType: string
+            variable_selector:
+            - '1776000000013'
+            - route_name
+          id: direct
+          logical_operator: and
+        desc: 多轮路由只判断 route_name；query 进入原查询链路，chart/analysis/clarify/direct 均不执行 Mongo。
+        selected: false
+        title: 条件分支_多轮路由
+        type: if-else
+      height: 160
+      id: '1776000000005'
+      position:
+        x: 2760
+        "y": 0
+      positionAbsolute:
+        x: 2760
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          from datetime import datetime, timezone
+
+          def _loads(v, fb):
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return fb
+              return fb
+          def _dumps(v): return json.dumps(v, ensure_ascii=False)
+          def _clean_chart_request(req):
+              allowed=['enabled','chart_type','x_field','y_field','title','series_name','field_labels']
+              return {k:req.get(k) for k in allowed if isinstance(req,dict) and k in req}
+          def _clean_payload(payload):
+              if not isinstance(payload,dict): return {'enabled':False,'summary':'','warning':''}
+              allowed=['contract_version','enabled','chart_type','title','x_field','y_field','series_name','summary','warning','data_profile']
+              out={k:payload.get(k) for k in allowed if k in payload}
+              if isinstance(out.get('data_profile'),dict):
+                  p=out['data_profile']
+                  out['data_profile']={'row_count':int(p.get('row_count') or 0),'fields':(p.get('fields') or [])[:50],'preview_rows':[r for r in (p.get('preview_rows') or [])[:5] if isinstance(r,dict)]}
+              return out
+          def _base_context(last_context_json):
+              ctx=_loads(last_context_json,{})
+              return ctx if isinstance(ctx,dict) else {}
+          def main(chart_payload_json: str, chart_request_json: str='', last_context_json: str='{}'):
+              payload=_loads(chart_payload_json,{})
+              req=_loads(chart_request_json,{})
+              clean_req=_clean_chart_request(req if isinstance(req,dict) else {})
+              clean_payload=_clean_payload(payload if isinstance(payload,dict) else {})
+              md=str(payload.get('echarts_markdown') or '').strip() if isinstance(payload,dict) else ''
+              enabled=bool(payload.get('enabled')) if isinstance(payload,dict) else False
+              if enabled and md:
+                  answer_text='已基于上一轮结果更新图表。'
+                  answer_type='chart_only'
+                  note=str(payload.get('summary') or '图表已更新。')
+              else:
+                  answer_text='上一轮结果摘要不足以重新生成图表。'
+                  answer_type='chart_only'
+                  note=str(payload.get('warning') or answer_text)
+                  md=''
+              final=(answer_text+'\n\n'+md+'\n\n'+note).strip() if md else (answer_text+'\n\n'+note).strip()
+              ctx=_base_context(last_context_json)
+              if ctx.get('context_version')!='compact_context_contract':
+                  ctx={'context_version':'compact_context_contract','has_last_context':False,'last_question':'','last_turn_intent':{},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':'','size_guard':{},'context_warnings':[]}
+              # chart_only can update chart request / chart summary, but must not overwrite last_plan_summary, primary collection, or schema_context_ref.
+              prior_plan=ctx.get('last_plan_summary') if isinstance(ctx.get('last_plan_summary'),dict) else {}
+              prior_primary=ctx.get('last_primary_collection') or ''
+              prior_schema=ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'),dict) else {'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''}
+              ctx['last_chart_request']=(ctx.get('last_chart_request') if isinstance(ctx.get('last_chart_request'),dict) else {})
+              ctx['last_chart_request'].update({k:v for k,v in clean_req.items() if k in ('chart_type','title','x_field','y_field','series_name','enabled') and v not in (None,'')})
+              data_profile=clean_payload.get('data_profile') if isinstance(clean_payload.get('data_profile'),dict) else {}
+              if data_profile:
+                  ctx['last_result_profile']=data_profile
+              ctx['answer_summary']=note[:800]
+              ctx['last_plan_summary']=prior_plan
+              ctx['last_primary_collection']=prior_primary
+              ctx['schema_context_ref']=prior_schema
+              compact_json=_dumps(ctx)
+              context_update={'contract_version':'context_update_contract','should_save_context':bool(ctx.get('has_last_context')),'compact_context':ctx,'last_context_json':compact_json,'warnings':ctx.get('context_warnings') or [],'clear_fields':[]}
+              answer_payload={'contract_version':'answer_payload_contract','answer_type':answer_type,'answer_text':answer_text,'chart_echarts_markdown':md,'result_summary':note,'message':'' if md else note,'chart_payload':clean_payload,'query_result_profile':data_profile or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(ctx.get('has_last_context')),'context_summary':ctx}}
+              return {'final_answer_markdown': final,'answer_payload_markdown': final,'answer_text': answer_text,'result_summary': note,'chart_request': req if isinstance(req,dict) else {},'chart_request_for_context': clean_req,'chart_payload_json': _dumps(clean_payload),'answer_payload_json': _dumps(answer_payload),'context_update_json': _dumps(context_update),'compact_context_json': compact_json,'chart_echarts_markdown': md,'final_answer_summary': note,'updated_at': datetime.now(timezone.utc).isoformat()}
+        code_language: python3
+        desc: Phase 12：chart-only answer adapter；只读取 ChartPayloadBuilder 输出，不查 Mongo。
+        outputs:
           final_answer_markdown:
+            children:
+            type: string
+          chart_request:
+            children:
+            type: object
+          chart_request_for_context:
+            children:
+            type: object
+          chart_payload_json:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          final_answer_summary:
+            children:
+            type: string
+          updated_at:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_text:
+            children:
+            type: string
+          result_summary:
+            children:
+            type: string
+          answer_payload_json:
             children:
             type: string
           context_update_json:
             children:
             type: string
-          final_answer_summary:
+          compact_context_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_改图回答适配
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000016'
+          - chart_payload_json
+          value_type: string
+          variable: chart_payload_json
+        - value_selector:
+          - '1776000000015'
+          - chart_request_json
+          value_type: string
+          variable: chart_request_json
+        - value_selector:
+          - conversation
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+      height: 80
+      id: '1776000000006'
+      position:
+        x: 4600
+        "y": 1120
+      positionAbsolute:
+        x: 4600
+        "y": 1120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          def _dumps(v): return json.dumps(v, ensure_ascii=False)
+          def main(question: str, intent_reason: str):
+              q = str(question or '')
+              if any(w in q for w in ['饼图','折线图','柱状图','换成','改成']):
+                  text = '当前没有可复用的上一轮查询结果，无法直接改图。请先提出一个完整查询，例如“过去一个月所有订单按厂商统计并画柱状图”。'
+              elif any(w in q for w in ['分析','解释','继续','接着','刚才']):
+                  text = '当前没有可复用的上一轮统计结果。请先提供需要查询的统计对象、时间范围、分组维度和指标，我查询后再继续分析。'
+              else:
+                  text = '我需要确认一下：请补充统计对象、时间范围、分组维度或指标。'
+              compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':q[:1000],'last_turn_intent':{'answer_type':'clarification'},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':text[:800],'size_guard':{},'context_warnings':[]}
+              compact_json = _dumps(compact)
+              payload = {'contract_version':'answer_payload_contract','answer_type':'clarification','answer_text':text,'chart_echarts_markdown':'','result_summary':text[:800],'message':'','chart_payload':{},'query_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':False,'context_summary':compact}}
+              update = {'contract_version':'context_update_contract','should_save_context':False,'compact_context':compact,'last_context_json':compact_json,'warnings':[],'clear_fields':[]}
+              return {'final_answer_markdown': text, 'answer_payload_markdown': text, 'answer_payload_json': _dumps(payload), 'context_update_json': _dumps(update), 'compact_context_json': compact_json, 'answer_text': text, 'result_summary': text[:800]}
+        code_language: python3
+        desc: ''
+        outputs:
+          final_answer_markdown:
             children:
             type: string
           answer_payload_markdown:
             children:
             type: string
           answer_payload_json:
+            children:
+            type: string
+          context_update_json:
             children:
             type: string
           compact_context_json:
@@ -370,34 +621,310 @@
             children:
             type: string
         selected: false
-        title: 代码执行_规范化继续分析结果
+        title: 代码执行_生成澄清回答
         type: code
         variables:
         - value_selector:
-          - '1776000000017'
-          - structured_output
-          value_type: object
-          variable: analysis_structured
-        - value_selector:
-          - '1776000000017'
-          - text
+          - sys
+          - query
           value_type: string
-          variable: analysis_text
+          variable: question
         - value_selector:
-          - '1776000000001'
-          - last_context_json
+          - '1776000000013'
+          - route_reason
           value_type: string
-          variable: last_context_json
+          variable: intent_reason
       height: 80
-      id: '1776000000018'
+      id: '1776000000008'
       position:
-        x: 3680
-        y: 1480
+        x: 3220
+        "y": 1840
       positionAbsolute:
-        x: 3680
-        y: 1480
+        x: 3220
+        "y": 1840
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1776000000006'
+          - chart_request_for_context
+          value_type: object
+          variable: last_chart_request_json
+        - value_selector:
+          - '1776000000006'
+          - chart_request_for_context
+          value_type: object
+          variable: last_chart
+        - value_selector:
+          - '1776000000006'
+          - chart_echarts_markdown
+          value_type: string
+          variable: last_chart_echarts_markdown
+        - value_selector:
+          - '1776000000006'
+          - final_answer_summary
+          value_type: string
+          variable: last_result_summary
+        - value_selector:
+          - '1776000000006'
+          - final_answer_summary
+          value_type: string
+          variable: last_final_answer_summary
+        - value_selector:
+          - '1776000000006'
+          - updated_at
+          value_type: string
+          variable: last_updated_at
+        - value_selector:
+          - '1776000000006'
+          - answer_payload_json
+          value_type: string
+          variable: last_answer_payload_json
+        - value_selector:
+          - '1776000000006'
+          - context_update_json
+          value_type: string
+          variable: last_context_update_json
+        - value_selector:
+          - '1776000000006'
+          - compact_context_json
+          value_type: string
+          variable: last_context_json
+        selected: false
+        answer: "{{#1776000000006.answer_payload_markdown#}}"
+        title: Answer_改图复用结果
+        type: answer
+      height: 180
+      id: '1776000000009'
+      position:
+        x: 5060
+        "y": 1120
+      positionAbsolute:
+        x: 5060
+        "y": 1120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs:
+        - value_selector:
+          - '1776000000018'
+          - final_answer_summary
+          value_type: string
+          variable: last_result_summary
+        selected: false
+        answer: "{{#1776000000018.answer_payload_markdown#}}"
+        title: Answer_继续分析
+        type: answer
+      height: 180
+      id: '1776000000010'
+      position:
+        x: 4140
+        "y": 1480
+      positionAbsolute:
+        x: 4140
+        "y": 1480
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        outputs: []
+        selected: false
+        answer: "{{#1776000000008.answer_payload_markdown#}}"
+        title: Answer_澄清
+        type: answer
+      height: 180
+      id: '1776000000011'
+      position:
+        x: 3680
+        "y": 1840
+      positionAbsolute:
+        x: 3680
+        "y": 1840
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          def _dumps(v): return json.dumps(v, ensure_ascii=False)
+          def main(normalizer_error: str, debug_summary_json: str):
+              text = '系统在处理该查询时出现异常，请调整问题后重试。'
+              summary = '语义计划解析失败，未进入 Mongo 编译执行。'
+              compact = {'context_version':'compact_context_contract','has_last_context':False,'last_question':'','last_turn_intent':{'normalizer_route':'invalid','answer_type':'system_error'},'last_primary_collection':'','last_related_collections':[],'last_plan_summary':{},'last_resolved_fields':[],'last_resolved_metrics':[],'last_chart_request':{},'last_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'schema_context_ref':{'collections':[],'schema_digest':'','schema_version':'','catalog_digest':''},'answer_summary':summary,'size_guard':{},'context_warnings':[]}
+              compact_json = _dumps(compact)
+              payload = {'contract_version':'answer_payload_contract','answer_type':'system_error','answer_text':text,'chart_echarts_markdown':'','result_summary':summary,'message':'','chart_payload':{},'query_result_profile':{'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':False,'context_summary':compact}}
+              update = {'contract_version':'context_update_contract','should_save_context':False,'compact_context':compact,'last_context_json':compact_json,'warnings':[],'clear_fields':[]}
+              return {'final_answer_markdown': text, 'answer_payload_markdown': text, 'answer_payload_json': _dumps(payload), 'context_update_json': _dumps(update), 'compact_context_json': compact_json, 'answer_text': text, 'result_summary': summary}
+        code_language: python3
+        desc: ''
+        outputs:
+          final_answer_markdown:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_payload_json:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+          compact_context_json:
+            children:
+            type: string
+          answer_text:
+            children:
+            type: string
+          result_summary:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_语义计划无效回答
+        type: code
+        variables:
+        - value_selector:
+          - '1775000000013'
+          - normalizer_error
+          value_type: string
+          variable: normalizer_error
+        - value_selector:
+          - '1775000000013'
+          - debug_summary_json
+          value_type: string
+          variable: debug_summary_json
+      height: 80
+      id: '1776000000012'
+      position:
+        x: 11320
+        "y": -300
+      positionAbsolute:
+        x: 11320
+        "y": -300
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: "{{#1778000000001.answer_payload_markdown#}}"
+        desc: Phase 8 validator 非 valid 分支统一回答；不暴露 validator debug。
+        outputs:
+        - value_selector:
+          - '1778000000001'
+          - answer_payload_json
+          value_type: string
+          variable: answer_payload_json
+        selected: false
+        title: Answer_validator校验未通过
+        type: answer
+        variables: []
+      height: 140
+      id: '1778000000003'
+      position:
+        x: 15920
+        "y": 420
+      positionAbsolute:
+        x: 15920
+        "y": 420
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        assigned_variable_selector:
+        - conversation
+        - last_answer_payload_json
+        desc: Phase 9 validator 非 valid 分支保存最小多轮上下文：问题、answer_payload、validator 路由与 schema_context_ref 摘要；不保存 debug/schema。
+        input_variable_selector:
+        - '1778000000001'
+        - answer_payload_json
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - sys
+          - query
+          variable_selector:
+          - conversation
+          - last_question
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1778000000001'
+          - answer_payload_json
+          variable_selector:
+          - conversation
+          - last_answer_payload_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1778000000001'
+          - context_update_json
+          variable_selector:
+          - conversation
+          - last_context_update_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1778000000001'
+          - final_answer_markdown
+          variable_selector:
+          - conversation
+          - last_error
+          write_mode: over-write
+        selected: false
+        title: 变量赋值_validator非valid保存上下文
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 210
+      id: '1778000000004'
+      position:
+        x: 15460
+        "y": 420
+      positionAbsolute:
+        x: 15460
+        "y": 420
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          CONTEXT_INTENTS = {'modify_chart', 'explain_result', 'reanalyze_result', 'continue_previous', 'fix_result'}
+          REFINE_LIKE_REQUERY_INTENTS = {'refine_query', 'fix_result', 'continue_previous'}
+
+
+          def _bool(v):
+              if isinstance(v, bool):
+                  return v
+              return str(v or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+
+          def main(turn_intent: str, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, has_last_context, intent_valid, intent_error: str, missing_info: str, normalized_turn_intent_json: str):
+              try:
+
+                  intent = str(turn_intent or 'clarify').strip()
+                  has_ctx = _bool(has_last_context)
+                  nr, nc, na, direct = _bool(need_requery), _bool(need_rechart), _bool(need_analysis), _bool(can_answer_directly)
+                  refine_like_requery = bool(has_ctx and nr and intent in REFINE_LIKE_REQUERY_INTENTS)

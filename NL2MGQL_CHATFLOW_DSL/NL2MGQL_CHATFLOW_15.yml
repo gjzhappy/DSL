@@ -1,3 +1,121 @@
+        outputs:
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_contract_json:
+            children:
+            type: string
+          normalizer_valid:
+            children:
+            type: boolean
+          normalizer_route:
+            children:
+            type: string
+          normalizer_error:
+            children:
+            type: string
+          normalizer_warnings_json:
+            children:
+            type: string
+          planner:
+            children:
+            type: object
+          semantic_plan_source:
+            children:
+            type: string
+          schema_context:
+            children:
+            type: string
+          execution_input_valid:
+            children:
+            type: boolean
+          execution_input_error:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_统一准备Mongo执行输入
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000004'
+          - turn_intent
+          value_type: string
+          variable: turn_intent
+        - value_selector:
+          - '1776000000013'
+          - refine_like_requery
+          value_type: boolean
+          variable: refine_like_requery
+        - value_selector:
+          - '1776000000019'
+          - patch_applied
+          value_type: boolean
+          variable: patch_applied
+        - value_selector:
+          - '1775000000013'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: original_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000019'
+          - patched_normalized_semantic_plan_json
+          value_type: string
+          variable: patched_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000021'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: guarded_normalized_semantic_plan_json
+        - value_selector:
+          - '1776200000006'
+          - structured_output
+          value_type: object
+          variable: original_planner
+        - value_selector:
+          - '1775000000005'
+          - schema_context
+          value_type: string
+          variable: original_schema_context
+        - value_selector:
+          - '1776000000027'
+          - schema_context_for_replan
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000021'
+          - guard_valid
+          value_type: boolean
+          variable: guard_valid
+        - value_selector:
+          - '1776000000021'
+          - guard_error
+          value_type: string
+          variable: guard_error
+      height: 80
+      id: '1776000000024'
+      position:
+        x: 11320
+        "y": 120
+      positionAbsolute:
+        x: 11320
+        "y": 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     - data:
         code: |
           """Phase 9 runtime schema context helper for semantic_plan_validator.
@@ -297,9 +415,7 @@
 
           def main(**kwargs: Any) -> Dict[str, Any]:
               return prepare_validator_schema_context(**kwargs)
-
-        desc: Phase 9 validator runtime schema context：在 semantic_plan_validator 前准备运行时
-          schema metadata/alias index；缺失时输出 hydration 需求但不写入 compact context。
+        desc: Phase 9 validator runtime schema context：在 semantic_plan_validator 前准备运行时 schema metadata/alias index；缺失时输出 hydration 需求但不写入 compact context。
         code_language: python3
         outputs:
           contract_version:
@@ -393,12 +509,422 @@
       id: '1779000000001'
       position:
         x: 11780
-        y: 120
+        "y": 120
       positionAbsolute:
         x: 11780
-        y: 120
+        "y": 120
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        code: |
+          """Phase 8 semantic_plan_validator runtime contract helper.
+
+          This module mirrors the code embedded in the DSL node `代码执行_semantic_plan_validator`.
+          It intentionally validates and canonicalizes semantic_plan_contract JSON without generating
+          Mongo pipelines or rewriting compiler/executor behavior.
+          """
+
+          from __future__ import annotations
+
+          import copy
+          import json
+          import re
+          from datetime import datetime
+          from typing import Any, Dict, List, Tuple
+
+          VALID_ROUTES = {"valid", "needs_replan", "requires_clarification", "blocked", "invalid"}
+          ALLOWED_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte", "in", "nin", "contains", "regex", "between"}
+          SUPPORTED_CHART_TYPES = {"", "bar", "line", "pie", "table", "area", "scatter", "柱状图", "折线图", "饼图", "表格"}
+          PII_WORDS = ("手机", "手机号", "电话", "身份证", "邮箱", "email", "phone", "mobile", "id_card")
+
+          COMPILER_SUPPORTED_INTENT_TYPES = {"detail_query", "aggregate_summary", "group_top_entity", "group_top_record", "enrich_related"}
+          INTENT_TYPE_ALIASES = {
+              "aggregate": "aggregate_summary",
+              "aggregation": "aggregate_summary",
+              "summary": "aggregate_summary",
+              "aggregate_summary": "aggregate_summary",
+              "group_by": "aggregate_summary",
+              "group_by_metric": "aggregate_summary",
+              "group_by_dimension": "aggregate_summary",
+              "group_by_dimension_with_time_range_and_aggregation": "aggregate_summary",
+              "group_by_metric_with_time_filter": "aggregate_summary",
+              "aggregate_group_by": "aggregate_summary",
+              "group_aggregate": "aggregate_summary",
+              "grouped_aggregate": "aggregate_summary",
+              "aggregate_by_group": "aggregate_summary",
+              "aggregate_by_dimension": "aggregate_summary",
+              "dimension_aggregate": "aggregate_summary",
+              "summary_by_group": "aggregate_summary",
+              "summary_by_dimension": "aggregate_summary",
+              "detail": "detail_query",
+              "detail_query": "detail_query",
+              "find": "detail_query",
+              "find_query": "detail_query",
+              "query": "detail_query",
+              "group_top_entity": "group_top_entity",
+              "top_entity": "group_top_entity",
+              "group_top_record": "group_top_record",
+              "top_record": "group_top_record",
+              "enrich_related": "enrich_related",
+              "join": "enrich_related",
+          }
+
+
+          def canonicalize_intent_type(intent_type: Any, stage: Dict[str, Any] | None = None) -> str:
+              raw = _str(intent_type).lower()
+              stage = stage if isinstance(stage, dict) else {}
+              if raw in {"aggregate", "aggregation"}:
+                  if stage.get("group_fields") and (stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field")):
+                      return "aggregate_summary"
+                  if stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field"):
+                      return "aggregate_summary"
+                  if stage.get("filters") or stage.get("projection_fields"):
+                      return "detail_query"
+              if raw in INTENT_TYPE_ALIASES:
+                  return INTENT_TYPE_ALIASES[raw]
+              if not raw:
+                  return "aggregate_summary" if (stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field")) else "detail_query"
+              return raw
+
+
+          def _loads(v: Any, default: Any = None) -> Any:
+              if default is None:
+                  default = {}
+              if isinstance(v, (dict, list)):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return default
+              return default
+
+
+          def _list(v: Any) -> List[Any]:
+              if v is None or v == "":
+                  return []
+              if isinstance(v, list):
+                  return [x for x in v if x is not None and str(x).strip()]
+              if isinstance(v, str):
+                  s = v.strip()
+                  if not s:
+                      return []
+                  try:
+                      parsed = json.loads(s)
+                      if isinstance(parsed, list):
+                          return [x for x in parsed if x is not None and str(x).strip()]
+                  except Exception:
+                      pass
+                  return [x.strip() for x in re.split(r"\s*,\s*", s) if x.strip()]
+              return [v]
+
+
+          def _str(v: Any) -> str:
+              return str(v or "").strip()
+
+
+          def _result(route: str, plan: Dict[str, Any] | None, errors=None, warnings=None, autofixes=None, clarification="", blocked="", debug=None, needs_schema_retrieval=False) -> Dict[str, Any]:
+              route = route if route in VALID_ROUTES else "invalid"
+              normalized = plan if isinstance(plan, dict) else {}
+              return {
+                  "contract_version": "validator_result_contract",
+                  "valid": route == "valid",
+                  "validator_route": route,
+                  "normalized_plan": normalized,
+                  "normalized_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
+                  "semantic_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
+                  "normalized_semantic_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
+                  "errors": errors or [],
+                  "warnings": warnings or [],
+                  "autofixes": autofixes or [],
+                  "needs_replan": route == "needs_replan",
+                  "needs_schema_retrieval": bool(needs_schema_retrieval),
+                  "requires_clarification": route == "requires_clarification",
+                  "clarification_question": clarification or ("我需要确认一下：当前查询中的字段或指标对应哪个 schema 字段？" if route == "requires_clarification" else ""),
+                  "blocked_reason": blocked or ("当前查询不符合安全或 schema 关系约束，未进入 Mongo 编译执行。" if route == "blocked" else ""),
+                  "debug": debug or {},
+                  "validator_result_json": "",  # filled by main for DSL convenience
+                  "answer_payload_json": "",
+                  "answer_type": {"requires_clarification": "clarification", "blocked": "validation_error", "needs_replan": "validation_error", "invalid": "system_error"}.get(route, "data"),
+                  "final_answer_markdown": "",
+                  "context_update_json": "",
+              }
+
+
+          def _field_ref_collections(value: Any) -> List[str]:
+              refs: List[str] = []
+              if isinstance(value, dict):
+                  for v in value.values():
+                      refs.extend(_field_ref_collections(v))
+              elif isinstance(value, list):
+                  for v in value:
+                      refs.extend(_field_ref_collections(v))
+              elif isinstance(value, str):
+                  for match in re.findall(r"\b([A-Za-z_][\w-]*)\.[A-Za-z_][\w-]*\b", value):
+                      if match not in refs:
+                          refs.append(match)
+              return refs
+
+
+          def _related_collection_used(plan: Dict[str, Any], related: str) -> bool:
+              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+              for stage in stages:
+                  if isinstance(stage, dict) and _str(stage.get("collection")) == related:
+                      return True
+              final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
+              if _str(final_merge.get("merge_mode") or "none") != "none":
+                  if related in _field_ref_collections(final_merge) or related in [_str(x) for x in _list(final_merge.get("collections") or final_merge.get("related_collections") or final_merge.get("merge_collections"))]:
+                      return True
+                  if related in json.dumps(final_merge, ensure_ascii=False):
+                      return True
+              for key in ("joins", "join", "relations", "relation", "enrich", "enrichments", "lookup", "lookups"):
+                  if related in _field_ref_collections(plan.get(key)) or (isinstance(plan.get(key), (dict, list)) and related in json.dumps(plan.get(key), ensure_ascii=False)):
+                      return True
+              for key in ("filters", "group_fields", "projection_fields", "sort"):
+                  for stage in stages:
+                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                          return True
+              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+              if related in _field_ref_collections([chart.get("x_field"), chart.get("y_field")]):
+                  return True
+              for key in ("output_fields", "return_fields", "select_fields"):
+                  if related in _field_ref_collections(plan.get(key)):
+                      return True
+                  for stage in stages:
+                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                          return True
+              return False
+
+
+          def _prune_unused_related_collections(plan: Dict[str, Any], autofixes: List[Dict[str, Any]]) -> List[str]:
+              related = [_str(x) for x in _list(plan.get("related_collections"))]
+              kept = [rc for rc in related if _related_collection_used(plan, rc)]
+              removed = [rc for rc in related if rc not in kept]
+              if removed:
+                  plan["related_collections"] = kept
+                  autofixes.append({
+                      "type": "unused_related_collection_prune",
+                      "from": removed,
+                      "to": kept,
+                      "reason": "declared related collection is not referenced by stages/final_merge/fields/chart",
+                  })
+              return kept
+
+
+          def _field_alias(raw: str, schema: Dict[str, Any], collection: str) -> Tuple[str, str, List[Dict[str, Any]]]:
+              raw = _str(raw)
+              coll = (schema.get("collections") or {}).get(collection) or {}
+              if raw in (coll.get("fields") or {}):
+                  return raw, "schema_field_name", []
+              hits = []
+              for fname, field in (coll.get("fields") or {}).items():
+                  aliases = [fname, field.get("label")] + _list(field.get("aliases"))
+                  if raw and raw in [_str(x) for x in aliases]:
+                      hits.append({"name": fname, "source": "field_alias", "label": field.get("label")})
+              if len(hits) == 1:
+                  return hits[0]["name"], "field_alias", hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              return raw, "unresolved", []
+
+
+          def _metric_alias(raw: str, schema: Dict[str, Any], collection: str) -> Tuple[str, str, List[Dict[str, Any]]]:
+              raw = _str(raw)
+              coll = (schema.get("collections") or {}).get(collection) or {}
+              if raw in (coll.get("metrics") or {}):
+                  return raw, "schema_metric_name", []
+              hits = []
+              for mname, metric in (coll.get("metrics") or {}).items():
+                  aliases = [mname, metric.get("label")] + _list(metric.get("aliases"))
+                  if raw and raw in [_str(x) for x in aliases]:
+                      hits.append({"name": mname, "source": "metric_alias", "label": metric.get("label")})
+              if len(hits) == 1:
+                  return hits[0]["name"], "metric_alias", hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              return raw, "unresolved", []
+
+
+          def _value_alias(value: Any, field: Dict[str, Any]) -> Tuple[Any, bool]:
+              aliases = field.get("value_aliases") or {}
+              key = _str(value)
+              if key in aliases:
+                  return aliases[key], True
+              return value, False
+
+
+          def _field(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
+              return ((schema.get("collections") or {}).get(collection) or {}).get("fields", {}).get(name) or {}
+
+
+          def _metric(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
+              return ((schema.get("collections") or {}).get(collection) or {}).get("metrics", {}).get(name) or {}
+
+
+          def _is_sensitive(f: Dict[str, Any]) -> bool:
+              return bool(f.get("sensitive") or f.get("pii") or f.get("pii_category"))
+
+
+          def _canonical_field(raw: str, schema: Dict[str, Any], collection: str, place: str, errors: List[str], warnings: List[str], autofixes: List[Dict[str, Any]], require_flag: str = "") -> str:
+              name, source, hits = _field_alias(raw, schema, collection)
+              if source == "ambiguous":
+                  errors.append(f"字段 {raw} 在 collection={collection} 中存在多个候选，需要澄清。")
+                  return raw
+              if source == "unresolved":
+                  errors.append(f"未知字段 {raw}，未在 schema metadata 中声明。")
+                  return raw
+              if name != raw:
+                  autofixes.append({"type": "field_alias_canonicalize", "place": place, "from": raw, "to": name, "collection": collection})
+              f = _field(schema, collection, name)
+              if require_flag and not bool(f.get(require_flag)):
+                  if require_flag in {"projectable", "returnable"} and (f.get("projectable") or f.get("returnable")):
+                      warnings.append(f"字段 {name} 使用 {require_flag} 兼容策略放行。")
+                  else:
+                      errors.append(f"字段 {name} 不允许用于 {place}（{require_flag}=false）。")
+              if _is_sensitive(f) and place in {"group_fields", "projection_fields", "sort", "chart_x", "chart_y"}:
+                  errors.append(f"敏感/PII 字段 {name} 不允许用于 {place}。")
+              return name
+
+
+          def _stage_is_aggregate(stage: Dict[str, Any]) -> bool:
+              return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or canonicalize_intent_type(stage.get("intent_type"), stage) in {"aggregate_summary"} or _str(stage.get("intent_type")) in {"ranking", "trend"})
+
+
+          def _date_ok(s: str) -> bool:
+              if not s:
+                  return True
+              for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%dT%H:%M:%S"):
+                  try:
+                      datetime.strptime(s[:19], fmt)
+                      return True
+                  except Exception:
+                      pass
+              return False
+
+
+          def _negative_fields(compact: Dict[str, Any], patch: Dict[str, Any], patch_debug: Dict[str, Any], qref: Dict[str, Any]) -> List[str]:
+              out = []
+              sources = [patch.get("negative_fields"), patch_debug.get("negative_fields"), qref.get("negative_fields")]
+              for item in _list(patch.get("unapplied_refinements")):
+                  if isinstance(item, dict):
+                      sources.append(item.get("negative_fields") or item.get("field"))
+              text = json.dumps([patch, patch_debug, qref], ensure_ascii=False)
+              for word in ("brand", "品牌"):
+                  if ("不再按" in text or "negative_fields" in text) and word in text:
+                      out.append(word)
+              for src in sources:
+                  for x in _list(src):
+                      if isinstance(x, dict):
+                          x = x.get("field") or x.get("name")
+                      if _str(x):
+                          out.append(_str(x))
+              return list(dict.fromkeys(out))
+
+
+          def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok", schema_runtime_context_json: str = "{}") -> Dict[str, Any]:
+              errors: List[str] = []
+              warnings: List[str] = []
+              autofixes: List[Dict[str, Any]] = []
+              debug: Dict[str, Any] = {"normalizer_route": _str(normalizer_route)}
+
+              runtime_ctx = _loads(schema_runtime_context_json, {})
+              if not isinstance(runtime_ctx, dict):
+                  runtime_ctx = {}
+              plan = _loads(semantic_plan_json, {})
+              runtime_schema_json = runtime_ctx.get("schema_metadata_json") if runtime_ctx.get("schema_metadata_json") not in (None, "") else schema_metadata_json
+              runtime_alias_json = runtime_ctx.get("schema_alias_index_json") if runtime_ctx.get("schema_alias_index_json") not in (None, "") else schema_alias_index_json
+              schema = _loads(runtime_schema_json, {})
+              alias_index = _loads(runtime_alias_json, {})
+              selection = _loads(collection_selection_json, {})
+              compact = _loads(compact_context_json, {})
+              if not isinstance(compact, dict):
+                  compact = {}
+              debug["prior_compact_context"] = {
+                  "has_last_context": bool(compact),
+                  "last_primary_collection": compact.get("last_primary_collection") or "",
+                  "last_related_collections": compact.get("last_related_collections") if isinstance(compact.get("last_related_collections"), list) else [],
+                  "last_plan_summary": compact.get("last_plan_summary") if isinstance(compact.get("last_plan_summary"), dict) else {},
+                  "last_resolved_fields": compact.get("last_resolved_fields") if isinstance(compact.get("last_resolved_fields"), list) else [],
+                  "last_resolved_metrics": compact.get("last_resolved_metrics") if isinstance(compact.get("last_resolved_metrics"), list) else [],
+                  "last_chart_request": compact.get("last_chart_request") if isinstance(compact.get("last_chart_request"), dict) else {},
+                  "last_result_profile": compact.get("last_result_profile") if isinstance(compact.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+                  "schema_context_ref": compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {},
+              }
+              patch = _loads(patch_result_json, {})
+              if isinstance(patch, list):
+                  patch = {"unapplied_refinements": patch}
+              elif not isinstance(patch, dict):
+                  patch = {}
+              patch_debug = _loads(patch_debug_json, {})
+              if not isinstance(patch_debug, dict):
+                  patch_debug = {}
+              qref = _loads(query_refinement_json, {})
+              if not isinstance(qref, dict):
+                  qref = {}
+
+              debug["question"] = _str(question)
+              debug["schema_source"] = _str(runtime_ctx.get("schema_source")) or "direct_runtime_fallback"
+              debug["schema_context_ref"] = runtime_ctx.get("schema_context_ref") if isinstance(runtime_ctx.get("schema_context_ref"), dict) else {}
+              debug["schema_context_ready"] = bool(runtime_ctx.get("schema_context_ready")) if runtime_ctx else bool(schema)
+              debug["schema_hydration_needed"] = bool(runtime_ctx.get("schema_hydration_needed"))
+              if runtime_ctx and not runtime_ctx.get("schema_context_ready"):
+                  reason = _str(runtime_ctx.get("schema_hydration_reason")) or "schema_runtime_context_not_ready"
+                  collections = runtime_ctx.get("schema_hydration_collections") or []
+                  msg = f"validator runtime schema context 未就绪：{reason}。"
+                  if collections:
+                      msg += f" 可基于 collections={collections} 轻量检索 schema 后重试校验。"
+                  return _finalize(_result("needs_replan", plan if isinstance(plan, dict) else {}, [msg] + _list(runtime_ctx.get("errors")), _list(runtime_ctx.get("warnings")), debug=debug, needs_schema_retrieval=bool(runtime_ctx.get("schema_hydration_needed"))))
+              if str(normalizer_valid).lower() in {"false", "0", "no"}:
+                  return _finalize(_result("invalid", {}, ["semantic_plan_normalizer 未通过，validator 拒绝进入 Mongo 编译。"], debug=debug))
+              if not isinstance(plan, dict) or not plan:
+                  return _finalize(_result("invalid", {}, ["semantic_plan_json 为空或不是 JSON 对象。"], debug=debug))
+              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+              if not stages:
+                  return _finalize(_result("invalid", plan, ["semantic_plan_contract 缺少 stages。"], debug=debug))
+              collections = schema.get("collections") or {}
+              if not collections:
+                  return _finalize(_result("needs_replan", plan, ["缺少 schema_metadata.collections，无法校验字段与指标。"], debug=debug, needs_schema_retrieval=True))
+
+              plan = copy.deepcopy(plan)
+              primary = _str(plan.get("primary_collection") or (stages[0] or {}).get("collection"))
+              selected = _str(selection.get("selected_primary_collection"))
+              confidence = float(selection.get("confidence") or 0) if isinstance(selection, dict) else 0.0
+              if not primary or primary not in collections:
+                  errors.append(f"primary_collection={primary or '<empty>'} 不存在于 schema metadata。")
+              if selected and primary and selected != primary:
+                  msg = f"collection_selection.selected_primary_collection={selected} 与 plan.primary_collection={primary} 不一致。"
+                  if confidence and confidence < 0.6:
+                      return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
+                  errors.append(msg)
+              related = _prune_unused_related_collections(plan, autofixes)
+              for rc in related:
+                  if rc not in collections:
+                      errors.append(f"related_collection={rc} 不存在于 schema metadata。")
+
+              route_hint = "valid"
+              for i, stage in enumerate(plan.get("stages") or []):
+                  if not isinstance(stage, dict):
+                      errors.append(f"stage[{i}] 不是对象。")
+                      continue
+                  coll = _str(stage.get("collection") or primary)
+                  stage["collection"] = coll
+                  if coll not in collections:
+                      errors.append(f"stage[{i}].collection={coll} 不存在。")
+                      continue
+                  if primary and coll != primary and coll not in related:
+                      errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
+                  coll_meta = collections.get(coll) or {}
+                  rules = coll_meta.get("query_rules") or {}
+
+                  raw_intent_type = _str(stage.get("intent_type"))
+                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
+                  if canonical_intent_type != raw_intent_type:
+                      stage["intent_type"] = canonical_intent_type
+
+                      autofixes.append({
+                          "type": "intent_type_canonicalize",
+                          "from": raw_intent_type,
+                          "to": canonical_intent_type,
