@@ -499,6 +499,14 @@
               'group_by_dimension_with_time_range_and_aggregation': 'aggregate_summary',
               'group_by_metric_with_time_filter': 'aggregate_summary',
               'aggregate_group_by': 'aggregate_summary',
+              'aggregate_group': 'aggregate_summary',
+              'aggregation_group': 'aggregate_summary',
+              'aggregate_grouped': 'aggregate_summary',
+              'aggregation_grouped': 'aggregate_summary',
+              'group_metric': 'aggregate_summary',
+              'group_metric_summary': 'aggregate_summary',
+              'group_metric_aggregate': 'aggregate_summary',
+              'group_metric_aggregation': 'aggregate_summary',
               'group_aggregate': 'aggregate_summary',
               'grouped_aggregate': 'aggregate_summary',
               'grouped_aggregation': 'aggregate_summary',
@@ -535,6 +543,11 @@
                       return 'detail_query'
               if raw in INTENT_TYPE_ALIASES:
                   return INTENT_TYPE_ALIASES[raw]
+              normalized_tokens = {token for token in raw.replace('-', '_').split('_') if token}
+              has_aggregate_token = bool(normalized_tokens & {'aggregate', 'aggregation'})
+              has_group_token = bool(normalized_tokens & {'group', 'grouped'})
+              if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and has_aggregate_token and has_group_token:
+                  return 'aggregate_summary'
               if not raw:
                   has_group = bool(stage.get('group_by') or stage.get('group_fields'))
                   has_metric = bool(stage.get('metrics') or stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field'))
