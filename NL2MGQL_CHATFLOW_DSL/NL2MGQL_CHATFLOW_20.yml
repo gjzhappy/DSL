@@ -1,3 +1,9 @@
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
                 items:
                   type: string
         structured_output_enabled: true
@@ -178,14 +184,20 @@
               s='' if s is None else str(s).strip()
               m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
               return m.group(1).strip() if m else s
-          def main(status_code=0, body='', error='') -> dict:
+          def main(status_code=0, body='', headers=None) -> dict:
               try:
                   status=int(status_code or 0)
-                  if status != 200:
+                  if status and not (200 <= status < 300):
                       return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':{}}
                   if not body:
                       return {'success':False,'content':'','error':'empty body','raw_response':{}}
                   raw=json.loads(body) if isinstance(body,str) else (body or {})
+                  if not status and isinstance(raw,dict):
+                      alt_status=raw.get('status_code') or raw.get('status')
+                      if alt_status:
+                          status=int(alt_status or 0)
+                          if status and not (200 <= status < 300):
+                              return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':raw}
                   content=''
                   if isinstance(raw,dict):
                       ch=raw.get('choices') or []
@@ -228,9 +240,9 @@
           variable: body
         - value_selector:
           - '1776200000012'
-          - error
-          value_type: string
-          variable: error
+          - headers
+          value_type: object
+          variable: headers
       height: 139
       id: '1776200000013'
       position:
@@ -576,14 +588,20 @@
               s='' if s is None else str(s).strip()
               m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
               return m.group(1).strip() if m else s
-          def main(status_code=0, body='', error='') -> dict:
+          def main(status_code=0, body='', headers=None) -> dict:
               try:
                   status=int(status_code or 0)
-                  if status != 200:
+                  if status and not (200 <= status < 300):
                       return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':{}}
                   if not body:
                       return {'success':False,'content':'','error':'empty body','raw_response':{}}
                   raw=json.loads(body) if isinstance(body,str) else (body or {})
+                  if not status and isinstance(raw,dict):
+                      alt_status=raw.get('status_code') or raw.get('status')
+                      if alt_status:
+                          status=int(alt_status or 0)
+                          if status and not (200 <= status < 300):
+                              return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':raw}
                   content=''
                   if isinstance(raw,dict):
                       ch=raw.get('choices') or []
@@ -626,9 +644,9 @@
           variable: body
         - value_selector:
           - '1776200000022'
-          - error
-          value_type: string
-          variable: error
+          - headers
+          value_type: object
+          variable: headers
       height: 139
       id: '1776200000023'
       position:
@@ -910,21 +928,3 @@
         "y": 860
       positionAbsolute:
         x: 3220
-        "y": 860
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json, re
-          def _strip(s):
-              s='' if s is None else str(s).strip()
-
-              m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
-              return m.group(1).strip() if m else s
-          def main(status_code=0, body='', error='') -> dict:
-              try:
-                  status=int(status_code or 0)
-                  if status != 200:
