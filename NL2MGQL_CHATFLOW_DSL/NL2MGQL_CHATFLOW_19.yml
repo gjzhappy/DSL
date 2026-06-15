@@ -361,13 +361,14 @@
                   _add(out, c)
               return out
 
-          def main(schema_runtime_context_json='{}', semantic_plan_json='{}', compact_context_json='{}', collection_selection_json='{}'):
+          def main(schema_runtime_context_json='{}', semantic_plan_json='{}', compact_context_json='{}', collection_selection_json='{}', refine_schema_hydration_collections=None, refine_schema_hydration_needed=False, refine_schema_hydration_reason=''):
               runtime = _loads(schema_runtime_context_json, {}) or {}
               plan = _loads(semantic_plan_json, {}) or {}
               compact = _loads(compact_context_json, {}) or {}
               selection = _loads(collection_selection_json, {}) or {}
               warnings = []
               sources = [
+                  ('refine_selected_schema.schema_hydration_collections', _list(refine_schema_hydration_collections) if refine_schema_hydration_needed else []),
                   ('schema_runtime_context.schema_hydration_collections', _list(runtime.get('schema_hydration_collections'))),
                   ('semantic_plan', _plan_cols(plan)),
                   ('collection_selection', _selection_cols(selection)),
@@ -397,7 +398,7 @@
                   'retrieval_mode': 'validator_schema_hydration',
               } for c in chosen]
               valid = bool(tasks)
-              reason = str(runtime.get('schema_hydration_reason') or ('derived_from_' + source_name if source_name else 'missing_collections_for_schema_hydration'))
+              reason = str(refine_schema_hydration_reason or runtime.get('schema_hydration_reason') or ('derived_from_' + source_name if source_name else 'missing_collections_for_schema_hydration'))
               if not valid:
                   warnings.append('missing_collections_for_schema_hydration')
               return {
@@ -463,6 +464,21 @@
           - collection_selection_json
           value_type: string
           variable: collection_selection_json
+        - value_selector:
+          - '1777100000105'
+          - schema_hydration_collections
+          value_type: array[string]
+          variable: refine_schema_hydration_collections
+        - value_selector:
+          - '1777100000105'
+          - schema_hydration_needed
+          value_type: boolean
+          variable: refine_schema_hydration_needed
+        - value_selector:
+          - '1777100000105'
+          - schema_hydration_reason
+          value_type: string
+          variable: refine_schema_hydration_reason
       height: 80
       id: '1780000000002'
       position:
