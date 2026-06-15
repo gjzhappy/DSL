@@ -816,9 +816,6 @@
                   if isinstance(item, dict):
                       sources.append(item.get("negative_fields") or item.get("field"))
               text = json.dumps([patch, patch_debug, qref], ensure_ascii=False)
-              for word in ("brand", "品牌"):
-                  if ("不再按" in text or "negative_fields" in text) and word in text:
-                      out.append(word)
               for src in sources:
                   for x in _list(src):
                       if isinstance(x, dict):

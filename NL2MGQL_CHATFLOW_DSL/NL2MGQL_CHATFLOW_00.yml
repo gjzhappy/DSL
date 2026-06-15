@@ -194,6 +194,15 @@ workflow:
     value: "{}"
     value_type: string
   environment_variables:
+  - description: Collection registry used by generic collection matching before schema retrieval
+    id: 11111111-2222-4333-8444-555555555555
+    name: COLLECTION_REGISTRY_JSON
+    selector:
+    - env
+    - COLLECTION_REGISTRY_JSON
+    value: |
+      {"registry_version":"2026-03-19","database":"shennong","collections":[{"collection_name":"orders","collection_label":"订单","aliases":["订单","订单表","订单集合","下单记录","销售订单"],"description":"订单主集合，用于订单明细查询、订单状态筛选、品牌/省份/时间维度统计、销售额聚合分析。","primary_terms":["订单数","订单量","销售额","GMV","下单时间","支付状态","订单状态","省份","购买数量"],"fields":["order_id","product_name","brand","category","province","status","payment_status","amount","quantity","created_at"],"metrics":["order_count","gmv_sum","quantity_sum"]},{"collection_name":"products","collection_label":"商品","aliases":["商品","商品表","商品集合","SKU主数据","商品主数据"],"description":"商品主数据集合，用于商品基础信息查询、品牌/类目/价格维度统计、上架状态分析。","primary_terms":["商品数","SKU数量","商品数量","价格","库存","上架状态","商品状态","类目"],"fields":["product_id","sku_id","spu_id","product_name","brand","category","status","price","stock","created_at"],"metrics":["product_count","avg_price","stock_sum"]}]}
+    value_type: string
   - description: 用静态 token 换动态 token 的接口
     id: 4fef4aee-cdc8-4b9c-bef8-be75bfeafa43
     name: LLM_TOKEN_URL

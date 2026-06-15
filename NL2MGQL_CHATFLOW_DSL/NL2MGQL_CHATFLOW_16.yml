@@ -641,10 +641,10 @@
                       return {}
               return {}
 
-          def _list(value):
+          def _as_list(value):
               if isinstance(value, list):
                   return [str(x).strip() for x in value if str(x).strip()]
-              if value in (None, ''):
+              if value in (None, '', {}, []):
                   return []
               return [str(value).strip()]
 
@@ -657,151 +657,97 @@
               if text and text not in out:
                   out.append(text)
 
-          def _slot_value(value):
-              if isinstance(value, list):
-                  return [x for x in value if str(x or '').strip()]
-              if isinstance(value, dict):
-                  return {k: v for k, v in value.items() if v not in (None, '', [], {})}
-              return str(value or '').strip()
+          def _hit_score(question, value, weight):
+              text = str(value or '').strip()
+              return weight if text and text.lower() in question.lower() else 0
 
-          def _same_semantic(a, b):
-              return json.dumps(_slot_value(a), ensure_ascii=False, sort_keys=True) == json.dumps(_slot_value(b), ensure_ascii=False, sort_keys=True)
+          def _registry_match(question, registry):
+              scores = []
+              for item in registry.get('collections') or []:
+                  if not isinstance(item, dict):
+                      continue
+                  name = str(item.get('collection_name') or '').strip()
+                  if not name:
+                      continue
+                  score = 0; reasons = []
+                  for key, weight in [('collection_name',100),('collection_label',90)]:
+                      hit = _hit_score(question, item.get(key), weight)
+                      if hit:
+                          score += hit; reasons.append(key)
+                  for key, weight in [('aliases',80),('primary_terms',60),('fields',45),('metrics',45)]:
+                      hits = sum(1 for value in _as_list(item.get(key)) if _hit_score(question, value, weight))
+                      if hits:
+                          score += hits * weight; reasons.append(key)
+                  desc_hits = 0
+                  for token in str(item.get('description') or '').replace('，',' ').replace('。',' ').split():
+                      if len(token) >= 2 and token in question:
+                          desc_hits += 1
+                  if desc_hits:
+                      score += min(desc_hits, 3) * 10; reasons.append('description')
+                  if score > 0:
+                      scores.append({'collection_name': name, 'score': score, 'matched_fields': reasons})
+              scores.sort(key=lambda x: x.get('score',0), reverse=True)
+              if not scores:
+                  return [], scores
+              top = scores[0].get('score',0)
+              winners = [x.get('collection_name') for x in scores if x.get('score',0) == top and x.get('collection_name')]
+              return (winners if len(winners) == 1 else []), scores
 
           def _context_binding(qref, intent, old_plan):
               st = _first_stage(old_plan)
-              tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
               base = str(old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection') or '').strip()
-              explicit_switch = bool(qref.get('collection_switch') or qref.get('target_collection') or qref.get('collection'))
-              changed, replaced, deprecated = [], {}, []
-              old_groups = _list(st.get('group_fields'))
-              new_group = qref.get('group_by_dimension') or qref.get('dimension') or qref.get('group_fields')
-              if new_group not in (None, '', [], {}) and old_groups:
-                  changed.append('group_by_dimension')
-                  replaced['group_by_dimension'] = {'old': old_groups, 'new_semantic': new_group}
-                  for f in old_groups:
-                      _add(deprecated, f)
-              old_metric = {'metric_alias': st.get('metric_alias'), 'metric_field': st.get('metric_field'), 'metric_function': st.get('metric_function')}
-              new_metric = qref.get('metric')
-              if new_metric not in (None, '', [], {}) and not _same_semantic(new_metric, old_metric):
-                  changed.append('metric')
-                  replaced['metric'] = {'old': {k: v for k, v in old_metric.items() if v not in (None, '')}, 'new_semantic': new_metric}
-              new_time = qref.get('time_range')
-              if new_time not in (None, '', [], {}):
-                  changed.append('time_range')
-                  replaced['time_range'] = {'old': tr, 'new_semantic': new_time}
-                  if isinstance(tr, dict):
-                      _add(deprecated, tr.get('field'))
-              inherit = str(intent.get('turn_intent') or '') in {'refine_query','full_replan'} and bool(intent.get('need_previous_context', True)) and bool(base) and not explicit_switch
-              target_terms = []
-              for v in [qref.get('group_by_dimension'), qref.get('metric'), qref.get('time_range')]:
-                  if isinstance(v, dict):
-                      for x in v.values():
-                          _add(target_terms, x)
-                  elif isinstance(v, list):
-                      for x in v:
-                          _add(target_terms, x)
-                  else:
-                      _add(target_terms, v)
-              return {
-                  'inherit_previous_collection': inherit,
-                  'collection_switch': explicit_switch,
-                  'base_primary_collection': base,
-                  'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '',
-                  'old_primary_collection': base,
-                  'old_stage_collection': str(st.get('collection') or ''),
-                  'old_group_fields': old_groups,
-                  'old_metric_field': str(st.get('metric_field') or ''),
-                  'old_metric_alias': str(st.get('metric_alias') or ''),
-                  'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '',
-                  'target_group_dimension': qref.get('group_by_dimension'),
-                  'target_metric': qref.get('metric'),
-                  'target_time_range': qref.get('time_range'),
-                  'changed_slots': changed,
-                  'replaced_slots': replaced,
-                  'deprecated_fields': deprecated,
-                  'target_semantic_terms': target_terms,
-              }
+              return {'base_primary_collection': base, 'old_primary_collection': base, 'collection_switch': bool(qref.get('collection_switch'))}
 
-          def _refine_terms(query_refinement, turn_intent):
-              terms = []
-              for obj in (query_refinement, turn_intent):
-                  if not isinstance(obj, dict):
-                      continue
-                  for key in ['refined_question', 'current_question', 'rewrite_question', 'user_correction', 'intent_summary', 'route_reason', 'patch_reason']:
-                      _add(terms, obj.get(key))
-                  for key in ['changed_fields', 'negated_fields', 'new_fields', 'group_fields', 'metrics', 'filters', 'business_terms', 'possible_new_concepts']:
-                      for item in _list(obj.get(key)):
-                          if isinstance(item, dict):
-                              _add(terms, item.get('field') or item.get('name') or item.get('value'))
-                          else:
-                              _add(terms, item)
-              return terms
-
-          def main(question: str = '', query_refinement_json: str = '{}', normalized_turn_intent_json: str = '{}', last_context_json: str = '{}', old_normalized_semantic_plan_json: str = '{}', patch_reason: str = '', changed_fields: str = '', **kwargs):
+          def main(question: str = '', query_refinement_json: str = '{}', normalized_turn_intent_json: str = '{}', last_context_json: str = '{}', old_normalized_semantic_plan_json: str = '{}', patch_reason: str = '', changed_fields: str = '', collection_registry_json: str = '', **kwargs):
               q = str(question or '').strip()
               qref = _loads(query_refinement_json)
               intent = _loads(normalized_turn_intent_json)
-              last_context = _loads(last_context_json)
               old_plan = _loads(old_normalized_semantic_plan_json)
+              registry = _loads(collection_registry_json)
               cb = _context_binding(qref, intent, old_plan)
-              target_terms = []
-              _add(target_terms, q)
-              for term in _refine_terms(qref, intent):
-                  _add(target_terms, term)
-              for term in [cb.get('target_group_dimension'), cb.get('target_metric'), cb.get('target_time_range')]:
-                  if isinstance(term, dict):
-                      for v in term.values(): _add(target_terms, v)
-                  elif isinstance(term, list):
-                      for v in term: _add(target_terms, v)
-                  else:
-                      _add(target_terms, term)
-              deprecated = _list(cb.get('deprecated_fields'))
-              positive = [t for t in target_terms if t not in deprecated]
-              base = cb.get('base_primary_collection') or ''
-              selected_primary_collection = base if cb.get('inherit_previous_collection') and base else str(qref.get('selected_primary_collection') or qref.get('target_collection') or qref.get('collection') or '').strip()
-              must = [selected_primary_collection] if selected_primary_collection else []
-              collection_strategy = 'inherit_previous' if must else 'discover_collection'
-              schema_strategy = 'hydrate_inherited_collection' if must else 'candidate_discovery'
-              structural = any(token in (str(qref) + str(intent) + q).lower() for token in ['full_replan', 'structural', '重新', 'new chart'])
-              query = '\n'.join([
-                  '当前是 refine/full-replan。',
-                  '如果 context_binding.inherit_previous_collection=true 且 base_primary_collection 非空，则上一轮 primary_collection 是本轮 schema retrieval 的强约束。',
-                  'full-replan 表示重规划字段/指标/时间/图表，不表示丢弃上一轮 primary_collection。',
-                  '除非 collection_switch=true，否则必须优先检索 base_primary_collection 对应 mongo_schema。',
-                  'collection_strategy：' + collection_strategy,
-                  'schema_strategy：' + schema_strategy,
-                  'selected_primary_collection 已确定为：' + selected_primary_collection,
-                  'metadata_type: mongo_schema',
-                  'collection_name: ' + selected_primary_collection,
-                  'primary_collection: ' + selected_primary_collection,
-                  'must_include: ' + selected_primary_collection,
-                  'must_include_collections：' + json.dumps(must, ensure_ascii=False),
-                  'preferred_collections：' + json.dumps(must, ensure_ascii=False),
-                  'target_semantic_terms 正向检索语义：' + ' '.join(positive),
-                  'refine_query 中，否定表达里的旧字段/旧维度/旧指标/旧图表设置只表示 remove/replace，不作为新 primary_collection 的证据：' + ' '.join(deprecated),
-                  '请必须返回 must_include 对应 collection 的完整 mongo_schema 文档；若本轮仅修改条件、时间范围、分组字段、指标或图表要求，不应因被否定旧项切换主集合。',
-                  'query_refinement_json：' + json.dumps(qref, ensure_ascii=False),
-                  'context_binding_json：' + json.dumps(cb, ensure_ascii=False),
-                  '需要 metadata_type: mongo_schema；包含 fields / metrics / relations / query_rules / aliases；用于 collection selection、group by、filters、metrics、relations。',
-              ])
-              debug = {'collection_strategy': collection_strategy, 'schema_strategy': schema_strategy, 'base_primary_collection': base, 'selected_primary_collection': selected_primary_collection, 'target_semantic_terms': positive, 'deprecated_fields': deprecated, 'must_include_collections': must, 'structural_full_replan': structural, 'context_binding': cb}
+              registry_names, scores = _registry_match(q, registry)
+              old_primary = cb.get('base_primary_collection') or ''
+              explicit_switch = bool(registry_names and old_primary and registry_names[0] != old_primary and qref.get('collection_switch'))
+              selected = str(qref.get('selected_primary_collection') or qref.get('target_collection') or qref.get('collection') or '').strip()
+              if explicit_switch:
+                  names = registry_names; strategy = 'explicit_switch_by_registry'; collection_switch = True
+              elif old_primary:
+                  names = [old_primary]; strategy = 'inherit_previous'; collection_switch = False
+              elif selected:
+                  names = [selected]; strategy = 'selected_primary_collection'; collection_switch = False
+              elif registry_names:
+                  names = registry_names; strategy = 'registry_match'; collection_switch = False
+              else:
+                  names = []; strategy = 'registry_no_match'; collection_switch = False
+              ready = bool(names); primary = names[0] if names else ''
+              query = '\n'.join(['当前是 refine/full-replan。','metadata_type: mongo_schema','collection_name: '+primary,'只检索 candidate_collection_names 中 collection 对应的完整 schema metadata。','用户问题：'+q])
+              debug = {'candidate_collection_scores': scores, 'strategy': strategy, 'context_binding': cb}
               return {
                   'query_text': query,
                   'old_normalized_semantic_plan_json': json.dumps(old_plan, ensure_ascii=False),
                   'query_refinement_json': json.dumps(qref, ensure_ascii=False),
                   'patch_reason': str(patch_reason or ''),
-                  'changed_fields_json': json.dumps(_list(cb.get('changed_slots')) or _list(changed_fields), ensure_ascii=False),
-                  'refine_retrieval_valid': True,
-                  'refine_retrieval_error': '',
+                  'changed_fields_json': json.dumps(_as_list(changed_fields), ensure_ascii=False),
+                  'refine_retrieval_valid': ready,
+                  'refine_retrieval_error': '' if ready else 'schema_missing',
                   'refine_query_debug_json': json.dumps(debug, ensure_ascii=False),
                   'context_binding_json': json.dumps(cb, ensure_ascii=False),
-                  'must_include_collections_json': json.dumps(must, ensure_ascii=False),
-                  'preferred_collections_json': json.dumps(must, ensure_ascii=False),
-                  'deprecated_fields_json': json.dumps(deprecated, ensure_ascii=False),
-                  'collection_strategy': collection_strategy,
-                  'schema_strategy': schema_strategy,
-                  'base_primary_collection': base,
-                  'target_semantic_terms_json': json.dumps(positive, ensure_ascii=False),
+                  'must_include_collections_json': json.dumps(names, ensure_ascii=False),
+                  'preferred_collections_json': json.dumps(names, ensure_ascii=False),
+                  'deprecated_fields_json': '[]',
+                  'collection_strategy': strategy,
+                  'schema_strategy': 'metadata_exact' if ready else 'requires_clarification',
+                  'base_primary_collection': old_primary,
+                  'target_semantic_terms_json': json.dumps([q], ensure_ascii=False),
+                  'candidate_collection_names': names,
+                  'candidate_collection_name': primary,
+                  'candidate_collection_ready': ready,
+                  'candidate_collection_strategy': strategy,
+                  'candidate_collection_scores_json': json.dumps(scores, ensure_ascii=False),
+                  'candidate_collection_reason': 'matched by registry or inherited context' if ready else 'no collection available',
+                  'collection_switch': collection_switch,
+                  'requires_clarification': not ready,
+                  'clarification_question': '' if ready else '请明确要查询的业务对象或 collection。',
               }
         code_language: python3
         desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine
@@ -855,6 +801,34 @@
           target_semantic_terms_json:
             children:
             type: string
+          candidate_collection_names:
+            children:
+              type: string
+            type: array
+          candidate_collection_name:
+            children:
+            type: string
+          candidate_collection_ready:
+            children:
+            type: boolean
+          candidate_collection_strategy:
+            children:
+            type: string
+          candidate_collection_scores_json:
+            children:
+            type: string
+          candidate_collection_reason:
+            children:
+            type: string
+          collection_switch:
+            children:
+            type: boolean
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
+            children:
+            type: string
         selected: false
         title: 代码执行_构建CandidateSchemas检索查询_Refine
         type: code
@@ -894,6 +868,11 @@
           - changed_fields
           value_type: string
           variable: changed_fields
+        - value_selector:
+          - env
+          - COLLECTION_REGISTRY_JSON
+          value_type: string
+          variable: collection_registry_json
       height: 80
       id: '1776000000025'
       position:
