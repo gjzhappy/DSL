@@ -1,3 +1,25 @@
+              current_date: str = '',
+              **kwargs
+          ):
+              schema_context = schema_context or arg1
+              collection_selection_json = collection_selection_json or arg2
+              question = question or arg3
+              planner = json.loads(collection_selection_json) if isinstance(collection_selection_json, str) and collection_selection_json.strip() else (collection_selection_json or {})
+              schema_context_ref = {}
+              schema_context_ref_warning = ''
+              if schema_context_ref_json:
+                  try:
+                      schema_context_ref = json.loads(schema_context_ref_json) if isinstance(schema_context_ref_json, str) else (schema_context_ref_json or {})
+                  except Exception:
+                      schema_context_ref = {}
+                      schema_context_ref_warning = 'schema_context_ref_json parse failed'
+              if isinstance(schema_context, str):
+                  fresh_schema_context = schema_context
+              else:
+                  sections = []
+                  for raw in (schema_context or []):
+                      item = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                      collection_name = str(item.get("collection_name") or "").strip()
                       role = str(item.get("role") or "").strip()
                       context_text = str(item.get("context_text") or "").strip()
                       sections.append(
@@ -876,25 +898,3 @@
               fname = str(field_name or '').strip()
               candidates = [x for x in (idx.get('value_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'value']
               if cname:
-                  candidates = [x for x in candidates if x.get('collection') == cname]
-              if fname:
-                  candidates = [x for x in candidates if x.get('field') == fname]
-              warning = ''
-              if not candidates:
-                  warning = '值别名未在 schema metadata 中声明，未自动归一。'
-              elif len(candidates) > 1:
-                  warning = '值别名存在多个候选，返回 candidates，未自动选择。'
-              return {'input': raw, 'kind': 'value', 'collection': cname, 'field': fname, 'candidates': candidates, 'resolved': candidates[0].get('name') if len(candidates) == 1 else raw, 'warning': warning}
-
-
-          def resolve_field_label(field_name, schema_metadata, collection_name=None):
-              meta, _ = _meta_and_index(schema_metadata)
-              fname = str(field_name or '').strip()
-              cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}) and fname in meta['collections'][cname].get('fields', {}):
-                  return meta['collections'][cname]['fields'][fname].get('label') or prettify_field_name(fname)
-              hits = []
-              for cn, c in (meta.get('collections') or {}).items():
-                  if fname in c.get('fields', {}):
-                      hits.append(c['fields'][fname].get('label') or prettify_field_name(fname))
-              return hits[0] if len(hits) == 1 else prettify_field_name(fname)

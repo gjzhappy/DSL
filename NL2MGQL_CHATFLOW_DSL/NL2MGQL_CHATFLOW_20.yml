@@ -1,3 +1,197 @@
+        x: 14820
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v, default=None):
+              if default is None: default = {}
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return default
+              return default
+          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def _as_ref_list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
+              return []
+          def _prune_ref_to_parsed(ref, meta, warnings):
+              ref = dict(ref or {})
+              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
+              requested = _as_ref_list(ref.get('collections'))
+              if parsed and requested:
+                  kept = [c for c in requested if c in parsed]
+                  removed = [c for c in requested if c not in parsed]
+                  if removed:
+                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
+                  ref['collections'] = kept
+              return ref
+
+          def main(hydrated_schema_metadata_json='{}', hydrated_schema_alias_index_json='{}', hydrated_schema_digest='', hydrated_schema_version='', hydrated_schema_context_ref_json='{}', hydration_success=False, hydration_warnings_json='[]', hydration_errors_json='[]'):
+              warnings = _loads(hydration_warnings_json, []) or []
+              errors = _loads(hydration_errors_json, []) or []
+              meta = _loads(hydrated_schema_metadata_json, {}) or {}
+              alias = _loads(hydrated_schema_alias_index_json, {}) or {}
+              ref = _loads(hydrated_schema_context_ref_json, {}) or {}
+              ref = _prune_ref_to_parsed(ref, meta, warnings)
+              ready = bool(hydration_success and meta.get('collections') and alias)
+              ctx = {
+                  'contract_version': 'schema_runtime_context_contract',
+                  'schema_context_ready': ready,
+                  'validator_schema_context_ready': ready,
+                  'schema_hydration_needed': False,
+                  'schema_hydration_reason': '',
+                  'schema_hydration_collections': [],
+                  'schema_metadata_json': _dumps(meta) if ready else '{}',
+                  'schema_alias_index_json': _dumps(alias) if ready else '{}',
+                  'schema_digest': str(hydrated_schema_digest or ref.get('schema_digest') or ''),
+                  'schema_version': str(hydrated_schema_version or ref.get('schema_version') or ''),
+                  'catalog_digest': str(ref.get('catalog_digest') or ''),
+                  'schema_source': 'hydrated_runtime' if ready else 'hydration_failed',
+                  'schema_context_ref': ref,
+                  'warnings': warnings,
+                  'errors': errors,
+              }
+              ctx['schema_runtime_context_json'] = _dumps(ctx)
+              return ctx
+        code_language: python3
+        desc: Phase 10：把 hydrated metadata/alias 注入 validator runtime context；仅运行时使用，不写入
+          compact context。
+        outputs:
+          contract_version:
+            children:
+            type: string
+          schema_context_ready:
+            children:
+            type: boolean
+          validator_schema_context_ready:
+            children:
+            type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections:
+            children:
+            type: array[string]
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_digest:
+            children:
+            type: string
+          schema_version:
+            children:
+            type: string
+          catalog_digest:
+            children:
+            type: string
+          schema_source:
+            children:
+            type: string
+          schema_context_ref:
+            children:
+            type: object
+          warnings:
+            children:
+            type: array[string]
+          errors:
+            children:
+            type: array[string]
+          schema_runtime_context_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_准备HydratedValidator运行时Schema上下文
+        type: code
+        variables:
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_metadata_json
+          value_type: string
+          variable: hydrated_schema_metadata_json
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_alias_index_json
+          value_type: string
+          variable: hydrated_schema_alias_index_json
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_digest
+          value_type: string
+          variable: hydrated_schema_digest
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_version
+          value_type: string
+          variable: hydrated_schema_version
+        - value_selector:
+          - '1780000000007'
+          - hydrated_schema_context_ref_json
+          value_type: string
+          variable: hydrated_schema_context_ref_json
+        - value_selector:
+          - '1780000000007'
+          - hydration_success
+          value_type: boolean
+          variable: hydration_success
+        - value_selector:
+          - '1780000000007'
+          - hydration_warnings_json
+          value_type: string
+          variable: hydration_warnings_json
+        - value_selector:
+          - '1780000000007'
+          - hydration_errors_json
+          value_type: string
+          variable: hydration_errors_json
+      height: 80
+      id: '1780000000008'
+      position:
+        x: 15280
+        y: 760
+      positionAbsolute:
+        x: 15280
+        y: 760
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v, default=None):
+              if default is None: default = {}
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return default
+              return default
+          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def _as_ref_list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
+              return []
+          def _prune_ref_to_parsed(ref, meta, warnings):
+              ref = dict(ref or {})
+              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
+              requested = _as_ref_list(ref.get('collections'))
+              if parsed and requested:
+                  kept = [c for c in requested if c in parsed]
+                  removed = [c for c in requested if c not in parsed]
+                  if removed:
+                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
                   ref['collections'] = kept
               return ref
 

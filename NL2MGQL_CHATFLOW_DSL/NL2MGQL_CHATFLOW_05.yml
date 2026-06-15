@@ -1,3 +1,67 @@
+                      raise ValueError(f'unsupported metric_function: {metric_function}')
+                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
+              group_id = {field: f'${field}' for field in group_fields} if group_fields else None
+              group_stage = {'_id': group_id, metric_alias: agg_expr}
+              pipeline.append({'$group': group_stage})
+              project_stage = {'_id': 0}
+              for field in group_fields:
+                  project_stage[field] = f'$_id.{field}'
+              project_stage[metric_alias] = f'${metric_alias}'
+              pipeline.append({'$project': project_stage})
+              sort_stage = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  sort_stage[field] = direction
+              if sort_stage:
+                  pipeline.append({'$sort': sort_stage})
+              if int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
+              if projection_fields:
+                  _append_projection(pipeline, projection_fields)
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
+                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
+                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_group_top_entity(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              entity_field = _ensure_non_empty_string(stage.get('entity_field'), f"{stage['stage_name']}.entity_field")
+              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
+              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
+              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
+              rank_n = int(stage.get('rank_n') or 0)
+              if rank_n <= 0:
+                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_entity")
+              if metric_function == 'count':
+                  agg_expr = {'$sum': 1}
+              else:
+                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
+                  if metric_function not in op_map:
+                      raise ValueError(f'unsupported metric_function: {metric_function}')
+                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
+              first_group_id = {field: f'${field}' for field in group_fields}
+              first_group_id['__entity'] = f'${entity_field}'
+              pipeline.append({'$group': {'_id': first_group_id, metric_alias: agg_expr}})
+              sort_before_rank = {f'_id.{field}': 1 for field in group_fields}
+              sort_before_rank[metric_alias] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
+              pipeline.append({'$sort': sort_before_rank})
               push_payload = {'entity': '$_id.__entity', metric_alias: f'${metric_alias}'}
               pipeline.append({'$group': {'_id': {field: f'$_id.{field}' for field in group_fields}, 'items': {'$push': push_payload}}})
               project_group = {'_id': 0, 'items': '$items'}
@@ -834,67 +898,3 @@
                   viz_out['x_field'] = str(chart_x_field or '')
                   viz_out['y_field'] = str(chart_y_field or '')
                   if not str(viz_out.get('series_name') or '').strip() or str(viz_out.get('series_name') or '').strip() == 'value':
-                      viz_out['series_name'] = _field_label_from_plan(normalized_execution_plan, chart_metric_name, 'metric') or chart_metric_name
-                  viz_out['x_label'] = _field_label_from_plan(normalized_execution_plan, chart_x_field, 'field')
-                  viz_out['y_label'] = _field_label_from_plan(normalized_execution_plan, chart_metric_name, 'metric')
-                  viz_out['title'] = build_short_chart_title(normalized_execution_plan, viz_out, viz_out['chart_type'], chart_x_field, chart_metric_name, question)
-              option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip()
-              option_series_name = ''
-              if isinstance((chart_option or {}).get('series'), list) and (chart_option or {}).get('series'):
-                  option_series_name = str((((chart_option or {}).get('series') or [{}])[0].get('name')) or '').strip()
-              chart_decision = {
-                  'enabled': bool(chart_enabled and chart_option),
-                  'chart_type': str(chart_type_final or chart_decision.get('chart_type') or 'bar'),
-                  'x_field': str(chart_x_field or chart_decision.get('x_field') or ''),
-                  'y_field': str(chart_y_field or chart_decision.get('y_field') or ''),
-                  'title': option_title,
-                  'series_name': option_series_name or str(chart_decision.get('y_field') or '') or 'value',
-                  'reason': 'local echarts option generated' if bool(chart_enabled and chart_option) else '',
-              }
-              chart_payload = {
-                  'enabled': bool(chart_enabled and chart_option),
-                  'renderer': 'echarts',
-                  'library': 'echarts',
-                  'option': chart_option,
-                  'echarts_markdown': chart_markdown,
-                  'decision': chart_decision,
-                  'debug': {'schema_metadata_used': bool(schema_metadata.get('collections')), 'x_label_source': 'schema_field_label' if bool(schema_metadata.get('collections')) else 'field_prettify', 'y_label_source': 'schema_metric_label' if bool(schema_metadata.get('collections')) else 'field_prettify', 'title_source': 'chart_request' if str((visualization or {}).get('title') or '').strip() else ('schema_label' if bool(schema_metadata.get('collections')) else 'field_prettify'), 'schema_warnings': schema_metadata.get('warnings') or []},
-              }
-              raw_chart_request = normalized_execution_plan.get('chart_request') if isinstance(normalized_execution_plan.get('chart_request'), dict) else (normalized_execution_plan.get('visualization') if isinstance(normalized_execution_plan.get('visualization'), dict) else {})
-              chart_request_flat = {
-                  'enabled': bool(raw_chart_request.get('enabled')),
-                  'chart_type': str(raw_chart_request.get('chart_type') or ''),
-                  'x_field': str(raw_chart_request.get('x_field') or ''),
-                  'y_field': str(raw_chart_request.get('y_field') or ''),
-                  'series_name': str(raw_chart_request.get('series_name') or ''),
-                  'title': str(raw_chart_request.get('title') or ''),
-                  'field_labels': raw_chart_request.get('field_labels') if isinstance(raw_chart_request.get('field_labels'), dict) else {},
-              }
-
-              no_data_message = ''
-              if visualization.get('enabled') and not (merged_rows or []):
-                  no_data_message = 'æ¥è¯¢æåï¼ä½ç»æä¸ºç©ºï¼æ æ³çæå¾è¡¨ã'
-              final_payload = {
-                  'question': str(question or '').strip(),
-                  'normalized_execution_plan': normalized_execution_plan,
-                  'stage_execution_trace': stage_execution_trace,
-                  'merged_rows': merged_rows[:MAX_RETURN_ROWS],
-                  'merged_rows_json': json.dumps(merged_rows[:MAX_RETURN_ROWS], ensure_ascii=False),
-                  'chart': chart_payload,
-                  'chart_request_json': json.dumps(chart_request_flat, ensure_ascii=False),
-                  'message': no_data_message,
-              }
-              final_response_summary = {
-                  'question': str(question or '').strip(),
-                  'execution_mode': str(normalized_execution_plan.get('execution_mode') or ''),
-                  'stage_count': len(normalized_execution_plan.get('stages') or []),
-                  'merged_row_count': len(merged_rows or []),
-                  'has_chart': bool((chart_payload or {}).get('enabled')),
-                  'chart_type': str(chart_decision.get('chart_type') or ''),
-                  'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
-              }
-
-              nl = chr(10)
-              message_text = str(no_data_message or '').strip()
-              error_text = ''
-              if isinstance(stage_execution_trace, list):

@@ -410,6 +410,7 @@
                   'selected_related_collections': selection['selected_related_collections'],
                   'selection_confidence': float(selection.get('confidence') or 0),
                   'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                  'schema_hydration_collections': selection.get('schema_hydration_collections') or [],
                   'requires_clarification': bool(selection.get('requires_clarification')),
                   'clarification_question': selection.get('clarification_question') or '',
               }
@@ -438,6 +439,9 @@
           requires_clarification:
             children:
             type: boolean
+          schema_hydration_collections:
+            children:
+            type: array[string]
           clarification_question:
             children:
             type: string
@@ -599,7 +603,10 @@
                   warnings.append('selected primary collection not found in candidate schemas')
               if warnings:
                   empty_meta = {'metadata_type': 'schema_metadata_contract', 'contract_version': 'schema_metadata_contract', 'schema_version': str(meta.get('schema_version') or ''), 'schema_digest': '', 'collections': {}, 'warnings': warnings, 'parse_errors': []}
-                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+                  hydration_needed = bool(primary and primary not in collections)
+                  hydration_collections = [primary] if hydration_needed else []
+                  hydration_reason = 'selected_primary_collection_missing_from_candidate_schemas' if hydration_needed else ''
+                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
               keep = []
               for name in [primary] + _list(selected_related_collections):
                   if name in collections and name not in keep:
@@ -611,7 +618,7 @@
               selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
               selected_alias = _filter_alias(alias, set(keep))
               selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
-              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'schema_hydration_needed': False, 'schema_hydration_reason': '', 'schema_hydration_collections': [], 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
         code_language: python3
         desc: 按 selector 结果裁剪 CandidateSchemas，只保留 selected primary 与存在于候选 schema metadata
           中的 related collections。
@@ -631,6 +638,15 @@
           selected_schema_ready:
             children:
             type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections:
+            children:
+            type: array[string]
           selected_schema_warnings_json:
             children:
             type: string
@@ -731,14 +747,20 @@
                       return {}
               return {}
 
-          def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = ''):
+          def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = '', selected_primary_collection: str = '', requires_clarification: bool = False, schema_hydration_collections=None):
               selection = _loads(collection_selection_json)
               catalog = _loads(collection_catalog_json)
               warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
-              if not catalog.get('collections'):
+              hydration_collections = schema_hydration_collections if isinstance(schema_hydration_collections, list) else []
+              inherited = str(selection.get('selected_primary_collection') or selected_primary_collection or '').strip()
+              if inherited or hydration_collections:
+                  text = '已确定本次查询的主集合，但候选 schema 缺失；应触发 schema hydration 补检，当前流程未获得可用 schema。'
+              elif not catalog.get('collections'):
                   text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
-              else:
+              elif bool(requires_clarification or selection.get('requires_clarification')) and not inherited and not hydration_collections:
                   text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'
+              else:
+                  text = '候选 schema 不完整，请补充或刷新 schema 后重试。'
               payload = {
                   'contract_version': 'answer_payload_contract',
                   'answer_type': 'clarification',
@@ -876,25 +898,3 @@
               llm_stream='',
               last_context_json: str = '',
               turn_intent: str = '',
-              current_date: str = '',
-              **kwargs
-          ):
-              schema_context = schema_context or arg1
-              collection_selection_json = collection_selection_json or arg2
-              question = question or arg3
-              planner = json.loads(collection_selection_json) if isinstance(collection_selection_json, str) and collection_selection_json.strip() else (collection_selection_json or {})
-              schema_context_ref = {}
-              schema_context_ref_warning = ''
-              if schema_context_ref_json:
-                  try:
-                      schema_context_ref = json.loads(schema_context_ref_json) if isinstance(schema_context_ref_json, str) else (schema_context_ref_json or {})
-                  except Exception:
-                      schema_context_ref = {}
-                      schema_context_ref_warning = 'schema_context_ref_json parse failed'
-              if isinstance(schema_context, str):
-                  fresh_schema_context = schema_context
-              else:
-                  sections = []
-                  for raw in (schema_context or []):
-                      item = json.loads(raw) if isinstance(raw, str) else (raw or {})
-                      collection_name = str(item.get("collection_name") or "").strip()

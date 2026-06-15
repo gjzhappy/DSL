@@ -1,3 +1,67 @@
+                      viz_out['series_name'] = _field_label_from_plan(normalized_execution_plan, chart_metric_name, 'metric') or chart_metric_name
+                  viz_out['x_label'] = _field_label_from_plan(normalized_execution_plan, chart_x_field, 'field')
+                  viz_out['y_label'] = _field_label_from_plan(normalized_execution_plan, chart_metric_name, 'metric')
+                  viz_out['title'] = build_short_chart_title(normalized_execution_plan, viz_out, viz_out['chart_type'], chart_x_field, chart_metric_name, question)
+              option_title = str((((chart_option or {}).get('title') or {}).get('text')) or '').strip()
+              option_series_name = ''
+              if isinstance((chart_option or {}).get('series'), list) and (chart_option or {}).get('series'):
+                  option_series_name = str((((chart_option or {}).get('series') or [{}])[0].get('name')) or '').strip()
+              chart_decision = {
+                  'enabled': bool(chart_enabled and chart_option),
+                  'chart_type': str(chart_type_final or chart_decision.get('chart_type') or 'bar'),
+                  'x_field': str(chart_x_field or chart_decision.get('x_field') or ''),
+                  'y_field': str(chart_y_field or chart_decision.get('y_field') or ''),
+                  'title': option_title,
+                  'series_name': option_series_name or str(chart_decision.get('y_field') or '') or 'value',
+                  'reason': 'local echarts option generated' if bool(chart_enabled and chart_option) else '',
+              }
+              chart_payload = {
+                  'enabled': bool(chart_enabled and chart_option),
+                  'renderer': 'echarts',
+                  'library': 'echarts',
+                  'option': chart_option,
+                  'echarts_markdown': chart_markdown,
+                  'decision': chart_decision,
+                  'debug': {'schema_metadata_used': bool(schema_metadata.get('collections')), 'x_label_source': 'schema_field_label' if bool(schema_metadata.get('collections')) else 'field_prettify', 'y_label_source': 'schema_metric_label' if bool(schema_metadata.get('collections')) else 'field_prettify', 'title_source': 'chart_request' if str((visualization or {}).get('title') or '').strip() else ('schema_label' if bool(schema_metadata.get('collections')) else 'field_prettify'), 'schema_warnings': schema_metadata.get('warnings') or []},
+              }
+              raw_chart_request = normalized_execution_plan.get('chart_request') if isinstance(normalized_execution_plan.get('chart_request'), dict) else (normalized_execution_plan.get('visualization') if isinstance(normalized_execution_plan.get('visualization'), dict) else {})
+              chart_request_flat = {
+                  'enabled': bool(raw_chart_request.get('enabled')),
+                  'chart_type': str(raw_chart_request.get('chart_type') or ''),
+                  'x_field': str(raw_chart_request.get('x_field') or ''),
+                  'y_field': str(raw_chart_request.get('y_field') or ''),
+                  'series_name': str(raw_chart_request.get('series_name') or ''),
+                  'title': str(raw_chart_request.get('title') or ''),
+                  'field_labels': raw_chart_request.get('field_labels') if isinstance(raw_chart_request.get('field_labels'), dict) else {},
+              }
+
+              no_data_message = ''
+              if visualization.get('enabled') and not (merged_rows or []):
+                  no_data_message = 'æ¥è¯¢æåï¼ä½ç»æä¸ºç©ºï¼æ æ³çæå¾è¡¨ã'
+              final_payload = {
+                  'question': str(question or '').strip(),
+                  'normalized_execution_plan': normalized_execution_plan,
+                  'stage_execution_trace': stage_execution_trace,
+                  'merged_rows': merged_rows[:MAX_RETURN_ROWS],
+                  'merged_rows_json': json.dumps(merged_rows[:MAX_RETURN_ROWS], ensure_ascii=False),
+                  'chart': chart_payload,
+                  'chart_request_json': json.dumps(chart_request_flat, ensure_ascii=False),
+                  'message': no_data_message,
+              }
+              final_response_summary = {
+                  'question': str(question or '').strip(),
+                  'execution_mode': str(normalized_execution_plan.get('execution_mode') or ''),
+                  'stage_count': len(normalized_execution_plan.get('stages') or []),
+                  'merged_row_count': len(merged_rows or []),
+                  'has_chart': bool((chart_payload or {}).get('enabled')),
+                  'chart_type': str(chart_decision.get('chart_type') or ''),
+                  'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
+              }
+
+              nl = chr(10)
+              message_text = str(no_data_message or '').strip()
+              error_text = ''
+              if isinstance(stage_execution_trace, list):
                   for trace_item in reversed(stage_execution_trace):
                       if isinstance(trace_item, dict):
                           stage_error = str(trace_item.get('error') or '').strip()
@@ -834,67 +898,3 @@
 
 
           def _remove_think_blocks(text):
-              raw = str(text or '')
-              raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
-              return raw.strip()
-
-
-          def _ast_candidate_score(obj):
-              if not isinstance(obj, dict):
-                  return -1
-              score = 0
-              keys = set(obj.keys())
-              if 'execution_plan' in keys:
-                  score += 10
-              stages = (obj.get('execution_plan') or {}).get('stages') if isinstance(obj.get('execution_plan'), dict) else None
-              if isinstance(stages, list) and stages:
-                  score += 10
-              if keys:
-                  score += 1
-              return score
-
-
-          def _try_decode_object(raw):
-              try:
-                  decoder = json.JSONDecoder()
-                  obj, end = decoder.raw_decode(raw)
-                  if isinstance(obj, dict):
-                      return obj, raw[:end], raw[end:].strip()
-              except Exception:
-                  return None
-              return None
-
-
-          def _extract_json_object_text(text):
-              raw = _remove_think_blocks(_strip_code_fence(text))
-
-              if not raw:
-                  raise ValueError('LLM返�内容为空')
-              direct = _try_decode_object(raw)
-              if direct and not direct[2]:
-                  return direct[1]
-              candidates = []
-              for block in re.findall(r'```(?:json)?\s*(.*?)```', raw, flags=re.IGNORECASE | re.DOTALL):
-                  parsed = _try_decode_object(block.strip())
-                  if parsed:
-                      obj, obj_text, tail = parsed
-                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
-              seen_positions = set()
-              for match in re.finditer(r'\{', raw):
-                  pos = match.start()
-
-                  if pos in seen_positions:
-                      continue
-                  seen_positions.add(pos)
-                  parsed = _try_decode_object(raw[pos:])
-                  if parsed:
-                      obj, obj_text, tail = parsed
-                      candidates.append((_ast_candidate_score(obj), 1 if tail else 0, obj_text))
-              if candidates:
-                  candidates.sort(key=lambda item: (-item[0], item[1], -len(item[2])))
-                  return candidates[0][2]
-              raise ValueError(f'LLM返�内容不是合法JSON对象: {_truncate_text(raw, 1200)}')
-
-
-          def _pick_response(full_status_code, full_body, local_status_code, local_body):
-              local_body_text = '' if local_body is None else str(local_body).strip()

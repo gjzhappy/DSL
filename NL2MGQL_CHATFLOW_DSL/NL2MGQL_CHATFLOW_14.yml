@@ -1,3 +1,86 @@
+
+
+          def _normalize_named_map(value, kind, warnings, collection_name):
+              result = {}
+              if value is None or value == '':
+                  return result
+              if isinstance(value, dict):
+                  iterable = []
+                  for name, item in value.items():
+                      if isinstance(item, dict):
+                          merged = dict(item)
+                          merged.setdefault('name', name)
+                          iterable.append(merged)
+                      else:
+                          warnings.append(f'{collection_name}.{kind}.{name} 不是对象，已忽略。')
+                  source_shape = 'dict'
+              elif isinstance(value, list):
+                  iterable = value
+                  source_shape = 'list'
+              else:
+                  warnings.append(f'{collection_name}.{kind} 不是 list/dict，已按空对象处理。')
+                  return result
+              for item in iterable:
+                  if not isinstance(item, dict):
+                      warnings.append(f'{collection_name}.{kind} 中存在非对象条目，已忽略。')
+                      continue
+                  name = str(item.get('name') or '').strip()
+                  if not name:
+                      warnings.append(f'{collection_name}.{kind} 中存在缺少 name 的条目，已忽略。')
+                      continue
+                  normalized = copy.deepcopy(item)
+                  normalized['name'] = name
+                  result[name] = normalized
+              return result
+
+
+          def _infer_function(expression):
+              expr = str(expression or '').strip().lower()
+              m = re.match(r'^\s*([a-z_][\w]*)\s*\(', expr)
+              return m.group(1) if m else ''
+
+
+          def _normalize_field(field, collection_name, warnings):
+              item = copy.deepcopy(field) if isinstance(field, dict) else {}
+              name = str(item.get('name') or '').strip()
+              sensitive = bool(item.get('sensitive', False))
+              pii = bool(item.get('pii', False))
+              role = str(item.get('role') or 'dimension').strip() or 'dimension'
+              if 'returnable' not in item:
+                  item['returnable'] = False if sensitive or pii else True
+                  if not (sensitive or pii):
+                      warnings.append(f'{collection_name}.{name}.returnable 缺失，C-MVP 兼容期默认 true。')
+              if 'projectable' not in item:
+                  item['projectable'] = False if sensitive or pii else True
+                  if not (sensitive or pii):
+                      warnings.append(f'{collection_name}.{name}.projectable 缺失，C-MVP 兼容期默认 true。')
+              normalized = {
+                  'name': name,
+                  'label': str(item.get('label') or name).strip(),
+                  'type': str(item.get('type') or '').strip(),
+                  'role': role,
+                  'semantic_type': str(item.get('semantic_type') or role).strip() or role,
+                  'description': str(item.get('description') or '').strip(),
+                  'aliases': _as_str_list(item.get('aliases')),
+                  'allowed_values': _as_str_list(item.get('allowed_values')),
+                  'value_aliases': {str(k).strip(): str(v).strip() for k, v in _as_dict(item.get('value_aliases')).items() if str(k).strip() and str(v).strip()},
+                  'filterable': bool(item.get('filterable', False)),
+                  'groupable': False if (sensitive or pii) and 'groupable' not in item else bool(item.get('groupable', False)),
+                  'sortable': False if (sensitive or pii) and 'sortable' not in item else bool(item.get('sortable', False)),
+                  'returnable': bool(item.get('returnable', False)),
+                  'projectable': bool(item.get('projectable', False)),
+                  'chartable': bool(item.get('chartable', False)),
+                  'aggregatable': _as_str_list(item.get('aggregatable')),
+                  'sensitive': sensitive,
+                  'pii': pii,
+                  'pii_category': str(item.get('pii_category') or '').strip(),
+                  'default_display': bool(item.get('default_display', False)),
+              }
+              # Preserve current/forward-compatible extra field properties.
+              for k, v in item.items():
+                  if k not in normalized and k not in NON_SEMANTIC_SCHEMA_KEYS:
+                      normalized[k] = v
+              return normalized
           def _normalize_metric(metric, primary_key):
               item = copy.deepcopy(metric) if isinstance(metric, dict) else {}
               name = str(item.get('name') or '').strip()
@@ -815,86 +898,3 @@
           answer_mode:
             children:
             type: string
-          schema_metadata_json:
-            children:
-            type: string
-          schema_alias_index_json:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_统一准备Mongo执行输入
-        type: code
-        variables:
-        - value_selector:
-          - '1776000000004'
-          - turn_intent
-          value_type: string
-          variable: turn_intent
-        - value_selector:
-          - '1776000000013'
-          - refine_like_requery
-          value_type: boolean
-          variable: refine_like_requery
-        - value_selector:
-          - '1776000000019'
-          - patch_applied
-          value_type: boolean
-          variable: patch_applied
-        - value_selector:
-          - '1775000000013'
-          - normalized_semantic_plan_json
-          value_type: string
-          variable: original_normalized_semantic_plan_json
-        - value_selector:
-          - '1776000000019'
-          - patched_normalized_semantic_plan_json
-          value_type: string
-          variable: patched_normalized_semantic_plan_json
-        - value_selector:
-          - '1776000000021'
-          - normalized_semantic_plan_json
-          value_type: string
-          variable: guarded_normalized_semantic_plan_json
-        - value_selector:
-          - '1773975766025'
-          - structured_output
-          value_type: object
-          variable: original_planner
-        - value_selector:
-          - '1775000000005'
-          - schema_context
-          value_type: string
-          variable: original_schema_context
-        - value_selector:
-          - '1776000000027'
-          - schema_context_for_replan
-          value_type: string
-          variable: refine_schema_context
-        - value_selector:
-          - '1776000000021'
-          - guard_valid
-          value_type: boolean
-          variable: guard_valid
-        - value_selector:
-          - '1776000000021'
-          - guard_error
-          value_type: string
-          variable: guard_error
-      height: 80
-      id: '1776000000024'
-      position:
-        x: 11320
-        y: 120
-      positionAbsolute:
-        x: 11320
-        y: 120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          """Phase 9 runtime schema context helper for semantic_plan_validator.
-
-          Builds a transient schema_runtime_context_contract immediately before validation.

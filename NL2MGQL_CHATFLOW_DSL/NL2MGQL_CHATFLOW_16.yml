@@ -1,3 +1,151 @@
+              if selected and primary and selected != primary:
+                  msg = f"collection_selection.selected_primary_collection={selected} 与 plan.primary_collection={primary} 不一致。"
+                  if confidence and confidence < 0.6:
+                      return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
+                  errors.append(msg)
+              related = _prune_unused_related_collections(plan, autofixes)
+              for rc in related:
+                  if rc not in collections:
+                      errors.append(f"related_collection={rc} 不存在于 schema metadata。")
+
+              route_hint = "valid"
+              for i, stage in enumerate(plan.get("stages") or []):
+                  if not isinstance(stage, dict):
+                      errors.append(f"stage[{i}] 不是对象。")
+                      continue
+                  coll = _str(stage.get("collection") or primary)
+                  stage["collection"] = coll
+                  if coll not in collections:
+                      errors.append(f"stage[{i}].collection={coll} 不存在。")
+                      continue
+                  if primary and coll != primary and coll not in related:
+                      errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
+                  coll_meta = collections.get(coll) or {}
+                  rules = coll_meta.get("query_rules") or {}
+
+                  raw_intent_type = _str(stage.get("intent_type"))
+                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
+                  if canonical_intent_type != raw_intent_type:
+                      stage["intent_type"] = canonical_intent_type
+                      autofixes.append({
+                          "type": "intent_type_canonicalize",
+                          "from": raw_intent_type,
+                          "to": canonical_intent_type,
+                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
+                      })
+                  elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
+                      errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
+
+                  group_fields = []
+                  for gf in _list(stage.get("group_fields")):
+                      group_fields.append(_canonical_field(_str(gf), schema, coll, "group_fields", errors, warnings, autofixes, "groupable"))
+                  stage["group_fields"] = group_fields
+
+                  metric_alias = _str(stage.get("metric_alias"))
+                  derived_fields = set()
+                  for alias in _list(stage.get("metric_alias")):
+                      if _str(alias):
+                          derived_fields.add(_str(alias))
+                  for metric_item in _list(stage.get("metrics")):
+                      if isinstance(metric_item, dict):
+                          for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                              if _str(metric_item.get(alias_key)):
+                                  derived_fields.add(_str(metric_item.get(alias_key)))
+                  if metric_alias:
+                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll)
+                      if msrc == "ambiguous":
+                          errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
+                      elif msrc == "unresolved":
+                          if _stage_is_aggregate(stage) and _str(stage.get("metric_function")):
+                              derived_fields.add(metric_alias)
+                              warnings.append(f"允许聚合派生字段 {metric_alias} 用于 sort/projection/chart.y_field。")
+                              autofixes.append({"type": "derived_metric_alias_allow", "field": metric_alias, "places": ["sort", "projection_fields", "chart_request.y_field"]})
+                          else:
+                              errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
+                      else:
+                          if mname != metric_alias:
+                              autofixes.append({"type": "metric_alias_canonicalize", "from": metric_alias, "to": mname, "collection": coll})
+                              if metric_alias in derived_fields:
+                                  derived_fields.remove(metric_alias)
+                              derived_fields.add(mname)
+                          stage["metric_alias"] = mname
+                          metric_alias = mname
+                          metric = _metric(schema, coll, mname)
+                          if not _str(stage.get("metric_function")) and _str(metric.get("function")):
+                              stage["metric_function"] = _str(metric.get("function")); autofixes.append({"type": "metric_function_fill", "metric": mname, "value": stage["metric_function"]})
+                          elif _str(stage.get("metric_function")) and _str(metric.get("function")) and _str(stage.get("metric_function")) != _str(metric.get("function")):
+                              errors.append(f"metric_function 与 schema metric {mname}.function 不一致。")
+                          if not _str(stage.get("metric_field")) and _str(metric.get("field")):
+                              stage["metric_field"] = _str(metric.get("field")); autofixes.append({"type": "metric_field_fill", "metric": mname, "value": stage["metric_field"]})
+                          elif _str(stage.get("metric_field")) and _str(metric.get("field")) and _str(stage.get("metric_field")) != _str(metric.get("field")):
+                              errors.append(f"metric_field 与 schema metric {mname}.field 不一致。")
+                          for sf in _list(metric.get("source_fields")):
+                              if sf not in (coll_meta.get("fields") or {}):
+                                  errors.append(f"metric {mname}.source_field={sf} 不存在。")
+                          allowed_dims = [_str(x) for x in _list(metric.get("allowed_dimensions"))]
+                          if allowed_dims:
+                              for gf in group_fields:
+                                  if gf not in allowed_dims:
+                                      errors.append(f"字段 {gf} 不在 metric {mname}.allowed_dimensions 中。")
+                  elif _stage_is_aggregate(stage) and _str(stage.get("metric_field")):
+                      mf = _canonical_field(_str(stage.get("metric_field")), schema, coll, "metric_field", errors, warnings, autofixes, "")
+                      stage["metric_field"] = mf
+
+                  filters = []
+                  for f in _list(stage.get("filters")):
+                      if not isinstance(f, dict):
+                          errors.append("filter 不是对象，已拒绝。")
+                          continue
+                      nf = copy.deepcopy(f)
+                      fname = _canonical_field(_str(nf.get("field")), schema, coll, "filters", errors, warnings, autofixes, "filterable")
+                      nf["field"] = fname
+                      field = _field(schema, coll, fname)
+                      op = _str(nf.get("operator") or nf.get("op") or "eq")
+                      if op not in ALLOWED_OPERATORS:
+                          errors.append(f"filter operator={op} 不在允许范围。")
+                      nf["operator"] = op
+                      if _is_sensitive(field) and not bool((rules.get("allow_sensitive_filter") or rules.get("allow_pii_filter"))):
+                          errors.append(f"敏感/PII 字段 {fname} 默认不允许 filter。")
+                      if "value" in nf:
+                          new_value, changed = _value_alias(nf.get("value"), field)
+                          if changed:
+                              autofixes.append({"type": "value_alias_canonicalize", "field": fname, "from": nf.get("value"), "to": new_value})
+                              nf["value"] = new_value
+                          allowed_values = [_str(x) for x in _list(field.get("allowed_values"))]
+                          vals = _list(nf.get("value")) if op in {"in", "nin"} else [nf.get("value")]
+                          if allowed_values:
+                              for val in vals:
+                                  if _str(val) not in allowed_values:
+                                      errors.append(f"字段 {fname} 的枚举值 {val} 不在 allowed_values 中。")
+                      filters.append(nf)
+                  stage["filters"] = filters
+
+                  projections = []
+                  for pf in _list(stage.get("projection_fields")):
+                      pf_str = _str(pf)
+                      if pf_str in derived_fields:
+                          projections.append(pf_str)
+                          autofixes.append({"type": "derived_metric_alias_allow", "field": pf_str, "place": "projection_fields"})
+                      else:
+                          projections.append(_canonical_field(pf_str, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                  stage["projection_fields"] = projections
+
+                  tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
+                  if _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
+                      return _finalize(_result("requires_clarification", plan, ["聚合查询按 query_rules 要求必须提供 time_range。"], clarification="我需要确认一下：这个聚合查询要统计哪个时间范围？", debug=debug))
+                  if tr:
+                      tf = _str(tr.get("field"))
+                      if not tf and _str(coll_meta.get("default_time_field")):
+                          tr["field"] = _str(coll_meta.get("default_time_field")); autofixes.append({"type": "time_range_field_fill", "value": tr["field"], "collection": coll})
+                      elif tf:
+                          tr["field"] = _canonical_field(tf, schema, coll, "time_range", errors, warnings, autofixes, "")
+                      if _str(tr.get("field")):
+                          fld = _field(schema, coll, _str(tr.get("field")))
+                          if _str(fld.get("semantic_type") or fld.get("role") or fld.get("type")).lower() not in {"time", "date", "datetime", "timestamp"}:
+                              warnings.append(f"time_range.field={tr.get('field')} 未显式标记为时间字段。")
+                      try:
+                          rd = int(tr.get("relative_days") or 0)
+                      except Exception:
                           rd = 0
                       if _str(tr.get("mode")) == "relative_days" and rd <= 0:
                           errors.append("time_range.relative_days 必须大于 0。")
@@ -547,7 +695,8 @@
               deprecated = _list(cb.get('deprecated_fields'))
               positive = [t for t in target_terms if t not in deprecated]
               base = cb.get('base_primary_collection') or ''
-              must = [base] if cb.get('inherit_previous_collection') and base else []
+              selected_primary_collection = base if cb.get('inherit_previous_collection') and base else str(qref.get('selected_primary_collection') or qref.get('target_collection') or qref.get('collection') or '').strip()
+              must = [selected_primary_collection] if selected_primary_collection else []
               collection_strategy = 'inherit_previous' if must else 'discover_collection'
               schema_strategy = 'hydrate_inherited_collection' if must else 'candidate_discovery'
               structural = any(token in (str(qref) + str(intent) + q).lower() for token in ['full_replan', 'structural', '重新', 'new chart'])
@@ -558,16 +707,21 @@
                   '除非 collection_switch=true，否则必须优先检索 base_primary_collection 对应 mongo_schema。',
                   'collection_strategy：' + collection_strategy,
                   'schema_strategy：' + schema_strategy,
-                  'base_primary_collection 强约束：' + base,
+                  'selected_primary_collection 已确定为：' + selected_primary_collection,
+                  'metadata_type: mongo_schema',
+                  'collection_name: ' + selected_primary_collection,
+                  'primary_collection: ' + selected_primary_collection,
+                  'must_include: ' + selected_primary_collection,
                   'must_include_collections：' + json.dumps(must, ensure_ascii=False),
                   'preferred_collections：' + json.dumps(must, ensure_ascii=False),
                   'target_semantic_terms 正向检索语义：' + ' '.join(positive),
-                  'deprecated_fields 仅作负向/排除说明，不作为正向检索关键词：' + ' '.join(deprecated),
+                  'refine_query 中，否定表达里的旧字段/旧维度/旧指标/旧图表设置只表示 remove/replace，不作为新 primary_collection 的证据：' + ' '.join(deprecated),
+                  '请必须返回 must_include 对应 collection 的完整 mongo_schema 文档；若本轮仅修改条件、时间范围、分组字段、指标或图表要求，不应因被否定旧项切换主集合。',
                   'query_refinement_json：' + json.dumps(qref, ensure_ascii=False),
                   'context_binding_json：' + json.dumps(cb, ensure_ascii=False),
                   '需要 metadata_type: mongo_schema；包含 fields / metrics / relations / query_rules / aliases；用于 collection selection、group by、filters、metrics、relations。',
               ])
-              debug = {'collection_strategy': collection_strategy, 'schema_strategy': schema_strategy, 'base_primary_collection': base, 'target_semantic_terms': positive, 'deprecated_fields': deprecated, 'must_include_collections': must, 'structural_full_replan': structural, 'context_binding': cb}
+              debug = {'collection_strategy': collection_strategy, 'schema_strategy': schema_strategy, 'base_primary_collection': base, 'selected_primary_collection': selected_primary_collection, 'target_semantic_terms': positive, 'deprecated_fields': deprecated, 'must_include_collections': must, 'structural_full_replan': structural, 'context_binding': cb}
               return {
                   'query_text': query,
                   'old_normalized_semantic_plan_json': json.dumps(old_plan, ensure_ascii=False),
@@ -744,157 +898,3 @@
               return _strip_quotes(v)
 
 
-          def _parse_simple_yaml(text):
-              root = {}
-              stack = [(-1, root)]
-              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
-              i = 0
-              while i < len(lines):
-                  raw = lines[i]
-                  if not raw.strip() or raw.lstrip().startswith('#'):
-                      i += 1
-                      continue
-                  indent = len(raw) - len(raw.lstrip(' '))
-                  s = raw.strip()
-                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
-                  if mblock:
-                      key = mblock.group(1)
-                      parts = []
-                      base = None
-                      j = i + 1
-                      while j < len(lines):
-                          nr = lines[j]
-                          if nr.strip():
-                              ni = len(nr) - len(nr.lstrip(' '))
-                              if ni <= indent:
-                                  break
-                              if base is None:
-                                  base = ni
-                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
-                          else:
-                              parts.append('')
-                          j += 1
-                      while stack and indent <= stack[-1][0]:
-                          stack.pop()
-                      parent = stack[-1][1]
-                      if isinstance(parent, dict):
-                          parent[key] = '\n'.join(parts).strip()
-                      i = j
-                      continue
-                  while stack and indent <= stack[-1][0]:
-                      stack.pop()
-                  parent = stack[-1][1]
-                  if s.startswith('- '):
-                      item = s[2:].strip()
-                      if not isinstance(parent, list):
-                          i += 1
-                          continue
-                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
-                          k, v = item.split(':', 1)
-                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
-                          parent.append(obj)
-                          stack.append((indent, obj))
-                          if not v.strip():
-                              stack.append((indent + 2, obj[k.strip()]))
-                      else:
-                          parent.append(_parse_scalar(item))
-                      i += 1
-                      continue
-                  if ':' in s:
-                      k, v = s.split(':', 1)
-                      key = k.strip()
-                      val = v.strip()
-                      if isinstance(parent, dict):
-                          if val:
-                              parent[key] = _parse_scalar(val)
-                              i += 1
-                              continue
-                          j = i + 1
-                          nxt = ''
-                          while j < len(lines):
-                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
-                                  nxt = lines[j].strip()
-                                  break
-                              j += 1
-                          container = [] if nxt.startswith('- ') else {}
-                          parent[key] = container
-                          stack.append((indent, container))
-                  i += 1
-              return root
-
-
-          def _content(doc):
-              if isinstance(doc, dict):
-                  return str(doc.get('content') or doc.get('text') or doc.get('document') or '')
-              return str(doc or '')
-
-
-          def _extract_blocks(text):
-              raw = str(text or '')
-              blocks = []
-              for pat in [
-                  r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```',
-                  r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema").*?)\n```',
-              ]:
-                  blocks.extend(m.group(2 if 'Schema Metadata' in pat else 1) for m in re.finditer(pat, raw, re.I | re.S))
-              if not blocks and re.search(r'metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"', raw, re.I):
-                  blocks.append(raw)
-              return blocks
-
-
-          def _parse_block(block):
-              text = str(block or '').strip()
-              if not text:
-                  return {}
-              if text.startswith('{'):
-                  return json.loads(text)
-              return _parse_simple_yaml(text)
-
-
-          def _as_list(value):
-              if value in (None, ''):
-                  return []
-              if isinstance(value, list):
-                  return [x for x in value if x is not None and str(x).strip()]
-              return [x for x in _split_inline_list(value) if str(x).strip()]
-
-
-          def _str_list(value, limit=0):
-              out, seen = [], set()
-              for item in _as_list(value):
-                  s = str(item or '').strip()
-                  if s and s not in seen:
-                      seen.add(s); out.append(s)
-                      if limit and len(out) >= limit:
-                          break
-              return out
-
-
-          def _named_map(value):
-              result = {}
-              if isinstance(value, dict):
-                  for name, item in value.items():
-                      if isinstance(item, dict):
-                          obj = dict(item); obj.setdefault('name', name); result[str(obj.get('name') or name).strip()] = obj
-              elif isinstance(value, list):
-                  for item in value:
-                      if isinstance(item, dict) and str(item.get('name') or '').strip():
-                          result[str(item.get('name')).strip()] = dict(item)
-              return result
-
-
-          def _normalize_collection(doc):
-              cname = str((doc or {}).get('collection_name') or '').strip()
-              if not cname:
-                  return None
-              fields = _named_map(doc.get('fields'))
-              metrics = _named_map(doc.get('metrics'))
-              relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
-              normalized = dict(doc)
-              normalized.update({
-                  'collection_name': cname,
-                  'collection_label': str(doc.get('collection_label') or cname).strip() or cname,
-                  'collection_aliases': _str_list(doc.get('collection_aliases')),
-                  'fields': fields,
-                  'metrics': metrics,
-                  'relations': [r for r in relations if isinstance(r, dict)],

@@ -1,3 +1,67 @@
+              return stages[0] if stages and isinstance(stages[0], dict) else {}
+
+
+          COMPACT_CONTEXT_TARGET_BYTES = 12000
+          COMPACT_CONTEXT_HARD_BYTES = 60000
+          MAX_PREVIEW_ROWS = 5
+          MAX_PREVIEW_FIELDS = 20
+          MAX_PREVIEW_STRING = 200
+
+
+          def _safe_int_value(value, default=0):
+              try:
+                  return int(value)
+              except Exception:
+                  return default
+
+
+          def _dedupe_values(values, limit=50):
+              out = []
+              for value in values or []:
+                  text = str(value or '').strip()
+                  if text and text not in out:
+                      out.append(text)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
+          def _compact_value(value, max_len=MAX_PREVIEW_STRING):
+              if isinstance(value, str):
+                  return value[:max_len]
+              if isinstance(value, (int, float, bool)) or value is None:
+                  return value
+              try:
+                  return json.dumps(value, ensure_ascii=False, default=str)[:max_len]
+              except Exception:
+                  return str(value)[:max_len]
+
+
+          def _normalize_time_range(value):
+              value = value if isinstance(value, dict) else {}
+              return {
+                  'field': str(value.get('field') or ''),
+                  'mode': str(value.get('mode') or ''),
+                  'relative_days': _safe_int_value(value.get('relative_days'), 0),
+                  'start': str(value.get('start') or ''),
+                  'end': str(value.get('end') or ''),
+              }
+
+
+          def _compact_rows_profile(rows):
+              fields = []
+              numeric_fields = []
+              dimension_fields = []
+              preview_rows = []
+              for row in rows or []:
+                  if not isinstance(row, dict):
+                      continue
+                  for key, value in row.items():
+                      name = str(key)
+                      if name not in fields:
+                          fields.append(name)
+                      if isinstance(value, (int, float)) and not isinstance(value, bool):
+                          if name not in numeric_fields:
                               numeric_fields.append(name)
                       elif isinstance(value, (str, bool)) or value is None:
                           if name not in dimension_fields:
@@ -834,67 +898,3 @@
           operation: over-write
           value:
           - '1775000000022'
-          - answer_payload_json
-          variable_selector:
-          - conversation
-          - last_answer_payload_json
-          write_mode: over-write
-        - input_type: variable
-          operation: over-write
-          value:
-          - '1775000000022'
-          - context_update_json
-          variable_selector:
-          - conversation
-          - last_context_update_json
-          write_mode: over-write
-        selected: false
-        title: 变量赋值_保存多轮上下文
-        type: assigner
-        version: '2'
-        write_mode: over-write
-      height: 270
-      id: '1775000000023'
-      position:
-        x: 16840
-        y: -120
-      positionAbsolute:
-        x: 16840
-        y: -120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        outputs:
-        - value_selector:
-          - '1775000000007'
-          - question
-          value_type: string
-          variable: last_question
-        - value_selector:
-          - '1775000000007'
-          - normalized_execution_plan_json
-          value_type: string
-          variable: last_normalized_execution_plan
-        - value_selector:
-          - '1776000000024'
-          - normalized_semantic_plan_json
-          value_type: string
-          variable: last_normalized_semantic_plan_json
-        - value_selector:
-          - '1775000000007'
-          - last_validated_ast_json
-          value_type: string
-          variable: last_validated_ast
-        - value_selector:
-          - '1775000000022'
-          - context_update_json
-          value_type: string
-          variable: last_pipeline_json
-        - value_selector:
-          - '1775000000007'
-          - query_result_json
-          value_type: string
-          variable: last_merged_rows

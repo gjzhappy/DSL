@@ -1,3 +1,25 @@
+                  candidates = [x for x in candidates if x.get('collection') == cname]
+              if fname:
+                  candidates = [x for x in candidates if x.get('field') == fname]
+              warning = ''
+              if not candidates:
+                  warning = '值别名未在 schema metadata 中声明，未自动归一。'
+              elif len(candidates) > 1:
+                  warning = '值别名存在多个候选，返回 candidates，未自动选择。'
+              return {'input': raw, 'kind': 'value', 'collection': cname, 'field': fname, 'candidates': candidates, 'resolved': candidates[0].get('name') if len(candidates) == 1 else raw, 'warning': warning}
+
+
+          def resolve_field_label(field_name, schema_metadata, collection_name=None):
+              meta, _ = _meta_and_index(schema_metadata)
+              fname = str(field_name or '').strip()
+              cname = str(collection_name or '').strip()
+              if cname and cname in meta.get('collections', {}) and fname in meta['collections'][cname].get('fields', {}):
+                  return meta['collections'][cname]['fields'][fname].get('label') or prettify_field_name(fname)
+              hits = []
+              for cn, c in (meta.get('collections') or {}).items():
+                  if fname in c.get('fields', {}):
+                      hits.append(c['fields'][fname].get('label') or prettify_field_name(fname))
+              return hits[0] if len(hits) == 1 else prettify_field_name(fname)
 
 
           def resolve_metric_label(metric_name, schema_metadata, collection_name=None):
@@ -876,67 +898,3 @@
               else:
                   op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
                   if metric_function not in op_map:
-                      raise ValueError(f'unsupported metric_function: {metric_function}')
-                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
-              group_id = {field: f'${field}' for field in group_fields} if group_fields else None
-              group_stage = {'_id': group_id, metric_alias: agg_expr}
-              pipeline.append({'$group': group_stage})
-              project_stage = {'_id': 0}
-              for field in group_fields:
-                  project_stage[field] = f'$_id.{field}'
-              project_stage[metric_alias] = f'${metric_alias}'
-              pipeline.append({'$project': project_stage})
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
-              if projection_fields:
-                  _append_projection(pipeline, projection_fields)
-              validated_ast = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
-                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_ast, pipeline
-
-
-          def _compile_group_top_entity(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              entity_field = _ensure_non_empty_string(stage.get('entity_field'), f"{stage['stage_name']}.entity_field")
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              rank_n = int(stage.get('rank_n') or 0)
-              if rank_n <= 0:
-                  raise ValueError(f"{stage['stage_name']}.rank_n must be > 0 for group_top_entity")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
-                      raise ValueError(f'unsupported metric_function: {metric_function}')
-                  agg_expr = {op_map[metric_function]: f'${metric_field}'}
-              first_group_id = {field: f'${field}' for field in group_fields}
-              first_group_id['__entity'] = f'${entity_field}'
-              pipeline.append({'$group': {'_id': first_group_id, metric_alias: agg_expr}})
-              sort_before_rank = {f'_id.{field}': 1 for field in group_fields}
-              sort_before_rank[metric_alias] = -1 if str(stage.get('rank_direction') or 'desc').strip() == 'desc' else 1
-              pipeline.append({'$sort': sort_before_rank})

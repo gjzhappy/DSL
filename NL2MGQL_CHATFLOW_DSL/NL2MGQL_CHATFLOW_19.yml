@@ -1,3 +1,197 @@
+          - '1777000000002'
+          - selected_primary_collection
+          value_type: string
+          variable: selected_primary_collection
+        - value_selector:
+          - '1777000000002'
+          - selected_related_collections
+          value_type: array[string]
+          variable: selected_related_collections
+        - value_selector:
+          - '1776000000026'
+          - schema_context
+          value_type: string
+          variable: schema_context
+        - value_selector:
+          - '1776000000026'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1776000000026'
+          - schema_alias_index_json
+          value_type: string
+          variable: schema_alias_index_json
+        - value_selector:
+          - '1776000000026'
+          - schema_context_ref_json
+          value_type: string
+          variable: schema_context_ref_json
+        - value_selector:
+          - '1776000000026'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+      height: 80
+      id: '1777100000105'
+      position:
+        x: 4800
+        "y": 2200
+      positionAbsolute:
+        x: 4800
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: schema_ready
+          conditions:
+          - comparison_operator: is
+            id: selected-schema-ready
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1777100000105'
+            - selected_schema_ready
+          id: schema_ready
+          logical_operator: and
+        - case_id: schema_hydration_needed
+          conditions:
+          - comparison_operator: is not
+            id: selected-schema-not-ready
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1777100000105'
+            - selected_schema_ready
+          - comparison_operator: is
+            id: schema-hydration-needed
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1777100000105'
+            - schema_hydration_needed
+          - comparison_operator: not empty
+            id: schema-hydration-collections
+            value: ''
+            varType: array[string]
+            variable_selector:
+            - '1777100000105'
+            - schema_hydration_collections
+          id: schema_hydration_needed
+          logical_operator: and
+        desc: refine selected schema 三段判断：ready 继续；缺 schema 且可补水则进入 schema hydration；否则 safe stop。
+        selected: false
+        title: 条件分支_SelectedSchema结果判断_Refine
+        type: if-else
+      height: 126
+      id: '1777100000104'
+      position:
+        x: 5160
+        "y": 2200
+      positionAbsolute:
+        x: 5160
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          def _loads(value):
+              if isinstance(value, dict):
+                  return dict(value)
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+          def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = ''):
+              selection = _loads(collection_selection_json)
+              catalog = _loads(collection_catalog_json)
+              warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
+              if not catalog.get('collections'):
+                  text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
+              else:
+                  text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'
+              payload = {
+                  'contract_version': 'answer_payload_contract',
+                  'answer_type': 'clarification',
+                  'answer_text': text,
+                  'chart_echarts_markdown': '',
+                  'result_summary': text,
+                  'message': '',
+                  'chart_payload': {},
+                  'query_result_profile': {'row_count': 0, 'fields': [], 'preview_rows': []},
+                  'state_update': {'should_save_context': False, 'context_summary': {}},
+                  'warnings': warnings,
+              }
+              update = {'contract_version': 'context_update_contract', 'should_save_context': False, 'compact_context': {}, 'last_context_json': '', 'warnings': warnings, 'clear_fields': []}
+              return {
+                  'final_answer_markdown': text,
+                  'answer_payload_markdown': text,
+                  'answer_payload_json': json.dumps(payload, ensure_ascii=False),
+                  'context_update_json': json.dumps(update, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: Collection selector 或 selected schema 不可用时 safe stop，不进入 planner/schema
+          retrieval/validator，也不保存成功上下文。
+        outputs:
+          final_answer_markdown:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_payload_json:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_CollectionSelectionSafeStop_Refine
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1777000000002'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1776000000026'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+      height: 80
+      id: '1777100000102'
+      position:
+        x: 4800
+        "y": 2460
+      positionAbsolute:
+        x: 4800
+        "y": 2460
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: "{{#1777100000102.answer_payload_markdown#}}"
         outputs: []
         selected: false
         title: Answer_CollectionSelectionSafeStop_Refine
@@ -704,197 +898,3 @@
         x: 14820
         y: 760
       positionAbsolute:
-        x: 14820
-        y: 760
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          def _loads(v, default=None):
-              if default is None: default = {}
-              if isinstance(v, (dict, list)): return v
-              if isinstance(v, str) and v.strip():
-                  try: return json.loads(v)
-                  except Exception: return default
-              return default
-          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
-          def _as_ref_list(v):
-              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
-              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
-              return []
-          def _prune_ref_to_parsed(ref, meta, warnings):
-              ref = dict(ref or {})
-              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
-              requested = _as_ref_list(ref.get('collections'))
-              if parsed and requested:
-                  kept = [c for c in requested if c in parsed]
-                  removed = [c for c in requested if c not in parsed]
-                  if removed:
-                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
-                  ref['collections'] = kept
-              return ref
-
-          def main(hydrated_schema_metadata_json='{}', hydrated_schema_alias_index_json='{}', hydrated_schema_digest='', hydrated_schema_version='', hydrated_schema_context_ref_json='{}', hydration_success=False, hydration_warnings_json='[]', hydration_errors_json='[]'):
-              warnings = _loads(hydration_warnings_json, []) or []
-              errors = _loads(hydration_errors_json, []) or []
-              meta = _loads(hydrated_schema_metadata_json, {}) or {}
-              alias = _loads(hydrated_schema_alias_index_json, {}) or {}
-              ref = _loads(hydrated_schema_context_ref_json, {}) or {}
-              ref = _prune_ref_to_parsed(ref, meta, warnings)
-              ready = bool(hydration_success and meta.get('collections') and alias)
-              ctx = {
-                  'contract_version': 'schema_runtime_context_contract',
-                  'schema_context_ready': ready,
-                  'validator_schema_context_ready': ready,
-                  'schema_hydration_needed': False,
-                  'schema_hydration_reason': '',
-                  'schema_hydration_collections': [],
-                  'schema_metadata_json': _dumps(meta) if ready else '{}',
-                  'schema_alias_index_json': _dumps(alias) if ready else '{}',
-                  'schema_digest': str(hydrated_schema_digest or ref.get('schema_digest') or ''),
-                  'schema_version': str(hydrated_schema_version or ref.get('schema_version') or ''),
-                  'catalog_digest': str(ref.get('catalog_digest') or ''),
-                  'schema_source': 'hydrated_runtime' if ready else 'hydration_failed',
-                  'schema_context_ref': ref,
-                  'warnings': warnings,
-                  'errors': errors,
-              }
-              ctx['schema_runtime_context_json'] = _dumps(ctx)
-              return ctx
-        code_language: python3
-        desc: Phase 10：把 hydrated metadata/alias 注入 validator runtime context；仅运行时使用，不写入
-          compact context。
-        outputs:
-          contract_version:
-            children:
-            type: string
-          schema_context_ready:
-            children:
-            type: boolean
-          validator_schema_context_ready:
-            children:
-            type: boolean
-          schema_hydration_needed:
-            children:
-            type: boolean
-          schema_hydration_reason:
-            children:
-            type: string
-          schema_hydration_collections:
-            children:
-            type: array[string]
-          schema_metadata_json:
-            children:
-            type: string
-          schema_alias_index_json:
-            children:
-            type: string
-          schema_digest:
-            children:
-            type: string
-          schema_version:
-            children:
-            type: string
-          catalog_digest:
-            children:
-            type: string
-          schema_source:
-            children:
-            type: string
-          schema_context_ref:
-            children:
-            type: object
-          warnings:
-            children:
-            type: array[string]
-          errors:
-            children:
-            type: array[string]
-          schema_runtime_context_json:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_准备HydratedValidator运行时Schema上下文
-        type: code
-        variables:
-        - value_selector:
-          - '1780000000007'
-          - hydrated_schema_metadata_json
-          value_type: string
-          variable: hydrated_schema_metadata_json
-        - value_selector:
-          - '1780000000007'
-          - hydrated_schema_alias_index_json
-          value_type: string
-          variable: hydrated_schema_alias_index_json
-        - value_selector:
-          - '1780000000007'
-          - hydrated_schema_digest
-          value_type: string
-          variable: hydrated_schema_digest
-        - value_selector:
-          - '1780000000007'
-          - hydrated_schema_version
-          value_type: string
-          variable: hydrated_schema_version
-        - value_selector:
-          - '1780000000007'
-          - hydrated_schema_context_ref_json
-          value_type: string
-          variable: hydrated_schema_context_ref_json
-        - value_selector:
-          - '1780000000007'
-          - hydration_success
-          value_type: boolean
-          variable: hydration_success
-        - value_selector:
-          - '1780000000007'
-          - hydration_warnings_json
-          value_type: string
-          variable: hydration_warnings_json
-        - value_selector:
-          - '1780000000007'
-          - hydration_errors_json
-          value_type: string
-          variable: hydration_errors_json
-      height: 80
-      id: '1780000000008'
-      position:
-        x: 15280
-        y: 760
-      positionAbsolute:
-        x: 15280
-        y: 760
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          def _loads(v, default=None):
-              if default is None: default = {}
-              if isinstance(v, (dict, list)): return v
-              if isinstance(v, str) and v.strip():
-                  try: return json.loads(v)
-                  except Exception: return default
-              return default
-          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
-          def _as_ref_list(v):
-              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
-              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
-              return []
-          def _prune_ref_to_parsed(ref, meta, warnings):
-              ref = dict(ref or {})
-              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
-              requested = _as_ref_list(ref.get('collections'))
-              if parsed and requested:
-                  kept = [c for c in requested if c in parsed]
-                  removed = [c for c in requested if c not in parsed]
-                  if removed:
-                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
