@@ -726,31 +726,101 @@
           def _dumps(v):
               return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
 
-          def _as_list(v):
-              if v is None or v == '': return []
-              return v if isinstance(v, list) else [v]
 
-          def _extract_json_objects(text):
-              out = []
-              raw = str(text or '')
-              blocks = re.findall(r'```(?:json|yaml|yml)?\s*\n(.*?)\n```', raw, flags=re.I|re.S)
-              candidates = blocks + [raw]
-              for c in candidates:
-                  s = c.strip()
-                  if not s: continue
-                  if s.startswith('{'):
+          def _looks_like_schema_doc(obj):
+              if not isinstance(obj, dict): return False
+              if str(obj.get('metadata_type') or '').strip() == 'mongo_schema': return True
+              if obj.get('collection_name') and ('fields' in obj or 'metrics' in obj or 'relations' in obj or 'query_rules' in obj or 'default_time_field' in obj): return True
+              if 'collections' in obj: return True
+              return False
+
+          def _parse_simple_yaml_schema(body):
+              obj, current_key, current_item = {}, None, None
+              for raw_line in str(body or '').splitlines():
+                  if not raw_line.strip() or raw_line.lstrip().startswith('#'): continue
+                  indent = len(raw_line) - len(raw_line.lstrip(' ')); line = raw_line.strip()
+                  if indent == 0 and ':' in line:
+                      key, val = line.split(':', 1); key = key.strip(); val = val.strip().strip('"\'')
+                      current_key, current_item = key, None; obj[key] = val if val else [] if key in ('fields', 'metrics', 'relations') else {}
+                  elif current_key and isinstance(obj.get(current_key), list) and line.startswith('- '):
+                      rest = line[2:].strip()
+                      current_item = dict([tuple(x.strip() for x in rest.split(':', 1))]) if ':' in rest else {'name': rest.strip('"\'')}
+                      for k, v in list(current_item.items()): current_item[k] = str(v or '').strip().strip('"\'')
+                      obj[current_key].append(current_item)
+                  elif current_key and isinstance(obj.get(current_key), list) and current_item is not None and ':' in line:
+                      key, val = line.split(':', 1); current_item[key.strip()] = val.strip().strip('"\'') if val.strip() else []
+                  elif current_key and isinstance(obj.get(current_key), list) and current_item is not None and line.startswith('- '):
+                      for k in ('aliases', 'value_aliases'):
+                          if isinstance(current_item.get(k), list): current_item[k].append(line[2:].strip().strip('"\'')); break
+              return obj
+
+          def _extract_schema_objects(text, warnings=None):
+              out = []; raw = str(text or '')
+              fence_re = re.compile(r'```(?P<lang>json|yaml|yml)?\s*\n(?P<body>.*?)\n```', flags=re.I|re.S)
+              for m in fence_re.finditer(raw):
+                  lang = (m.group('lang') or '').lower(); body = (m.group('body') or '').strip(); obj = None
+                  if lang == 'json' or body.startswith('{'):
+                      try: obj = json.loads(body)
+                      except Exception as e:
+                          if warnings is not None: warnings.append({'type': 'hydration_json_parse_failed', 'error': str(e)})
+                  elif lang in ('yaml', 'yml'):
                       try:
-                          out.append(json.loads(s)); continue
-                      except Exception:
-                          pass
-                  m = re.search(r'(\{.*"collections"\s*:\s*\{.*\})', s, flags=re.S)
-                  if m:
-                      try: out.append(json.loads(m.group(1)))
-                      except Exception: pass
+                          import yaml
+                          obj = yaml.safe_load(body)
+                      except Exception as e:
+                          obj = _parse_simple_yaml_schema(body)
+                          if not _looks_like_schema_doc(obj) and warnings is not None: warnings.append({'type': 'hydration_yaml_parse_failed', 'error': str(e)})
+                  if _looks_like_schema_doc(obj): out.append(obj)
+                  elif obj is not None and warnings is not None: warnings.append({'type': 'hydration_non_schema_block_skipped'})
+              s = raw.strip()
+              if s.startswith('{'):
+                  try:
+                      obj = json.loads(s)
+                      if _looks_like_schema_doc(obj): out.append(obj)
+                      elif warnings is not None: warnings.append({'type': 'hydration_non_schema_json_skipped', 'reason': 'json_object_does_not_look_like_schema_metadata'})
+                  except Exception as e:
+                      if warnings is not None: warnings.append({'type': 'hydration_json_parse_failed', 'error': str(e)})
               return out
 
+          def _first_non_empty(*vals):
+              for v in vals:
+                  s = str(v or '').strip()
+                  if s: return s
+              return ''
+
+          def _iter_named_items(container, name_keys):
+              if not container: return
+              if isinstance(container, dict):
+                  for key, val in container.items():
+                      if isinstance(val, dict): name = _first_non_empty(*(val.get(k) for k in name_keys), key); item = val
+                      else: name = str(key or '').strip(); item = {'name': name, 'label': str(val or '').strip()}
+                      if name: yield name, item
+                  return
+              if isinstance(container, list):
+                  for item in container:
+                      if isinstance(item, dict):
+                          name = _first_non_empty(*(item.get(k) for k in name_keys))
+                          if name: yield name, item
+
+          def _iter_alias_entries(container):
+              if not container: return
+              if isinstance(container, dict):
+                  for key, val in container.items():
+                      alias = str(key or '').strip()
+                      if not alias: continue
+                      yield alias, _first_non_empty(*([val.get(k) for k in ('value','name','canonical','field','label')] if isinstance(val, dict) else [val]), alias), val if isinstance(val, dict) else {}
+                  return
+              if isinstance(container, list):
+                  for item in container:
+                      if isinstance(item, dict): alias = _first_non_empty(item.get('alias'), item.get('name'), item.get('label'), item.get('value')); value = _first_non_empty(item.get('value'), item.get('canonical'), item.get('name'), item.get('label'), alias)
+                      else: alias = str(item or '').strip(); value = alias
+                      if alias: yield alias, value, item if isinstance(item, dict) else {}
+                  return
+              alias = str(container or '').strip()
+              if alias: yield alias, alias, {}
+
           def _normalize_collection(cname, coll):
-              coll = dict(coll or {})
+              coll = dict(coll or {}) if isinstance(coll, dict) else {}
               coll.setdefault('collection_name', cname)
               coll.setdefault('fields', {})
               coll.setdefault('metrics', {})
@@ -769,27 +839,28 @@
 
           def _build_alias(meta):
               aliases, ca, fa, ma, va = {}, {}, {}, {}, {}
-              for cname, coll in (meta.get('collections') or {}).items():
+              for cname, coll in _iter_named_items((meta.get('collections') or {}), ['collection_name', 'name']):
+                  coll = coll if isinstance(coll, dict) else {}
                   _add_alias(aliases, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
                   _add_alias(ca, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
                   _add_alias(aliases, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
                   _add_alias(ca, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
-                  for a in _as_list(coll.get('collection_aliases')):
+                  for a, _, _ in _iter_alias_entries(coll.get('collection_aliases') or coll.get('aliases')):
                       _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
                       _add_alias(ca, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
-                  for fname, f in (coll.get('fields') or {}).items():
-                      f = f or {}
+                  for fname, f in _iter_named_items(coll.get('fields') or {}, ['name', 'field_name']):
+                      f = f if isinstance(f, dict) else {}
                       for a, src in ((fname, 'field.name'), (f.get('label'), 'field.label')):
                           _add_alias(aliases, a, cname, 'field', fname, f.get('label'), src); _add_alias(fa, a, cname, 'field', fname, f.get('label'), src)
-                      for a in _as_list(f.get('aliases')):
+                      for a, _, _ in _iter_alias_entries(f.get('aliases')):
                           _add_alias(aliases, a, cname, 'field', fname, f.get('label'), 'field.aliases'); _add_alias(fa, a, cname, 'field', fname, f.get('label'), 'field.aliases')
-                      for va0, cv in (f.get('value_aliases') or {}).items():
+                      for va0, cv, _ in _iter_alias_entries(f.get('value_aliases')):
                           _add_alias(aliases, va0, cname, 'value', cv, va0, 'field.value_aliases', field=fname); _add_alias(va, va0, cname, 'value', cv, va0, 'field.value_aliases', field=fname)
-                  for mname, m in (coll.get('metrics') or {}).items():
-                      m = m or {}
+                  for mname, m in _iter_named_items(coll.get('metrics') or {}, ['name', 'metric_name']):
+                      m = m if isinstance(m, dict) else {}
                       for a, src in ((mname, 'metric.name'), (m.get('label'), 'metric.label')):
                           _add_alias(aliases, a, cname, 'metric', mname, m.get('label'), src); _add_alias(ma, a, cname, 'metric', mname, m.get('label'), src)
-                      for a in _as_list(m.get('aliases')):
+                      for a, _, _ in _iter_alias_entries(m.get('aliases')):
                           _add_alias(aliases, a, cname, 'metric', mname, m.get('label'), 'metric.aliases'); _add_alias(ma, a, cname, 'metric', mname, m.get('label'), 'metric.aliases')
               return {'contract_version': 'schema_alias_index_contract', 'aliases': aliases, 'collection_aliases': ca, 'field_aliases': fa, 'metric_aliases': ma, 'value_aliases': va, 'warnings': []}
 
@@ -819,20 +890,32 @@
               warnings = _loads(hydration_warnings_json, []) or []
               errors = []
               collections = {}
+              wanted = [str(c or '').strip() for c in (hydration_collections or []) if str(c or '').strip()]
+              wanted_set = set(wanted)
+
+              def _add_collection(cname, coll):
+                  cname = str(cname or '').strip()
+                  if not cname:
+                      return
+                  if wanted_set and cname not in wanted_set:
+                      warnings.append({'type': 'hydrated_schema_collection_mismatch', 'expected': wanted, 'actual': cname, 'action': 'discarded'})
+                      return
+                  collections[cname] = _normalize_collection(cname, coll)
+
               for raw in hydrated_schema_results or []:
                   item = _loads(raw, {}) or {}
                   cname_hint = str(item.get('collection_name') or '').strip()
                   text = str(item.get('context_text') or '')
-                  for obj in _extract_json_objects(text):
-                      if isinstance(obj, dict) and isinstance(obj.get('collections'), dict):
-                          for cname, coll in obj.get('collections', {}).items():
-                              collections[str(cname).strip()] = _normalize_collection(str(cname).strip(), coll)
-                      elif isinstance(obj, dict) and (obj.get('collection_name') or cname_hint):
+                  for obj in _extract_schema_objects(text, warnings):
+                      if isinstance(obj, dict) and 'collections' in obj:
+                          for cname, coll in _iter_named_items(obj.get('collections'), ['collection_name', 'name']):
+                              _add_collection(cname, coll)
+                      elif isinstance(obj, dict) and _looks_like_schema_doc(obj):
                           cname = str(obj.get('collection_name') or cname_hint).strip()
-                          collections[cname] = _normalize_collection(cname, obj)
-              wanted = [str(c or '').strip() for c in (hydration_collections or []) if str(c or '').strip()]
-              if wanted:
-                  collections = {c: collections[c] for c in wanted if c in collections}
+                          if cname:
+                              _add_collection(cname, obj)
+                      else:
+                          warnings.append({'type': 'hydration_non_schema_json_skipped', 'reason': 'json_object_does_not_look_like_schema_metadata'})
               if not collections:
                   errors.append('hydrated_schema_metadata_empty')
               meta = {'contract_version': 'schema_metadata_contract', 'schema_version': '', 'schema_digest': '', 'collections': collections, 'warnings': warnings, 'parse_errors': errors}
