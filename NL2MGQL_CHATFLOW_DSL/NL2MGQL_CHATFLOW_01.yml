@@ -680,12 +680,16 @@
       width: 242
     - data:
         dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        - 5922ed30-d8cf-4164-9658-7e4f7fb80514
         metadata_filtering_conditions:
-          conditions: []
+          conditions:
+          - comparison_operator: is
+            id: candidate-schemas-metadata-type-filter
+            metadata_id: metadata_type
+            name: metadata_type
+            value: mongo_schema
           logical_operator: and
-        metadata_filtering_mode: disabled
+        metadata_filtering_mode: manual
         multiple_retrieval_config:
           reranking_enable: false
           reranking_mode: weighted_score

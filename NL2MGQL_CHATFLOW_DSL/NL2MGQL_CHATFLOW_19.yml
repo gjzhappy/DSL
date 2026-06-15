@@ -211,12 +211,16 @@
       width: 242
     - data:
         dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        - 5922ed30-d8cf-4164-9658-7e4f7fb80514
         metadata_filtering_conditions:
-          conditions: []
+          conditions:
+          - comparison_operator: is
+            id: candidate-schemas-refine-metadata-type-filter
+            metadata_id: metadata_type
+            name: metadata_type
+            value: mongo_schema
           logical_operator: and
-        metadata_filtering_mode: disabled
+        metadata_filtering_mode: manual
         multiple_retrieval_config:
           reranking_enable: false
           reranking_mode: weighted_score
@@ -600,12 +604,16 @@
       zIndex: 1001
     - data:
         dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
+        - 5922ed30-d8cf-4164-9658-7e4f7fb80514
         isInIteration: true
         iteration_id: '1780000000003'
         metadata_filtering_conditions:
           conditions:
+          - comparison_operator: is
+            id: phase10-hydration-metadata-type-filter
+            metadata_id: metadata_type
+            name: metadata_type
+            value: mongo_schema
           - comparison_operator: is
             id: phase10-hydration-collection-filter
             metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
@@ -990,10 +998,3 @@
           - '1780000000002'
           - hydration_warnings_json
           value_type: string
-          variable: hydration_warnings_json
-      height: 80
-      id: '1780000000007'
-      position:
-        x: 14820
-        y: 760
-      positionAbsolute:
