@@ -1,604 +1,244 @@
+                items:
+                  type: string
+        structured_output_enabled: true
+        title: LLM_本地兜底查询规划
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1776200000005'
+      position:
+        x: 7490
+        "y": -660
+      positionAbsolute:
+        x: 7490
+        "y": -660
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(s):
+              if isinstance(s, dict): return s
+              if not s: return {}
+              try: return json.loads(str(s))
+              except Exception: return {}
+          def main(full_success=False, full_content='', local_text='', local_structured=None, fallback_text='', fallback_structured=None) -> dict:
+              if full_success and str(full_content or '').strip():
+                  text=str(full_content).strip(); return {'text':text,'structured_output':_loads(text),'llm_source':'full_llm'}
+              if str(fallback_text or '').strip() or fallback_structured:
+                  return {'text':str(fallback_text or ''),'structured_output': fallback_structured or _loads(fallback_text),'llm_source':'local_fallback'}
+              return {'text':str(local_text or ''),'structured_output': local_structured or _loads(local_text),'llm_source':'local_direct'}
+        code_language: python3
+        desc: 统一满血/本地兜底/直接本地输出，保持 text 和 structured_output 变量名。
+        outputs:
+          text:
+            type: string
+          structured_output:
+            type: object
+          llm_source:
+            type: string
+        selected: false
+        title: 代码执行_统一LLM输出_查询规划
+        type: code
+        variables:
+        - value_selector:
+          - '1776200000003'
+          - success
+          value_type: boolean
+          variable: full_success
+        - value_selector:
+          - '1776200000003'
+          - content
+          value_type: string
+          variable: full_content
+        - value_selector:
+          - '1773975766025'
+          - text
+          value_type: string
+          variable: local_text
+        - value_selector:
+          - '1773975766025'
+          - structured_output
+          value_type: object
+          variable: local_structured
+        - value_selector:
+          - '1776200000005'
+          - text
+          value_type: string
+          variable: fallback_text
+        - value_selector:
+          - '1776200000005'
+          - structured_output
+          value_type: object
+          variable: fallback_structured
+      height: 139
+      id: '1776200000006'
+      position:
+        x: 7950
+        "y": -620
+      positionAbsolute:
+        x: 7950
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: f87c7b90-dbae-4140-89f7-82255e72676d
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776100000000'
+            - effective_use_full_llm_semantic_plan_fallback
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_是否使用满血LLM_本地兜底生成语义计划
+        type: if-else
+      height: 148
+      id: '1776200000011'
+      position:
+        x: 8560
+        "y": -320
+      positionAbsolute:
+        x: 8560
+        "y": -320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: 1776200000012-body
+            key: ''
+            type: text
+            value: |-
+              {
+                "model": "{{#env.FULL_LLM_MODEL#}}",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "{{#1775000000005.semantic_plan_system_prompt#}}\n\n{{#1775000000005.semantic_plan_user_prompt#}}"
+                  }
+                ],
+                "temperature": 0.1,
+                "stream": false
+              }
+          type: json
+        desc: OpenAI-compatible 满血LLM请求；失败由检查节点转本地兜底。
+        headers: Content-Type:application/json\nAuthorization:Bearer {{#env.FULL_LLM_API_KEY#}}
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 1
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_调用满血LLM_本地兜底生成语义计划
+        type: http-request
+        url: "{{#env.FULL_LLM_API_BASE#}}"
+        variables: []
+      height: 123
+      id: '1776200000012'
+      position:
+        x: 9020
+        "y": -580
+      positionAbsolute:
+        x: 9020
+        "y": -580
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     - data:
         code: |
           import json, re
           def _strip(s):
-              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,flags=re.S|re.I)
+              s='' if s is None else str(s).strip()
+              m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
               return m.group(1).strip() if m else s
-          def _loads(v):
-              if isinstance(v,dict): return v
-              if isinstance(v,str) and v.strip():
-                  try:
-                      x=json.loads(_strip(v)); return x if isinstance(x,dict) else {}
-                  except Exception: return {}
-              return {}
-          BIG_FIELD_KEYS = {
-              'schema_context','schema_metadata','schema_alias_index','collection_catalog','collection_selection',
-              'raw_llm_response','full_prompt','mongo_pipeline','pipeline','pipeline_json','rows','merged_rows',
-              'query_response_body','query_response_headers','stage_execution_trace','chart_option','echarts_option',
-              'echarts_markdown','debug'
-          }
-
-          def _deepcopy_json(value):
+          def main(status_code=0, body='', error='') -> dict:
               try:
-                  return json.loads(json.dumps(value, ensure_ascii=False))
-              except Exception:
-                  return value if isinstance(value, dict) else {}
-
-          def _as_list(value):
-              return value if isinstance(value, list) else []
-
-          def _as_dict(value):
-              return value if isinstance(value, dict) else {}
-
-          def _clean_for_contract(value, warnings, path=''):
-              if isinstance(value, dict):
-                  cleaned = {}
-                  for k, v in value.items():
-                      key = str(k)
-                      child_path = (path + '.' + key).strip('.')
-                      if key in BIG_FIELD_KEYS or key.startswith('debug_'):
-                          warnings.append('removed_large_field:' + child_path)
-                          continue
-                      cleaned[key] = _clean_for_contract(v, warnings, child_path)
-                  return cleaned
-              if isinstance(value, list):
-                  return [_clean_for_contract(v, warnings, path + '[]') for v in value]
-              return value
-
-          def _pick_collection(plan):
-              planner = plan.get('planner') if isinstance(plan.get('planner'), dict) else {}
-              selection = plan.get('collection_selection') if isinstance(plan.get('collection_selection'), dict) else {}
-              return str(plan.get('primary_collection') or plan.get('collection') or planner.get('primary_collection') or selection.get('selected_primary_collection') or '').strip()
-
-          def _default_chart_request(chart=None):
-              chart = chart if isinstance(chart, dict) else {}
-              return {
-                  'enabled': bool(chart.get('enabled')),
-                  'chart_type': str(chart.get('chart_type') or chart.get('type') or '').strip(),
-                  'x_field': str(chart.get('x_field') or chart.get('x_axis') or '').strip(),
-                  'y_field': str(chart.get('y_field') or chart.get('y_axis') or '').strip(),
-                  'series_name': str(chart.get('series_name') or '').strip(),
-                  'title': str(chart.get('title') or '').strip(),
-              }
-
-          def _metric_from_metrics(stage):
-              metrics = stage.get('metrics') if isinstance(stage, dict) else None
-              first = metrics[0] if isinstance(metrics, list) and metrics and isinstance(metrics[0], dict) else {}
-              return {
-                  'metric_alias': first.get('metric_alias') or first.get('alias') or first.get('name') or first.get('output_field') or '',
-                  'metric_function': first.get('metric_function') or first.get('function') or '',
-                  'metric_field': first.get('metric_field') or first.get('field') or first.get('source_field') or '',
-              }
-
-          def _normalize_time_range(value):
-              tr = value if isinstance(value, dict) else {}
-              try:
-                  relative_days = int(tr.get('relative_days') or 0)
-              except Exception:
-                  relative_days = 0
-              return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
-
-          def _normalize_stage(raw_stage, idx, primary_collection):
-              stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
-              metric = _metric_from_metrics(stage)
-              collection = str(stage.get('collection') or stage.get('primary_collection') or primary_collection or '').strip()
-              stage.setdefault('stage_name', stage.get('stage_id') or 'stage' + str(idx + 1))
-              stage.setdefault('stage_type', 'primary_query')
-              stage['collection'] = collection
-              stage.setdefault('intent_type', '')
-              stage['time_range'] = _normalize_time_range(stage.get('time_range'))
-              stage['filters'] = _as_list(stage.get('filters'))
-              stage['group_fields'] = _as_list(stage.get('group_fields'))
-              stage['metric_function'] = str(stage.get('metric_function') or metric.get('metric_function') or '').strip()
-              stage['metric_field'] = str(stage.get('metric_field') or metric.get('metric_field') or '').strip()
-              stage['metric_alias'] = str(stage.get('metric_alias') or metric.get('metric_alias') or '').strip()
-              stage['sort'] = _as_list(stage.get('sort'))
-              try:
-                  stage['limit'] = int(stage.get('limit') or 0)
-              except Exception:
-                  stage['limit'] = 0
-              stage['projection_fields'] = _as_list(stage.get('projection_fields'))
-              return stage
-
-          def semantic_plan_normalizer(raw_plan, source='unknown'):
-              warnings = []
-              try:
-                  if not isinstance(raw_plan, dict) or not raw_plan:
-                      return {}, False, 'empty', '', warnings, source or 'unknown'
-                  plan = _deepcopy_json(raw_plan)
-                  for wrapper_key in ('semantic_plan_contract','semantic_plan','normalized_semantic_plan','guarded_semantic_plan','replanned_semantic_plan'):
-                      wrapped = plan.get(wrapper_key)
-                      if isinstance(wrapped, dict):
-                          plan = _deepcopy_json(wrapped)
-                          break
-                  plan = _clean_for_contract(plan, warnings)
-                  execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
-                  if isinstance(execution_plan.get('stages'), list):
-                      plan['stages'] = execution_plan.get('stages')
-                      if isinstance(execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
-                          plan['final_merge'] = execution_plan.get('final_merge')
-                      if execution_plan.get('execution_mode') and not plan.get('execution_mode'):
-                          plan['execution_mode'] = execution_plan.get('execution_mode')
-                  if not isinstance(plan.get('chart_request'), dict) and isinstance(plan.get('visualization'), dict):
-                      plan['chart_request'] = plan.get('visualization')
-                  if not isinstance(plan.get('chart_request'), dict):
-                      top_chart = {k: plan.get(k) for k in ('enabled','chart_type','x_field','y_field','series_name','title') if k in plan}
-                      plan['chart_request'] = top_chart if top_chart else {}
-                  primary_collection = _pick_collection(plan)
-                  raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
-                  if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
-                      primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
-                  stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
-                  if not primary_collection and stages:
-                      primary_collection = str(stages[0].get('collection') or '').strip()
-                  chart_request = _default_chart_request(plan.get('chart_request'))
-                  needs_chart = bool(plan.get('needs_chart')) or bool(chart_request.get('enabled'))
-                  chart_request['enabled'] = bool(chart_request.get('enabled')) or needs_chart
-                  final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
-                  final_merge.setdefault('merge_mode', 'none')
-                  normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
-                  contract = {
-                      'contract_version': 'semantic_plan_contract',
-                      'primary_collection': primary_collection,
-                      'related_collections': _as_list(plan.get('related_collections')),
-                      'execution_mode': str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage',
-                      'answer_mode': str(plan.get('answer_mode') or 'data').strip() or 'data',
-                      'needs_chart': bool(needs_chart),
-                      'stages': stages,
-                      'final_merge': final_merge,
-                      'chart_request': chart_request,
-                      'requires_clarification': bool(plan.get('requires_clarification')),
-                      'clarification_question': str(plan.get('clarification_question') or '').strip(),
-                      'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
-                      'warnings': _as_list(plan.get('warnings')),
-                      'normalizer_warnings': normalizer_warnings,
-                  }
-                  route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
-                  return contract, True, route, '', normalizer_warnings, source or 'unknown'
+                  status=int(status_code or 0)
+                  if status != 200:
+                      return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':{}}
+                  if not body:
+                      return {'success':False,'content':'','error':'empty body','raw_response':{}}
+                  raw=json.loads(body) if isinstance(body,str) else (body or {})
+                  content=''
+                  if isinstance(raw,dict):
+                      ch=raw.get('choices') or []
+                      if ch and isinstance(ch[0],dict):
+                          msg=ch[0].get('message') or {}
+                          content=msg.get('content') if isinstance(msg,dict) else ''
+                          content=content or ch[0].get('text') or ''
+                      content=content or raw.get('content') or raw.get('text') or ''
+                  content=_strip(content)
+                  if not content:
+                      return {'success':False,'content':'','error':'empty content','raw_response':raw if isinstance(raw,dict) else {}}
+                  json.loads(_strip(content))
+                  return {'success':True,'content':content,'error':'','raw_response':raw if isinstance(raw,dict) else {}}
               except Exception as e:
-                  return {}, False, 'system_error', str(e), warnings, source or 'unknown'
-
-          def main(structured_output=None, text: str=''):
-              raw=structured_output if isinstance(structured_output,dict) and structured_output else _loads(text)
-              plan, valid, route, err, warnings, source = semantic_plan_normalizer(raw, 'refine')
-              if not raw:
-                  valid=False; route='empty'; err=err or '缺少可解析的重规划 semantic plan'
-              if isinstance(raw, dict) and raw.get('replan_error'):
-                  valid=False; route='invalid'; err=str(raw.get('replan_error') or err)
-              stages=(plan.get('stages') or []) if isinstance(plan,dict) else []
-              missing=[] if stages else ['stages']
-              if not stages and valid:
-                  valid=False; route='invalid'; err='缺失字段: stages'
-              js=json.dumps(plan,ensure_ascii=False) if valid else '{}'
-              return {
-                  'replanned_semantic_plan_json': js,
-                  'replanned_normalized_semantic_plan_json': js if valid else '',
-                  'semantic_plan_json': js,
-                  'normalized_semantic_plan_json': js if valid else '',
-                  'semantic_plan_contract_json': js,
-                  'normalizer_valid': bool(valid),
-                  'normalizer_route': route,
-                  'normalizer_error': err or '',
-                  'normalizer_warnings_json': json.dumps(warnings or [],ensure_ascii=False),
-                  'semantic_plan_source': source,
-                  'replan_valid': bool(valid),
-                  'replan_error': err or '',
-                  'replan_warning': ';'.join(warnings or []),
-                  'replan_debug_json': json.dumps({'used_structured_output':isinstance(structured_output,dict) and bool(structured_output),'missing':missing,'normalizer_route':route},ensure_ascii=False)
-              }
+                  return {'success':False,'content':'','error':str(e),'raw_response':{}}
         code_language: python3
-        desc: 提取 LLM structured output，fallback text，剥离代码块并规范化重规划 semantic plan。
+        desc: 检查满血LLM HTTP响应，任何异常均返回 success=false。
         outputs:
-          replanned_semantic_plan_json:
-            children:
-            type: string
-          replanned_normalized_semantic_plan_json:
-            children:
-            type: string
-          semantic_plan_json:
-            children:
-            type: string
-          normalized_semantic_plan_json:
-            children:
-            type: string
-          semantic_plan_contract_json:
-            children:
-            type: string
-          normalizer_valid:
-            children:
+          success:
             type: boolean
-          normalizer_route:
-            children:
+          content:
             type: string
-          normalizer_error:
-            children:
+          error:
             type: string
-          normalizer_warnings_json:
-            children:
-            type: string
-          semantic_plan_source:
-            children:
-            type: string
-          replan_valid:
-            children:
-            type: boolean
-          replan_error:
-            children:
-            type: string
-          replan_warning:
-            children:
-            type: string
-          replan_debug_json:
-            children:
-            type: string
+          raw_response:
+            type: object
         selected: false
-        title: 代码执行_提取并规范化重规划语义计划结果
+        title: 代码执行_检查满血LLM响应_本地兜底生成语义计划
         type: code
         variables:
         - value_selector:
-          - '1776000000020'
-          - structured_output
-          value_type: object
-          variable: structured_output
+          - '1776200000012'
+          - status_code
+          value_type: number
+          variable: status_code
         - value_selector:
-          - '1776000000020'
-          - text
+          - '1776200000012'
+          - body
           value_type: string
-          variable: text
-      height: 80
-      id: '1776000000028'
+          variable: body
+        - value_selector:
+          - '1776200000012'
+          - error
+          value_type: string
+          variable: error
+      height: 139
+      id: '1776200000013'
       position:
-        x: 6240
-        "y": 2200
+        x: 9480
+        "y": -580
       positionAbsolute:
-        x: 6240
-        "y": 2200
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import hashlib
-
-          CATALOG_VERSION = 'collection_catalog_contract'
-          SELECTION_VERSION = 'collection_selection_contract'
-
-          def _loads(value):
-              if isinstance(value, dict):
-                  return dict(value)
-              if isinstance(value, str) and value.strip():
-                  try:
-                      return json.loads(value)
-                  except Exception:
-                      return {}
-              return {}
-
-          def _list(value):
-              if isinstance(value, list):
-                  return [str(x).strip() for x in value if str(x).strip()]
-              if value in (None, ''):
-                  return []
-              return [str(value).strip()]
-
-          def _uniq(items, limit=0):
-              out, seen = [], set()
-              for item in items:
-                  item = str(item or '').strip()
-                  if item and item not in seen:
-                      seen.add(item); out.append(item)
-                      if limit and len(out) >= limit:
-                          break
-              return out
-
-          def _digest(obj):
-              tmp = dict(obj or {})
-              tmp.pop('catalog_digest', None)
-              return hashlib.sha256(json.dumps(tmp, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
-
-          def _catalog_from_schema(schema_metadata_json, manual_catalog_json):
-              manual = _loads(manual_catalog_json)
-              if manual.get('catalog_version') == CATALOG_VERSION:
-                  manual.setdefault('warnings', [])
-                  manual.setdefault('collections', [])
-                  manual['catalog_digest'] = manual.get('catalog_digest') or _digest(manual) if manual.get('collections') else manual.get('catalog_digest', '')
-                  return manual
-              return {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': [], 'warnings': ['collection catalog unavailable']}
-
-          def _default_selection():
-              return {
-                  'contract_version': SELECTION_VERSION,
-                  'selected_primary_collection': '',
-                  'selected_related_collections': [],
-                  'confidence': 0,
-                  'needs_schema_retrieval': True,
-                  'primary_candidates': [],
-                  'related_candidates': [],
-                  'low_confidence': False,
-                  'requires_clarification': False,
-                  'clarification_question': '',
-                  'warnings': [],
-              }
-
-
-          def _term_matches(question, terms):
-              q = str(question or '')
-              return [t for t in _uniq(_list(terms), 100) if t and t in q]
-
-          def _explicit_collection_matches(question, coll):
-              return _term_matches(question, [coll.get('collection_name'), coll.get('collection_label')] + _list(coll.get('aliases')))
-
-          def _coverage_matches(question, coll):
-              return _term_matches(question, _list(coll.get('primary_metrics')) + _list(coll.get('primary_dimensions')))
-
-          def _has_cross_collection_intent(question):
-              q = str(question or '').lower()
-              return any(t in q for t in ['补充', '关联', '带出', '主数据', '详情', 'join', 'lookup', 'enrich'])
-
-          def _negates_related(question, related_name):
-              q = str(question or '').lower()
-              name = str(related_name or '').lower()
-              return bool(name and any(((neg + name) in q) or (neg in q and name in q) for neg in ['不要', '不需要', '无需', '不用', '排除', 'without', 'no ']))
-
-          def main(question: str, turn_intent_json: str = '', compact_context_json: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', query_refinement_json: str = '', context_binding_json: str = '', planner=None, **kwargs):
-              catalog = _catalog_from_schema(schema_metadata_json, collection_catalog_json)
-              selection = _default_selection()
-              selection['collection_catalog_digest'] = catalog.get('catalog_digest', '')
-              q = str(question or '')
-              ctx = _loads(compact_context_json)
-              turn = _loads(turn_intent_json)
-              cb = _loads(context_binding_json)
-              base = str(cb.get('base_primary_collection') or '').strip()
-              inherit = bool(cb.get('inherit_previous_collection')) and bool(base) and not bool(cb.get('collection_switch'))
-              if not catalog.get('collections'):
-                  if inherit:
-                      selection.update({
-                          'selected_primary_collection': base,
-                          'confidence': 0.85,
-                          'requires_clarification': False,
-                          'clarification_question': '',
-                          'needs_schema_retrieval': True,
-                          'needs_schema_hydration': True,
-                          'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog',
-                          'warnings': ['inherited_primary_collection_missing_from_candidate_catalog'],
-                      })
-                      return {
-                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
-                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
-                          'selected_primary_collection': base,
-                          'selected_related_collections': [],
-                          'selection_confidence': float(selection.get('confidence') or 0),
-                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                          'requires_clarification': False,
-                          'clarification_question': '',
-                      }
-                  selection.update({
-                      'confidence': 0,
-                      'low_confidence': True,
-                      'requires_clarification': True,
-                      'clarification_question': '缺少 collection catalog 或 schema metadata，无法确定要查询的业务集合。',
-                      'warnings': ['collection catalog unavailable'],
-                  })
-                  return {
-                      'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
-                      'collection_selection_json': json.dumps(selection, ensure_ascii=False),
-                      'selected_primary_collection': '',
-                      'selected_related_collections': [],
-                      'selection_confidence': 0,
-                      'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                      'requires_clarification': True,
-                      'clarification_question': selection.get('clarification_question') or '',
-                  }
-              planner = _loads(planner)
-              intent = str(turn.get('turn_intent') or '').strip()
-              schema_ref = ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'), dict) else {}
-              last_primary = str(ctx.get('last_primary_collection') or '').strip()
-              last_related = _list(ctx.get('last_related_collections'))
-              schema_ref_collections = _list(schema_ref.get('collections'))
-              context_prior_collections = _uniq([last_primary] + last_related + schema_ref_collections, 12)
-              warnings, candidates = [], []
-              catalog_names = [str(c.get('collection_name') or '').strip() for c in catalog.get('collections') or []]
-              if inherit:
-                  if base in catalog_names:
-                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'selection_reason': 'inherited_from_previous_primary_collection'})
-                      selection['primary_candidates'] = [{'collection': base, 'score': 0.85, 'reason': 'inherited_from_previous_primary_collection', 'matched_aliases': []}]
-                      selection['warnings'] = warnings
-                      return {
-                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
-                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
-                          'selected_primary_collection': base,
-                          'selected_related_collections': [],
-                          'selection_confidence': float(selection.get('confidence') or 0),
-                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                          'requires_clarification': False,
-                          'clarification_question': '',
-                      }
-                  else:
-                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog'})
-                      warnings.append('inherited_primary_collection_missing_from_candidate_catalog')
-                      selection['warnings'] = warnings
-                      return {
-                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
-                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
-                          'selected_primary_collection': base,
-                          'selected_related_collections': [],
-                          'selection_confidence': float(selection.get('confidence') or 0),
-                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                          'requires_clarification': False,
-                          'clarification_question': '',
-                      }
-              for coll in catalog.get('collections') or []:
-                  cname = str(coll.get('collection_name') or '').strip()
-                  if not cname:
-                      continue
-                  score, matched, reasons = 0.0, [], []
-                  for term in _uniq(_list(coll.get('aliases')) + [coll.get('collection_label'), cname], 48):
-                      if term and term in q:
-                          score += 0.55; matched.append(term)
-                  for term in _uniq(_list(coll.get('primary_metrics')), 48):
-                      if term and term in q:
-                          score += 0.22; matched.append(term)
-                  for term in _uniq(_list(coll.get('primary_dimensions')), 64):
-                      if term and term in q:
-                          score += 0.14; matched.append(term)
-                  if intent in _list(coll.get('supported_intents')):
-                      score += 0.05
-                  if intent in ['refine_query', 'fix_result', 'continue_previous']:
-                      if last_primary and cname == last_primary:
-                          score += 0.35 if not matched else 0.12
-                          reasons.append('使用 compact_context.last_primary_collection prior')
-                      elif cname in context_prior_collections:
-                          score += 0.18 if not matched else 0.08
-                          reasons.append('使用 compact_context.schema_context_ref.collections prior')
-                  score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
-                  if matched:
-                      reasons.append('命中 ' + '、'.join(_uniq(matched, 8)))
-                  candidates.append({'collection': cname, 'score': round(min(score, 1.0), 4), 'reason': '；'.join(reasons), 'matched_aliases': _uniq(matched, 12)})
-              candidates.sort(key=lambda x: (-x['score'], x['collection']))
-              selection['primary_candidates'] = [x for x in candidates if x['score'] > 0][:3]
-              top = selection['primary_candidates'][0] if selection['primary_candidates'] else None
-              second = selection['primary_candidates'][1] if len(selection['primary_candidates']) > 1 else None
-              if top and top['score'] >= 0.5:
-                  selection['selected_primary_collection'] = top['collection']
-                  selection['confidence'] = top['score']
-              elif top:
-                  selection['confidence'] = top['score']
-                  selection['low_confidence'] = True
-                  selection['requires_clarification'] = True
-                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
-                  warnings.append('collection selector low confidence')
-              else:
-                  selection['low_confidence'] = True
-                  selection['requires_clarification'] = True
-                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
-                  warnings.append('没有命中 collection catalog 候选')
-              if top and second and top['score'] - second['score'] < 0.12:
-                  warnings.append('primary collection 候选分数接近，存在歧义')
-              cmap = {c.get('collection_name'): c for c in catalog.get('collections') or []}
-              selected = selection['selected_primary_collection']
-              related = []
-              if selected:
-                  primary_coll = cmap.get(selected, {})
-                  primary_terms = _uniq(_list(primary_coll.get('aliases')) + [primary_coll.get('collection_label'), selected] + _list(primary_coll.get('primary_metrics')) + _list(primary_coll.get('primary_dimensions')), 120)
-                  primary_matched = set(_term_matches(q, primary_terms))
-                  for rname in primary_coll.get('related_collections') or []:
-                      rc = cmap.get(rname) or {}
-                      explicit = _explicit_collection_matches(q, dict(rc, collection_name=rname))
-                      coverage = _coverage_matches(q, rc)
-                      matched = _uniq(explicit + coverage, 12)
-                      in_refine_context = intent in ['refine_query', 'fix_result', 'continue_previous'] and rname in context_prior_collections
-                      if not matched and not in_refine_context:
-                          continue
-                      necessary, reason = False, ''
-                      if explicit:
-                          necessary = True; reason = '用户问题明确命中 related collection name/label/alias：' + '、'.join(explicit[:6])
-                      elif _has_cross_collection_intent(q) and matched:
-                          necessary = True; reason = '用户问题包含跨集合意图词且命中 related 字段/指标/维度：' + '、'.join(matched[:6])
-                      elif coverage and not all(t in primary_matched for t in coverage):
-                          necessary = True; reason = 'related collection 覆盖 primary 未覆盖的字段/指标/维度：' + '、'.join([t for t in coverage if t not in primary_matched][:6])
-                      elif in_refine_context and not _negates_related(q, rname):
-                          necessary = True; reason = 'refine/continue compact context 已包含该 related collection 且当前问题未否定'
-                      elif matched:
-                          reason = 'related collection also matched terms, but primary collection already covers them; not selected'
-                      else:
-                          reason = 'low confidence related candidate; not selected'
-                      selection['related_candidates'].append({'collection': rname, 'score': 0.72 if necessary else 0.36, 'reason': reason, 'matched_aliases': matched[:8]})
-                      if necessary:
-                          related.append(rname)
-              selection['selected_related_collections'] = related[:3]
-              if not selection['selected_primary_collection']:
-                  legacy = str(planner.get('primary_collection') or '').strip()
-                  if legacy and legacy != 'unknown':
-                      selection['primary_candidates'].append({'collection': legacy, 'score': 0.45, 'reason': '兼容 fallback：旧 planner primary_collection', 'matched_aliases': []})
-                      warnings.append('selector 未高置信命中，保留旧 planner collection 候选')
-              selection['warnings'] = warnings
-              return {
-                  'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
-                  'collection_selection_json': json.dumps(selection, ensure_ascii=False),
-                  'selected_primary_collection': selection['selected_primary_collection'],
-                  'selected_related_collections': selection['selected_related_collections'],
-                  'selection_confidence': float(selection.get('confidence') or 0),
-                  'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                  'requires_clarification': bool(selection.get('requires_clarification')),
-                  'clarification_question': selection.get('clarification_question') or '',
-              }
-        code_language: python3
-        desc: 基于 refine CandidateSchemas 派生 catalog 选择候选 collection；当前 refine 明确改变字段/指标/collection
-          时以当前问题为准。
-        outputs:
-          collection_catalog_json:
-            children:
-            type: string
-          collection_selection_json:
-            children:
-            type: string
-          selected_primary_collection:
-            children:
-            type: string
-          selected_related_collections:
-            children:
-            type: array[string]
-          selection_confidence:
-            children:
-            type: number
-          selector_warnings_json:
-            children:
-            type: string
-          requires_clarification:
-            children:
-            type: boolean
-          clarification_question:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_CollectionCatalog候选选择_Refine
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1776000000004'
-          - normalized_turn_intent_json
-          value_type: string
-          variable: turn_intent_json
-        - value_selector:
-          - '1776000000001'
-          - last_context_json
-          value_type: string
-          variable: compact_context_json
-        - value_selector:
-          - '1776000000026'
-          - collection_catalog_json
-          value_type: string
-          variable: collection_catalog_json
-        - value_selector:
-          - '1776000000026'
-          - schema_metadata_json
-          value_type: string
-          variable: schema_metadata_json
-        - value_selector:
-          - '1776000000004'
-          - query_refinement_json
-          value_type: string
-          variable: query_refinement_json
-        - value_selector:
-          - '1776000000025'
-          - context_binding_json
-          value_type: string
-          variable: context_binding_json
-      height: 80
-      id: '1777000000002'
-      position:
-        x: 4080
-        "y": 2200
-      positionAbsolute:
-        x: 4080
-        "y": 2200
+        x: 9480
+        "y": -580
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -606,232 +246,171 @@
       width: 242
     - data:
         cases:
-        - case_id: has_primary
-          conditions:
-          - comparison_operator: not empty
-            id: collection-selection-primary-not-empty
-            value: ''
-            varType: string
-            variable_selector:
-            - '1777000000002'
-            - selected_primary_collection
-          - comparison_operator: is
-            id: collection-selection-not-clarification
-            value: 'false'
-            varType: boolean
-            variable_selector:
-            - '1777000000002'
-            - requires_clarification
-          id: has_primary
-          logical_operator: and
-        desc: refine selector 必须选出 primary collection 且不需要澄清；否则 safe stop。
-        selected: false
-        title: 条件分支_CollectionSelection结果判断_Refine
-        type: if-else
-      height: 148
-      id: '1777100000101'
-      position:
-        x: 4440
-        "y": 2200
-      positionAbsolute:
-        x: 4440
-        "y": 2200
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          import hashlib
-
-
-          def _loads(value, default):
-              if isinstance(value, (dict, list)):
-                  return value
-              if isinstance(value, str) and value.strip():
-                  try:
-                      return json.loads(value)
-                  except Exception:
-                      return default
-              return default
-
-
-          def _list(value):
-              if isinstance(value, list):
-                  return [str(x).strip() for x in value if str(x).strip()]
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(value)
-                      if isinstance(parsed, list):
-                          return [str(x).strip() for x in parsed if str(x).strip()]
-                  except Exception:
-                      pass
-                  return [value.strip()]
-              return []
-
-
-          def _digest(obj, key):
-              tmp = json.loads(json.dumps(obj or {}, ensure_ascii=False))
-              if isinstance(tmp, dict):
-                  tmp.pop(key, None)
-              return hashlib.sha256(json.dumps(tmp, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
-
-
-          def _filter_alias(alias, keep):
-              if not isinstance(alias, dict):
-                  return {}
-              result = {}
-              for k, v in alias.items():
-                  if k in {'aliases', 'collection_aliases', 'field_aliases', 'metric_aliases', 'value_aliases'} and isinstance(v, dict):
-                      kept = {}
-                      for a, entries in v.items():
-                          filtered = [e for e in (entries or []) if isinstance(e, dict) and str(e.get('collection') or '').strip() in keep]
-                          if filtered:
-                              kept[a] = filtered
-                      result[k] = kept
-                  elif k in {'fields', 'metrics'} and isinstance(v, dict):
-                      result[k] = {c: m for c, m in v.items() if c in keep}
-                  elif k == 'collections' and isinstance(v, dict):
-                      result[k] = {a: c for a, c in v.items() if c in keep}
-                  else:
-                      result[k] = v
-              return result
-
-
-          def _schema_context(meta):
-              sections = []
-              for cname, coll in (meta.get('collections') or {}).items():
-                  sections.append('## collection=' + cname + '\n```json\n' + json.dumps(coll, ensure_ascii=False, indent=2) + '\n```')
-              return '\n\n'.join(sections)
-
-
-          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}'):
-              warnings = []
-              meta = _loads(schema_metadata_json, {}) or {}
-              alias = _loads(schema_alias_index_json, {}) or {}
-              ref = _loads(schema_context_ref_json, {}) or {}
-              collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
-              primary = str(selected_primary_collection or '').strip()
-              if not primary:
-                  warnings.append('selected primary collection is empty')
-              if primary and primary not in collections:
-                  warnings.append('selected primary collection not found in candidate schemas')
-              if warnings:
-                  empty_meta = {'metadata_type': 'schema_metadata_contract', 'contract_version': 'schema_metadata_contract', 'schema_version': str(meta.get('schema_version') or ''), 'schema_digest': '', 'collections': {}, 'warnings': warnings, 'parse_errors': []}
-                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
-              keep = []
-              for name in [primary] + _list(selected_related_collections):
-                  if name in collections and name not in keep:
-                      keep.append(name)
-                  elif name and name not in collections:
-                      warnings.append('selected related collection not found in candidate schemas: ' + name)
-              selected = dict(meta)
-              selected['collections'] = {name: collections[name] for name in keep}
-              selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
-              selected_alias = _filter_alias(alias, set(keep))
-              selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
-              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
-        code_language: python3
-        desc: 按 refine selector 结果裁剪 CandidateSchemas，只保留 selected primary 与必要 related
-          collections。
-        outputs:
-          schema_context:
-            children:
-            type: string
-          schema_metadata_json:
-            children:
-            type: string
-          schema_alias_index_json:
-            children:
-            type: string
-          schema_context_ref_json:
-            children:
-            type: string
-          selected_schema_ready:
-            children:
-            type: boolean
-          selected_schema_warnings_json:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_裁剪SelectedSchema上下文_Refine
-        type: code
-        variables:
-        - value_selector:
-          - '1777000000002'
-          - selected_primary_collection
-          value_type: string
-          variable: selected_primary_collection
-        - value_selector:
-          - '1777000000002'
-          - selected_related_collections
-          value_type: array[string]
-          variable: selected_related_collections
-        - value_selector:
-          - '1776000000026'
-          - schema_context
-          value_type: string
-          variable: schema_context
-        - value_selector:
-          - '1776000000026'
-          - schema_metadata_json
-          value_type: string
-          variable: schema_metadata_json
-        - value_selector:
-          - '1776000000026'
-          - schema_alias_index_json
-          value_type: string
-          variable: schema_alias_index_json
-        - value_selector:
-          - '1776000000026'
-          - schema_context_ref_json
-          value_type: string
-          variable: schema_context_ref_json
-        - value_selector:
-          - '1776000000026'
-          - collection_catalog_json
-          value_type: string
-          variable: collection_catalog_json
-      height: 80
-      id: '1777100000105'
-      position:
-        x: 4800
-        "y": 2200
-      positionAbsolute:
-        x: 4800
-        "y": 2200
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        cases:
-        - case_id: schema_ready
+        - case_id: 'true'
           conditions:
           - comparison_operator: is
-            id: selected-schema-ready
+            id: 53e75aae-e10d-4ac9-8287-eced1e77483e
             value: 'true'
             varType: boolean
             variable_selector:
-            - '1777100000105'
-            - selected_schema_ready
-          id: schema_ready
+            - '1776200000013'
+            - success
+          id: 'true'
           logical_operator: and
-        desc: refine selected_schema_ready=true 才允许进入重规划；否则 safe stop，不进入 LLM/validator。
+        desc: ''
         selected: false
-        title: 条件分支_SelectedSchema结果判断_Refine
+        title: 条件分支_满血LLM是否成功_本地兜底生成语义计划
         type: if-else
-      height: 126
-      id: '1777100000104'
+      height: 148
+      id: '1776200000014'
       position:
-        x: 5160
-        "y": 2200
+        x: 9940
+        "y": -580
       positionAbsolute:
-        x: 5160
-        "y": 2200
+        x: 9940
+        "y": -580
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: 满血LLM关闭或失败时，使用本地模型保守生成 semantic_plan_contract
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: local-plan-system
+          role: system
+          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
+        - id: local-plan-user
+          role: user
+          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: true
+            required:
+            - contract_version
+            - primary_collection
+            - related_collections
+            - execution_mode
+            - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
+            properties:
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              execution_mode:
+                type: string
+              answer_mode:
+                type: string
+              needs_chart:
+                type: boolean
+              stages:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  additionalProperties: true
+                  required:
+                  - stage_name
+                  - stage_type
+                  - collection
+                  - intent_type
+                  - time_range
+                  - filters
+                  - group_fields
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - sort
+                  - limit
+                  - projection_fields
+                  properties:
+                    stage_name:
+                      type: string
+                    stage_type:
+                      type: string
+                    collection:
+                      type: string
+                    intent_type:
+                      type: string
+                    time_range:
+                      type: object
+                    filters:
+                      type: array
+                      items:
+                        type: object
+                    group_fields:
+                      type: array
+                      items:
+                        type: string
+                    metric_function:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_alias:
+                      type: string
+                    sort:
+                      type: array
+                      items:
+                        type: object
+                    limit:
+                      type: integer
+                    projection_fields:
+                      type: array
+                      items:
+                        type: string
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
+                items:
+                  type: string
+        structured_output_enabled: true
+        title: LLM_本地兜底本地兜底生成语义计划
+        type: llm
+        vision:
+          enabled: false
+      height: 132
+      id: '1776200000015'
+      position:
+        x: 10400
+        "y": -360
+      positionAbsolute:
+        x: 10400
+        "y": -360
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -840,148 +419,68 @@
     - data:
         code: |
           import json
-
-          def _loads(value):
-              if isinstance(value, dict):
-                  return dict(value)
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(value)
-                      return parsed if isinstance(parsed, dict) else {}
-                  except Exception:
-                      return {}
-              return {}
-
-          def main(question: str, collection_selection_json: str = '', collection_catalog_json: str = ''):
-              selection = _loads(collection_selection_json)
-              catalog = _loads(collection_catalog_json)
-              warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
-              if not catalog.get('collections'):
-                  text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
-              else:
-                  text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'
-              payload = {
-                  'contract_version': 'answer_payload_contract',
-                  'answer_type': 'clarification',
-                  'answer_text': text,
-                  'chart_echarts_markdown': '',
-                  'result_summary': text,
-                  'message': '',
-                  'chart_payload': {},
-                  'query_result_profile': {'row_count': 0, 'fields': [], 'preview_rows': []},
-                  'state_update': {'should_save_context': False, 'context_summary': {}},
-                  'warnings': warnings,
-              }
-              update = {'contract_version': 'context_update_contract', 'should_save_context': False, 'compact_context': {}, 'last_context_json': '', 'warnings': warnings, 'clear_fields': []}
-              return {
-                  'final_answer_markdown': text,
-                  'answer_payload_markdown': text,
-                  'answer_payload_json': json.dumps(payload, ensure_ascii=False),
-                  'context_update_json': json.dumps(update, ensure_ascii=False),
-              }
+          def _loads(s):
+              if isinstance(s, dict): return s
+              if not s: return {}
+              try: return json.loads(str(s))
+              except Exception: return {}
+          def main(full_success=False, full_content='', local_text='', local_structured=None, fallback_text='', fallback_structured=None) -> dict:
+              if full_success and str(full_content or '').strip():
+                  text=str(full_content).strip(); return {'text':text,'structured_output':_loads(text),'llm_source':'full_llm'}
+              if str(fallback_text or '').strip() or fallback_structured:
+                  return {'text':str(fallback_text or ''),'structured_output': fallback_structured or _loads(fallback_text),'llm_source':'local_fallback'}
+              return {'text':str(local_text or ''),'structured_output': local_structured or _loads(local_text),'llm_source':'local_direct'}
         code_language: python3
-        desc: Collection selector 或 selected schema 不可用时 safe stop，不进入 planner/schema
-          retrieval/validator，也不保存成功上下文。
+        desc: 统一满血/本地兜底/直接本地输出，保持 text 和 structured_output 变量名。
         outputs:
-          final_answer_markdown:
-            children:
+          text:
             type: string
-          answer_payload_markdown:
-            children:
-            type: string
-          answer_payload_json:
-            children:
-            type: string
-          context_update_json:
-            children:
+          structured_output:
+            type: object
+          llm_source:
             type: string
         selected: false
-        title: 代码执行_CollectionSelectionSafeStop_Refine
+        title: 代码执行_统一LLM输出_本地兜底生成语义计划
         type: code
         variables:
         - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
+          - '1776200000013'
+          - success
+          value_type: boolean
+          variable: full_success
         - value_selector:
-          - '1777000000002'
-          - collection_selection_json
+          - '1776200000013'
+          - content
           value_type: string
-          variable: collection_selection_json
+          variable: full_content
         - value_selector:
-          - '1776000000026'
-          - collection_catalog_json
+          - '1775000000018'
+          - text
           value_type: string
-          variable: collection_catalog_json
-      height: 80
-      id: '1777100000102'
+          variable: local_text
+        - value_selector:
+          - '1775000000018'
+          - structured_output
+          value_type: object
+          variable: local_structured
+        - value_selector:
+          - '1776200000015'
+          - text
+          value_type: string
+          variable: fallback_text
+        - value_selector:
+          - '1776200000015'
+          - structured_output
+          value_type: object
+          variable: fallback_structured
+      height: 139
+      id: '1776200000016'
       position:
-        x: 4800
-        "y": 2460
+        x: 10860
+        "y": -320
       positionAbsolute:
-        x: 4800
-        "y": 2460
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        answer: "{{#1777100000102.answer_payload_markdown#}}"
-        outputs: []
-        selected: false
-        title: Answer_CollectionSelectionSafeStop_Refine
-        type: answer
-      height: 180
-      id: '1777100000103'
-      position:
-        x: 5160
-        "y": 2460
-      positionAbsolute:
-        x: 5160
-        "y": 2460
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        dataset_ids:
-        - 0OdfgQwiFIhBWBQxkU3dhtU81pF47D5V6/PvINzuWaJ8lrsOg0djEJ681QBuKH6L
-        - 2yAml6vKHAOyhWBTqUBsiuiHGiDHa65ruznXVNKrIR+e9yEqsALBCSQ93zS6fH2Z
-        metadata_filtering_conditions:
-          conditions: []
-          logical_operator: and
-        metadata_filtering_mode: disabled
-        multiple_retrieval_config:
-          reranking_enable: false
-          reranking_mode: weighted_score
-          top_k: 6
-          weights:
-            keyword_setting:
-              keyword_weight: 0.4
-            vector_setting:
-              embedding_model_name: nomic-embed-text:v1.5
-              embedding_provider_name: langgenius/ollama/ollama
-              vector_weight: 0.6
-            weight_type: customized
-        query_attachment_selector: []
-        query_variable_selector:
-        - '1776000000025'
-        - query_text
-        retrieval_mode: multiple
-        selected: false
-        title: 知识检索_CandidateSchemas_Refine
-        type: knowledge-retrieval
-      height: 90
-      id: '1776000000032'
-      position:
-        x: 3360
-        "y": 2200
-      positionAbsolute:
-        x: 3360
-        "y": 2200
+        x: 10860
+        "y": -320
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -989,43 +488,443 @@
       width: 242
     - data:
         cases:
-        - case_id: schema_ready
+        - case_id: 'true'
           conditions:
           - comparison_operator: is
-            id: schema-runtime-ready
-            value: true
+            id: 70762d95-ad49-45e4-ad62-e53b6c400a29
+            value: 'true'
             varType: boolean
             variable_selector:
-            - '1779000000001'
-            - schema_context_ready
-          id: schema_ready
+            - '1776100000000'
+            - effective_use_full_llm_multi_turn_intent
+          id: 'true'
           logical_operator: and
-        - case_id: schema_hydration_needed
-          conditions:
-          - comparison_operator: is
-            id: schema-runtime-hydration-needed
-            value: true
-            varType: boolean
-            variable_selector:
-            - '1779000000001'
-            - schema_hydration_needed
-          id: schema_hydration_needed
-          logical_operator: and
-        desc: Phase 10 schema runtime route：schema ready 直接进入 validator；需要 hydration
-          时只走 schema retrieval，不调用 planner；否则仍进入 validator 生成 non-valid 回答。
+        desc: ''
         selected: false
-        title: 条件分支_schema_runtime_context判断
+        title: 条件分支_是否使用满血LLM_多轮意图识别
         type: if-else
-      height: 198
-      id: '1780000000001'
+      height: 148
+      id: '1776200000021'
       position:
-        x: 12240
-        y: 120
+        x: 920
+        "y": 0
       positionAbsolute:
-        x: 12240
-        y: 120
+        x: 920
+        "y": 0
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: 1776200000022-body
+            key: ''
+            type: text
+            value: |-
+              {
+                "model": "{{#env.FULL_LLM_MODEL#}}",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n{{#1776000000002.intent_prompt#}}"
+                  }
+                ],
+                "temperature": 0.1,
+                "stream": false
+              }
+          type: json
+        desc: OpenAI-compatible 满血LLM请求；失败由检查节点转本地兜底。
+        headers: Content-Type:application/json\nAuthorization:Bearer {{#env.FULL_LLM_API_KEY#}}
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 1
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_调用满血LLM_多轮意图识别
+        type: http-request
+        url: "{{#env.FULL_LLM_API_BASE#}}"
+        variables: []
+      height: 123
+      id: '1776200000022'
+      position:
+        x: 1380
+        "y": -260
+      positionAbsolute:
+        x: 1380
+        "y": -260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s='' if s is None else str(s).strip()
+              m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
+              return m.group(1).strip() if m else s
+          def main(status_code=0, body='', error='') -> dict:
+              try:
+                  status=int(status_code or 0)
+                  if status != 200:
+                      return {'success':False,'content':'','error':'HTTP status %s'%status,'raw_response':{}}
+                  if not body:
+                      return {'success':False,'content':'','error':'empty body','raw_response':{}}
+                  raw=json.loads(body) if isinstance(body,str) else (body or {})
+                  content=''
+                  if isinstance(raw,dict):
+                      ch=raw.get('choices') or []
+                      if ch and isinstance(ch[0],dict):
+                          msg=ch[0].get('message') or {}
+                          content=msg.get('content') if isinstance(msg,dict) else ''
+                          content=content or ch[0].get('text') or ''
+                      content=content or raw.get('content') or raw.get('text') or ''
+                  content=_strip(content)
+                  if not content:
+                      return {'success':False,'content':'','error':'empty content','raw_response':raw if isinstance(raw,dict) else {}}
+                  json.loads(_strip(content))
+                  return {'success':True,'content':content,'error':'','raw_response':raw if isinstance(raw,dict) else {}}
+              except Exception as e:
+                  return {'success':False,'content':'','error':str(e),'raw_response':{}}
+        code_language: python3
+        desc: 检查满血LLM HTTP响应，任何异常均返回 success=false。
+        outputs:
+          success:
+            type: boolean
+          content:
+            type: string
+          error:
+            type: string
+          raw_response:
+            type: object
+        selected: false
+        title: 代码执行_检查满血LLM响应_多轮意图识别
+        type: code
+        variables:
+        - value_selector:
+          - '1776200000022'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1776200000022'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1776200000022'
+          - error
+          value_type: string
+          variable: error
+      height: 139
+      id: '1776200000023'
+      position:
+        x: 1840
+        "y": -260
+      positionAbsolute:
+        x: 1840
+        "y": -260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: f24819aa-4396-4a63-bf08-7df178487564
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776200000023'
+            - success
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血LLM是否成功_多轮意图识别
+        type: if-else
+      height: 148
+      id: '1776200000024'
+      position:
+        x: 2300
+        "y": -260
+      positionAbsolute:
+        x: 2300
+        "y": -260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: intent-system
+          role: system
+          text: 你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。
+        - id: intent-user
+          role: user
+          text: "{{#1776000000002.intent_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - turn_intent
+            - need_previous_context
+            - need_requery
+            - need_rechart
+            - need_analysis
+            - can_answer_directly
+            - reason
+            - missing_info
+            - chart_modification
+            - query_refinement
+            - analysis_focus
+            properties:
+              turn_intent:
+                type: string
+                enum:
+                - new_query
+                - modify_chart
+                - refine_query
+                - explain_result
+                - reanalyze_result
+                - fix_result
+                - continue_previous
+                - clarify
+              need_previous_context:
+                type: boolean
+              need_requery:
+                type: boolean
+              need_rechart:
+                type: boolean
+              need_analysis:
+                type: boolean
+              can_answer_directly:
+                type: boolean
+              reason:
+                type: string
+              missing_info:
+                type: array
+                items:
+                  type: string
+              chart_modification:
+                type: object
+                additionalProperties: true
+              query_refinement:
+                type: object
+                additionalProperties: true
+              analysis_focus:
+                type: string
+        structured_output_enabled: true
+        title: LLM_本地兜底多轮意图识别
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776200000025'
+      position:
+        x: 2760
+        "y": -40
+      positionAbsolute:
+        x: 2760
+        "y": -40
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(s):
+              if isinstance(s, dict): return s
+              if not s: return {}
+              try: return json.loads(str(s))
+              except Exception: return {}
+          def main(full_success=False, full_content='', local_text='', local_structured=None, fallback_text='', fallback_structured=None) -> dict:
+              if full_success and str(full_content or '').strip():
+                  text=str(full_content).strip(); return {'text':text,'structured_output':_loads(text),'llm_source':'full_llm'}
+              if str(fallback_text or '').strip() or fallback_structured:
+                  return {'text':str(fallback_text or ''),'structured_output': fallback_structured or _loads(fallback_text),'llm_source':'local_fallback'}
+              return {'text':str(local_text or ''),'structured_output': local_structured or _loads(local_text),'llm_source':'local_direct'}
+        code_language: python3
+        desc: 统一满血/本地兜底/直接本地输出，保持 text 和 structured_output 变量名。
+        outputs:
+          text:
+            type: string
+          structured_output:
+            type: object
+          llm_source:
+            type: string
+        selected: false
+        title: 代码执行_统一LLM输出_多轮意图识别
+        type: code
+        variables:
+        - value_selector:
+          - '1776200000023'
+          - success
+          value_type: boolean
+          variable: full_success
+        - value_selector:
+          - '1776200000023'
+          - content
+          value_type: string
+          variable: full_content
+        - value_selector:
+          - '1776000000003'
+          - text
+          value_type: string
+          variable: local_text
+        - value_selector:
+          - '1776000000003'
+          - structured_output
+          value_type: object
+          variable: local_structured
+        - value_selector:
+          - '1776200000025'
+          - text
+          value_type: string
+          variable: fallback_text
+        - value_selector:
+          - '1776200000025'
+          - structured_output
+          value_type: object
+          variable: fallback_structured
+      height: 139
+      id: '1776200000026'
+      position:
+        x: 3220
+        "y": 0
+      positionAbsolute:
+        x: 3220
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: f03d4a13-2da8-43ed-9a57-59ef3320d717
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776100000000'
+            - effective_use_full_llm_chart_plan
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_是否使用满血LLM_图表修改规划
+        type: if-else
+      height: 148
+      id: '1776200000031'
+      position:
+        x: 2760
+        "y": 1120
+      positionAbsolute:
+        x: 2760
+        "y": 1120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: 1776200000032-body
+            key: ''
+            type: text
+            value: |-
+              {
+                "model": "{{#env.FULL_LLM_MODEL#}}",
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段，不要输出 Mongo plan / Mongo pipeline。用户通常是在上一轮查询结果基础上修改图表展示方式。只修改 chart_type / title / style / 排序 / TopN / 标签 / 百分比等展示属性时，才属于 chart_only，不要修改查询条件，不要触发重新查询。若用户修改 x_field / y_field / group / metric / filter / time_range，则不是 chart_only，必须标记为 full_replan/需要重新查询，由语义计划链路重新生成 semantic_plan_contract。\n如果用户没有明确指定 x_field/y_field，请输出空字符串，表示沿用上一轮字段；空字符串表示“不修改”，不是“清空”。不得编造字段。支持 chart_type: bar, pie, line, area, scatter。bar/pie/line/area 通常需要一个类别或时间字段 + 一个数值字段；scatter 需要两个数值字段。\n\n当前用户问题：{{#sys.query#}}\n上一轮结果摘要：{{#1776000000002.last_context_slim_json#}}\n上一轮图表请求（标准扁平 chart_request）：{{#conversation.last_chart_request_json#}}\n图表修改意图：{{#1776000000004.chart_modification_json#}}\n上一轮语义计划：{{#conversation.last_normalized_semantic_plan_json#}}"
+                  }
+                ],
+                "temperature": 0.1,
+                "stream": false
+              }
+          type: json
+        desc: OpenAI-compatible 满血LLM请求；失败由检查节点转本地兜底。
+        headers: Content-Type:application/json\nAuthorization:Bearer {{#env.FULL_LLM_API_KEY#}}
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 1
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_调用满血LLM_图表修改规划
+        type: http-request
+        url: "{{#env.FULL_LLM_API_BASE#}}"
+        variables: []
+      height: 123
+      id: '1776200000032'
+      position:
+        x: 3220
+        "y": 860
+      positionAbsolute:
+        x: 3220
+        "y": 860
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s='' if s is None else str(s).strip()
+
+              m=re.match(r'^```(?:json)?\s*([\s\S]*?)\s*```$', s)
+              return m.group(1).strip() if m else s
+          def main(status_code=0, body='', error='') -> dict:
+              try:
+                  status=int(status_code or 0)
+                  if status != 200:

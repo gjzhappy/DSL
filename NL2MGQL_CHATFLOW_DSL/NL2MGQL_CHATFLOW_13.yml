@@ -1,3 +1,762 @@
+              return result
+
+
+          def _detect_negated_old_fields(q, refine, old, compact_context):
+              known = _collect_known_fields(old, compact_context)
+              neg = [str(x or '').strip() for x in _as_list(refine.get('negative_fields')) if str(x or '').strip()]
+              text = str(q or '')
+              for pat in NEGATION_PATTERNS:
+                  for m in re.finditer(pat, text):
+                      neg.append(m.group(1).strip())
+              reasons = []
+              if refine.get('negative_fields'):
+                  reasons.append('query_refinement_json.negative_fields')
+              if any(x in text for x in ('不再按', '不要按', '不按', '不是', '不看', '改按')):
+                  if neg:
+                      for n in neg:
+                          for old_field in known:
+                              if n and (n == old_field or n in old_field or old_field in n):
+                                  reasons.append('negated_old_field:%s' % old_field)
+                  else:
+                      reasons.append('ambiguous_negated_old_field')
+              if '不看' in text and any(x in text for x in ('订单数', '销售额', '指标', 'metric')):
+                  reasons.append('negated_metric')
+              return _unique_keep_order(reasons)
+
+
+          def _detect_structural_change(q, refine, old=None, compact_context=None):
+              reasons = []
+              for key in _has_non_empty(refine, STRUCTURAL_KEYS):
+                  reasons.append('query_refinement_json.%s' % key)
+              for path in STRUCTURAL_NESTED_PATHS:
+                  if _non_empty(_path_value(refine, path)):
+                      reasons.append('query_refinement_json.%s' % '.'.join(path))
+              for key in UNCHANGED_GUARDS:
+                  if key in refine and not _bool(refine.get(key)):
+                      reasons.append('query_refinement_json.%s=false' % key)
+
+              text = str(q or '')
+              for pattern in STRUCTURAL_PATTERNS:
+                  if re.search(pattern, text):
+                      reasons.append('user_pattern:%s' % pattern)
+              if old:
+                  reasons.extend(_detect_negated_old_fields(q, refine, old, compact_context or {}))
+
+              return {'structural_change': bool(reasons), 'reasons': _unique_keep_order(reasons)}
+
+
+          def _extract_chart_type(q):
+              text = str(q or '')
+              for chart_type, terms in CHART_TYPE_TERMS.items():
+                  if any(term in text for term in terms):
+                      return chart_type
+              return ''
+
+
+          def _is_chart_type_only(q, refine, need_requery, structural_change):
+              if structural_change:
+                  return False
+              if _parse_relative_time(q) or _bool(refine.get('time_range_change')) or _non_empty(refine.get('time_range')):
+                  return False
+              chart_req = refine.get('chart_request') if isinstance(refine.get('chart_request'), dict) else {}
+              if _non_empty(chart_req.get('x_field')) or _non_empty(chart_req.get('y_field')):
+                  return False
+              chart_type = refine.get('chart_type') or refine.get('visualization_type') or chart_req.get('chart_type') or _extract_chart_type(q)
+              return bool(chart_type)
+
+
+          def _can_apply_time_only_patch(refine, parsed_time, structural_change):
+              if structural_change or not parsed_time:
+                  return False
+              explicit_safe = (
+                  _bool(refine.get('time_range_change'))
+                  and _bool(refine.get('group_fields_unchanged'))
+                  and _bool(refine.get('metric_unchanged'))
+                  and _bool(refine.get('filters_unchanged'))
+                  and _bool(refine.get('collection_unchanged'))
+              )
+              has_any_guard = any(k in refine for k in ('time_range_change',) + UNCHANGED_GUARDS)
+              return explicit_safe or not has_any_guard or (_bool(refine.get('time_range_change')) and not _has_non_empty(refine, STRUCTURAL_KEYS))
+
+
+          def _set_all_stage_time(plan, days=None, mode=None):
+              changed = False
+              for st in _stages(plan):
+                  if not isinstance(st, dict):
+                      continue
+                  tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
+                  if days:
+                      tr.update({'mode': 'relative_days', 'relative_days': int(days), 'start': '', 'end': ''})
+                  elif mode:
+                      tr.update({'mode': mode, 'start': '', 'end': ''})
+                  st['time_range'] = tr
+                  changed = True
+              return changed
+
+
+          def _patch_title_time(plan, new_source, debug):
+              cr = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else None
+              if not cr or not isinstance(cr.get('title'), str) or not cr.get('title'):
+                  debug['title_patch'] = 'no_chart_title'
+                  return False
+              title = cr['title']
+              for old_text in OLD_TITLE_TIME_PATTERNS:
+                  if old_text in title:
+                      cr['title'] = title.replace(old_text, new_source, 1)
+                      debug['title_patch'] = {'from': old_text, 'to': new_source}
+                      return cr['title'] != title
+              debug['title_patch'] = 'no_safe_old_time_text_found'
+              return False
+
+
+          def _patch_limit(plan, n):
+              changed = False
+              try:
+                  limit = int(n)
+              except Exception:
+                  return False
+              if limit <= 0:
+                  return False
+              for st in _stages(plan):
+                  if isinstance(st, dict):
+                      st['limit'] = min(limit, 500)
+                      changed = True
+              return changed
+
+
+          def _parse_sort_request(q):
+              text = str(q or '')
+              direction = ''
+              if any(x in text for x in ('升序', '从小到大', '从低到高')):
+                  direction = 'asc'
+              elif any(x in text for x in ('降序', '倒序', '从大到小', '从高到低')):
+                  direction = 'desc'
+              if not direction:
+                  return None
+              m = re.search(r'按\s*([^，。,.\s]+)\s*(?:升序|降序|排序|排列)', text)
+              return {'direction': direction, 'target': m.group(1).strip() if m else ''}
+
+
+          def _target_matches_known_field(target, known_fields):
+              t = str(target or '').strip()
+              if not t:
+                  return True
+              for f in known_fields:
+                  fs = str(f or '').strip()
+                  if fs and (t == fs or t in fs or fs in t):
+                      return True
+              return False
+
+
+          def _patch_sort(plan, direction, target='', known_fields=None):
+              known_fields = known_fields or []
+              if not _target_matches_known_field(target, known_fields):
+                  return False
+              changed = False
+              for st in _stages(plan):
+                  if not isinstance(st, dict):
+                      continue
+                  sort = st.get('sort') if isinstance(st.get('sort'), list) else []
+                  if not sort:
+                      fallback = st.get('metric_alias') or st.get('metric_field') or (known_fields[0] if known_fields else '')
+                      sort = [{'field': fallback, 'direction': direction}]
+                  for item in sort:
+                      if isinstance(item, dict):
+                          item['direction'] = direction
+                  st['sort'] = sort
+                  changed = True
+              return changed
+
+
+          def _patch_display(plan, q):
+              changed = []
+              text = str(q or '')
+              m = re.search(r'标题(?:改成|改为|换成)\s*([^，。,.]+)', text)
+              if m:
+                  if not isinstance(plan.get('chart_request'), dict):
+                      plan['chart_request'] = {}
+                  plan['chart_request']['title'] = m.group(1).strip()
+                  changed.append('chart_request.title')
+              if any(x in text for x in ('回答详细一点', '详细一点', '加分析', '简单分析')):
+                  plan['answer_mode'] = 'data_with_analysis'
+                  changed.append('answer_mode')
+              if '只描述结果' in text:
+                  plan['answer_mode'] = 'data_only'
+                  changed.append('answer_mode')
+              return changed
+
+
+          def _patch_chart_type(plan, chart_type):
+              if not chart_type:
+                  return False
+              if not isinstance(plan.get('chart_request'), dict):
+                  plan['chart_request'] = {}
+              plan['chart_request']['chart_type'] = chart_type
+              plan['chart_request']['type'] = chart_type
+              if isinstance(plan.get('visualization'), dict):
+                  plan['visualization']['chart_type'] = chart_type
+              return True
+
+
+          def _unique_keep_order(values):
+              seen = set()
+              result = []
+              for value in values:
+                  if value not in seen:
+                      seen.add(value)
+                      result.append(value)
+              return result
+
+
+          def _validate_patch(refine, changed_fields, structural_change, plan=None):
+              unapplied = _has_non_empty(refine, STRUCTURAL_KEYS)
+              for path in STRUCTURAL_NESTED_PATHS:
+                  if _non_empty(_path_value(refine, path)):
+                      unapplied.append('.'.join(path))
+              for key in UNCHANGED_GUARDS:
+                  if key in refine and not _bool(refine.get(key)):
+                      unapplied.append(key)
+              has_stage = bool(_stages(plan)) if isinstance(plan, dict) else False
+              passed = (not structural_change) and (not unapplied) and (plan is None or has_stage)
+              return {'patch_validation_passed': passed, 'unapplied_refinements': _unique_keep_order(unapplied)}
+
+
+          def _failed_validation(validation=None):
+              validation = validation or {}
+              return {
+                  'patch_validation_passed': False,
+                  'unapplied_refinements': validation.get('unapplied_refinements') or [],
+              }
+
+
+          def _unapplied_from_structural_reasons(reasons):
+              unapplied = []
+              for reason in reasons or []:
+                  r = str(reason or '')
+                  if 'group' in r or '按.+统计' in r or '不再按' in r or '改按' in r or '不要按' in r or '不按' in r or '横轴改成' in r:
+                      unapplied.append('group_by')
+                  if 'metric' in r or '不看' in r or '销售额' in r:
+                      unapplied.append('metric')
+                  if 'filter' in r or 'where' in r or '只看' in r or '筛选' in r or '过滤' in r or '排除' in r:
+                      unapplied.append('filter')
+                  if 'collection' in r or '改看' in r:
+                      unapplied.append('collection')
+                  if 'relation' in r or 'join' in r or 'enrich' in r or '关联' in r:
+                      unapplied.append('relation')
+                  if 'negative_fields' in r or 'negated' in r or '不再按' in r or '不是' in r:
+                      unapplied.append('negative_fields')
+                  if 'chart_request.x_field' in r:
+                      unapplied.append('chart_request.x_field')
+                  if 'chart_request.y_field' in r:
+                      unapplied.append('chart_request.y_field')
+                  if '按.+排序' in r:
+                      unapplied.append('sort')
+                  if '口径' in r or 'intent' in r or '重新统计' in r:
+                      unapplied.append('business_rule_change')
+              return _unique_keep_order(unapplied)
+
+
+          def _result(patch_applied=False, requires_full_replan=True, plan=None, changed=None, reason='', error='', debug=None, validation=None, route=None):
+              changed = changed or []
+              debug = debug or {}
+              validation = validation or {'patch_validation_passed': False, 'unapplied_refinements': []}
+              if route is None:
+                  if bool(patch_applied) and not bool(requires_full_replan) and bool(validation.get('patch_validation_passed')) and not error:
+                      route = 'use_patch'
+                  elif not bool(requires_full_replan) and 'chart_request.chart_type' in changed:
+                      route = 'chart_only'
+                  elif not changed:
+                      route = 'no_patch'
+                  else:
+                      route = 'full_replan'
+              if bool(patch_applied) and not bool(validation.get('patch_validation_passed')):
+                  patch_applied = False
+                  requires_full_replan = True
+                  route = 'full_replan'
+                  error = error or 'patch_validation_failed'
+              plan_json = json.dumps(plan, ensure_ascii=False) if plan else ''
+              return {
+                  'contract_version': 'patch_result_contract',
+                  'patch_route': str(route or 'full_replan'),
+                  'patch_applied': bool(patch_applied),
+                  'requires_full_replan': bool(requires_full_replan),
+                  'patch_validation_passed': bool(validation.get('patch_validation_passed')),
+                  'patched_normalized_semantic_plan_json': plan_json,
+                  'patched_semantic_plan_json': plan_json,
+                  'changed_fields': json.dumps(changed, ensure_ascii=False),
+                  'unapplied_refinements': json.dumps(validation.get('unapplied_refinements') or [], ensure_ascii=False),
+                  'patch_reason': reason or '',
+                  'patch_error': error or '',
+                  'patch_debug_json': json.dumps(debug or {}, ensure_ascii=False),
+              }
+
+
+          def main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json: str, turn_intent: str, need_requery, last_chart_request_json: str, compact_context_json: str = ''):
+              q = str(question or '')
+              old = _loads(old_normalized_semantic_plan_json)
+              refine = _loads(query_refinement_json)
+              parsed_time = _parse_relative_time(q)
+              compact_context = _loads(compact_context_json)
+              structural = _detect_structural_change(q, refine, old, compact_context)
+              structural_change = structural['structural_change']
+              schema_ref = compact_context.get('schema_context_ref') if isinstance(compact_context.get('schema_context_ref'), dict) else {}
+              debug = {
+                  'turn_intent': str(turn_intent or ''),
+                  'need_requery': _bool(need_requery),
+                  'has_old_plan': bool(old),
+                  'query_refinement_json': refine,
+                  'parsed_time_range': parsed_time,
+                  'structural_change': structural_change,
+                  'structural_reasons': structural['reasons'],
+                  'schema_retrieval_policy': {
+                      'must_retrieve_when': ['new_query', 'patch_route=full_replan', 'new_field', 'new_metric', 'new_filter', 'relation_or_join', 'collection_switch', 'negated_old_field', 'selected_collection_changed', 'related_collections_changed', 'schema_digest_missing_or_changed', 'catalog_digest_missing_or_changed', 'validator_needs_schema_retrieval_reserved'],
+                      'may_reuse_without_retrieval_when': ['time_only', 'limit_only', 'safe_sort_only', 'display_only_without_new_fields', 'chart_only_style_or_type', 'explain_result', 'reanalyze_result_from_profile', 'answer_formatting'],
+                      'current_schema_context_ref': schema_ref,
+                  },
+              }
+              validation = _validate_patch(refine, [], structural_change, old)
+
+              if not old:
+                  return _result(reason='缺少上一轮 normalized semantic plan，无法执行确定性 patch', error='missing_old_plan', debug=debug, validation=_failed_validation(validation), route='full_replan')
+
+              if structural_change:
+                  reason = '检测到结构性查询变化：%s，不执行确定性 patch，转入 LLM_Refine查询规划' % '；'.join(structural['reasons'])
+                  validation = {
+                      'patch_validation_passed': False,
+                      'unapplied_refinements': _unique_keep_order((validation.get('unapplied_refinements') or []) + _unapplied_from_structural_reasons(structural['reasons'])),
+                  }
+                  return _result(reason=reason, debug=debug, validation=validation, route='full_replan')
+
+              plan = deepcopy(old)
+              changed = []
+
+              if _is_chart_type_only(q, refine, need_requery, structural_change):
+                  chart_type = refine.get('chart_type') or refine.get('visualization_type') or _extract_chart_type(q)
+                  if _patch_chart_type(plan, chart_type):
+                      changed.append('chart_request.chart_type')
+                      validation = _validate_patch(refine, changed, False, plan)
+                      return _result(False, False, plan, changed, '检测到仅图表类型变更：%s，不改变 Mongo 查询语义' % chart_type, '', debug, validation, route='chart_only')
+
+              if _can_apply_time_only_patch(refine, parsed_time, structural_change):
+                  if _set_all_stage_time(plan, days=parsed_time['relative_days']):
+                      changed.append('execution_plan.stages[0].time_range.relative_days')
+                      if _patch_title_time(plan, parsed_time['source'], debug):
+                          changed.append('chart_request.title')
+              elif parsed_time:
+                  debug['time_patch_skipped'] = '检测到非纯时间修改或缺少安全白名单条件，禁止执行 time-only patch'
+              elif '今年' in q and not structural_change:
+                  if _set_all_stage_time(plan, mode='this_year'):
+                      changed.append('time_range')
+              elif '上个月' in q and not structural_change:
+                  if _set_all_stage_time(plan, mode='last_month'):
+                      changed.append('time_range')
+
+              m = re.search(r'(?:top|前|只看前|限制)\s*(\d+)\s*(?:条|名|个)?', q, flags=re.I)
+              if m and not structural_change and _patch_limit(plan, m.group(1)):
+                  changed.append('limit')
+              sort_req = _parse_sort_request(q)
+              if sort_req and not structural_change:
+                  known_fields = _collect_known_fields(old, compact_context)
+                  if _patch_sort(plan, sort_req['direction'], sort_req.get('target') or '', known_fields):
+                      changed.append('sort')
+                  else:
+                      debug['unsafe_sort_target'] = sort_req.get('target') or ''
+                      validation = {'patch_validation_passed': False, 'unapplied_refinements': ['sort.unknown_field']}
+                      return _result(reason='排序字段不在上一轮 metric_alias/group_fields/projection_fields/chart 字段白名单内，转入 full_replan', debug=debug, validation=validation, route='full_replan')
+              if not structural_change:
+                  changed.extend(_patch_display(plan, q))
+
+              changed = _unique_keep_order(changed)
+              validation = _validate_patch(refine, changed, structural_change, plan)
+              debug['changed_fields'] = changed
+              debug['patch_validation'] = validation
+
+              if not changed:
+                  return _result(reason='未发现可安全确定性修正的字段，进入 refine full replan', debug=debug, validation=_failed_validation(validation), route='full_replan')
+              if not validation['patch_validation_passed']:
+                  return _result(reason='检测到未应用的结构性修改意图，放弃确定性 patch，转入 LLM_Refine查询规划', debug=debug, validation=validation, route='full_replan')
+
+              if 'execution_plan.stages[0].time_range.relative_days' in changed and len([x for x in changed if x != 'chart_request.title']) == 1:
+                  patch_reason = '检测到仅时间范围变更：%s -> relative_days=%s，保留分组、指标、排序和图表配置' % (parsed_time['source'], parsed_time['relative_days'])
+              else:
+                  patch_reason = '高确定性规则修正：' + ','.join(changed)
+              return _result(True, False, plan, changed, patch_reason, '', debug, validation, route='use_patch')
+
+
+          # 自检说明：
+          # 1. “改成过去两个月”且 refine 仅声明 time_range_change，并确认 group/metric/filter/collection 均 unchanged：允许 patch，relative_days=60。
+          # 2. “不再按品牌，改按订单状态统计”：命中结构性分组变化，patch_applied=false，requires_full_replan=true。
+          # 3. “按订单状态统计过去两个月”：命中结构性分组变化，即使可解析时间也不能只 patch 时间，必须 full replan。
+          # 4. “换成饼图”且 need_requery=false、无结构性变化、无时间变化：允许 chart-type-only patch，不改变 Mongo 查询语义。
+          # 5. “按订单状态统计过去两个月，生成新的柱状图”：chart 词不能覆盖结构性变化，必须 full replan。
+          # 6. “只看前10个”且无结构性变化：允许 limit-only patch。
+          # 7. “改成升序”且无结构性变化：允许 sort-only patch。
+        code_language: python3
+        desc: refine_query deterministic patch 白名单：仅允许 time-only/limit-only/sort-only/display-only/chart-type-only；结构性变化一律 full_replan。
+        outputs:
+          contract_version:
+            children:
+            type: string
+          patch_applied:
+            children:
+            type: boolean
+          requires_full_replan:
+            children:
+            type: boolean
+          patch_validation_passed:
+            children:
+            type: boolean
+          patch_route:
+            children:
+            type: string
+          patched_normalized_semantic_plan_json:
+            children:
+            type: string
+          patched_semantic_plan_json:
+            children:
+            type: string
+          changed_fields:
+            children:
+            type: string
+          patch_reason:
+            children:
+            type: string
+          patch_error:
+            children:
+            type: string
+          unapplied_refinements:
+            children:
+            type: string
+          patch_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_尝试确定性查询修正
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000001'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000004'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000004'
+          - turn_intent
+          value_type: string
+          variable: turn_intent
+        - value_selector:
+          - '1776000000004'
+          - need_requery
+          value_type: boolean
+          variable: need_requery
+        - value_selector:
+          - '1776000000001'
+          - last_chart_request_json
+          value_type: string
+          variable: last_chart_request_json
+        - value_selector:
+          - '1776000000001'
+          - compact_context_json
+          value_type: string
+          variable: compact_context_json
+      height: 80
+      id: '1776000000019'
+      position:
+        x: 3680
+        "y": 180
+      positionAbsolute:
+        x: 3680
+        "y": 180
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: replan-system
+          role: system
+          text: "{{#1776000000027.replan_system_prompt#}}"
+        - id: replan-user
+          role: user
+          text: "{{#1776000000027.replan_user_prompt#}}"
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: true
+            required:
+            - contract_version
+            - primary_collection
+            - related_collections
+            - execution_mode
+            - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
+            properties:
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              execution_mode:
+                type: string
+              answer_mode:
+                type: string
+              needs_chart:
+                type: boolean
+              stages:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array
+                items:
+                  type: string
+              replan_error:
+                type: string
+              clarify_suggestion:
+                type: string
+        structured_output_enabled: true
+        title: LLM_Refine查询规划
+        type: llm
+        vision:
+          enabled: false
+      height: 98
+      id: '1776000000020'
+      position:
+        x: 5880
+        "y": 2200
+      positionAbsolute:
+        x: 5880
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          PROTECT=['primary_collection','related_collections','group_fields','metric_function','metric_field','metric_alias','filters','time_range','sort','limit','needs_chart','chart_request','answer_mode']
+
+          def _loads(v):
+              if isinstance(v,dict): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(v); return x if isinstance(x,dict) else {}
+                  except Exception: return {}
+              return {}
+
+          def _list(v):
+              if isinstance(v,list): return v
+              if isinstance(v,str) and v.strip():
+                  try:
+                      x=json.loads(v); return x if isinstance(x,list) else []
+                  except Exception: return []
+              return []
+
+          def _first_stage(plan):
+              stages=((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan,dict) else []
+              return stages[0] if isinstance(stages,list) and stages and isinstance(stages[0],dict) else {}
+
+          def _set_stage(plan, stage):
+              if not isinstance(plan.get('execution_plan'),dict): plan['execution_plan']={}
+              stages=plan['execution_plan'].get('stages')
+              if not isinstance(stages,list) or not stages: stages=[{}]
+              stages[0].update(stage); plan['execution_plan']['stages']=stages
+          def _allowed_fields(question, query_refinement_json, changed_fields_json):
+              text=(str(question or '')+' '+json.dumps(_loads(query_refinement_json),ensure_ascii=False)).lower()
+              allowed=set(_list(changed_fields_json))
+              rules={'time_range':['时间','近','最近','过去','天','月','年'],'filters':['筛选','过滤','条件','只看','排除','口径'],'group_fields':['分组','按','维度','口径','厂商','供应商','vendor'],'metric_field':['指标','金额','数量','统计','真实'],'metric_function':['求和','平均','最大','最小','计数','count','sum','avg'],'metric_alias':['别名'],'sort':['排序','升序','降序'],'limit':['top','前','limit'],'chart_request':['图','柱状图','折线图','饼图','可视化'],'needs_chart':['图','可视化'],'answer_mode':['分析','解释','明细'],'primary_collection':['换成','改查','查询对象','collection'],'related_collections':['关联','join','补充']}
+              for field, keys in rules.items():
+                  if any(k.lower() in text for k in keys): allowed.add(field)
+              return allowed
+
+          def main(old_normalized_semantic_plan_json: str, replanned_normalized_semantic_plan_json: str, current_question: str, query_refinement_json: str, changed_fields_json: str, refine_schema_context: str, patch_reason: str, replan_valid=True, replan_error: str=''):
+              old=_loads(old_normalized_semantic_plan_json); new=_loads(replanned_normalized_semantic_plan_json)
+              if str(replan_valid).lower() in {'false','0','no'} or not new:
+                  return {'normalized_semantic_plan_json':json.dumps(old,ensure_ascii=False),'guard_valid':False,'guard_warning':'','guard_error':str(replan_error or '重规划结果无效'),'guard_changed_fields_json':'[]','guard_rollback_fields_json':'[]','guard_debug_json':json.dumps({'fallback':'old_plan'},ensure_ascii=False)}
+              if not old:
+                  return {'normalized_semantic_plan_json':'','guard_valid':False,'guard_warning':'','guard_error':'缺少上一轮归一化语义计划，无法进行差异保护','guard_changed_fields_json':'[]','guard_rollback_fields_json':'[]','guard_debug_json':'{}'}
+              os=_first_stage(old); ns=_first_stage(new); allowed=_allowed_fields(current_question,query_refinement_json,changed_fields_json)
+              changed=[]; rollback=[]; warnings=[]; errors=[]
+              for k in PROTECT:
+                  if k in ['needs_chart','chart_request','answer_mode']:
+                      ov,nv=old.get(k),new.get(k)
+                      if nv!=ov:
+                          changed.append(k)
+                          if k not in allowed and ov not in (None,'',[],{}): new[k]=ov; rollback.append(k)
+                  else:
+                      ov,nv=os.get(k),ns.get(k)
+                      if nv!=ov:
+                          changed.append(k)
+                          if k not in allowed and ov not in (None,'',[],{}): ns[k]=ov; rollback.append(k)
+              for k in ['execution_plan','needs_chart','chart_request','answer_mode']:
+                  if k not in new and k in old: new[k]=old[k]; warnings.append('补齐缺失字段:'+k)
+              _set_stage(new,ns)
+              valid=bool(new.get('execution_plan') and ((new.get('execution_plan') or {}).get('stages')))
+              if not valid: errors.append('guard 后 semantic plan 缺少 execution_plan.stages')
+              if rollback: warnings.append('已回滚未授权漂移字段: '+','.join(sorted(set(rollback))))
+              return {'normalized_semantic_plan_json':json.dumps(new,ensure_ascii=False),'guard_valid':valid,'guard_warning':'; '.join(warnings),'guard_error':'; '.join(errors),'guard_changed_fields_json':json.dumps(sorted(set(changed)),ensure_ascii=False),'guard_rollback_fields_json':json.dumps(sorted(set(rollback)),ensure_ascii=False),'guard_debug_json':json.dumps({'allowed_fields':sorted(allowed),'patch_reason':patch_reason},ensure_ascii=False)}
+        code_language: python3
+        desc: refine_query full replan 差异保护：比较 old/new semantic plan，回滚未授权漂移字段，输出统一 normalized_semantic_plan_json。
+        outputs:
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          guard_valid:
+            children:
+            type: boolean
+          guard_warning:
+            children:
+            type: string
+          guard_error:
+            children:
+            type: string
+          guard_changed_fields_json:
+            children:
+            type: string
+          guard_rollback_fields_json:
+            children:
+            type: string
+          guard_debug_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_语义计划差异保护
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000027'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000028'
+          - replanned_normalized_semantic_plan_json
+          value_type: string
+          variable: replanned_normalized_semantic_plan_json
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: current_question
+        - value_selector:
+          - '1776000000027'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000027'
+          - changed_fields_json
+          value_type: string
+          variable: changed_fields_json
+        - value_selector:
+          - '1776000000027'
+          - schema_context_for_replan
+          value_type: string
+          variable: refine_schema_context
+        - value_selector:
+          - '1776000000027'
+          - patch_reason
+          value_type: string
+          variable: patch_reason
+        - value_selector:
+          - '1776000000028'
+          - replan_valid
+          value_type: boolean
+          variable: replan_valid
+        - value_selector:
+          - '1776000000028'
+          - replan_error
+          value_type: string
+          variable: replan_error
+      height: 80
+      id: '1776000000021'
+      position:
+        x: 9480
+        "y": 2200
+      positionAbsolute:
+        x: 9480
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: refine_like_requery
+          id: refine_like_requery
+          logical_operator: and
+          conditions:
+          - comparison_operator: is
+            id: query-type-refine-like
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776000000013'
+            - refine_like_requery
+        desc: query 路由内使用 refine-like requery 条件分流：has_last_context=true 且 need_requery=true 且 turn_intent 属于 refine_query/fix_result/continue_previous；其他 query 继续走原 new_query 链路。
+        selected: false
+        title: 条件分支_query类型判断
+        type: if-else
+      height: 148
+      id: '1776000000022'
+      position:
+        x: 3220
+        "y": 0
+      positionAbsolute:
+        x: 3220
+        "y": 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     - data:
         cases:
         - case_id: case_use_patch
@@ -22,9 +781,7 @@
             - patch_route
           id: case_chart_only
           logical_operator: and
-        desc: refine_query patch 结果只按 patch_route 分流：use_patch 进入 semantic_plan_normalizer/Mongo
-          输入准备；chart_only 复用上一轮结果进入改图分支；默认进入 collection selector + schema retrieval
-          + LLM_Refine查询规划。
+        desc: refine_query patch 结果只按 patch_route 分流：use_patch 进入 semantic_plan_normalizer/Mongo 输入准备；chart_only 复用上一轮结果进入改图分支；默认进入 collection selector + schema retrieval + LLM_Refine查询规划。
         selected: false
         title: 条件分支_patch结果判断
         type: if-else
@@ -32,12 +789,142 @@
       id: '1776000000023'
       position:
         x: 4140
-        y: 180
+        "y": 180
       positionAbsolute:
         x: 4140
-        y: 180
+        "y": 180
       selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        code: |-
+          import json
+          import re
+
+          # schema metadata C contract helpers
+          import copy
+          import hashlib
+          import json
+          import re
+
+
+          CONTRACT_VERSION = 'schema_metadata_contract'
+          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
+          NON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors', 'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}
+
+
+          def default_query_rules():
+              return {
+                  'require_time_range_for_aggregate': True,
+                  'max_limit': 100,
+                  'allowed_operations': ['find', 'aggregate'],
+                  'aggregate_required_when': [],
+                  'find_allowed_when': [],
+                  'sensitive_field_policy': 'deny_return_group_sort',
+                  'default_limit': 100,
+                  'max_time_range_days': 366,
+              }
+
+
+          def _strip_quotes(v):
+              v = str(v or '').strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                  return v[1:-1]
+              return v
+
+
+          def _split_inline_list(body):
+              # Simple comma split that keeps quoted Chinese/ASCII aliases intact for the schema docs used here.
+              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
+
+
+          def _parse_scalar(v):
+              v = str(v or '').strip()
+              if not v:
+                  return ''
+              if v in {'|', '>', '|-', '>-'}:
+                  return ''
+              if v in {'true', 'True'}:
+                  return True
+              if v in {'false', 'False'}:
+                  return False
+              if v in {'null', 'Null', 'NULL', '~'}:
+                  return None
+              if v.startswith('[') and v.endswith(']'):
+                  return _split_inline_list(v[1:-1].strip())
+              if v.startswith('{') and v.endswith('}'):
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return _strip_quotes(v)
+              if re.match(r'^-?\d+$', v):
+                  try:
+                      return int(v)
+                  except Exception:
+                      pass
+              if re.match(r'^-?\d+\.\d+$', v):
+                  try:
+                      return float(v)
+                  except Exception:
+                      pass
+              return _strip_quotes(v)
+
+
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1

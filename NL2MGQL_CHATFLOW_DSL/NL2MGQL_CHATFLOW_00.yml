@@ -32,8 +32,7 @@ workflow:
     - last_normalized_execution_plan
     value: ''
     value_type: string
-  - description: 上一轮归一化语义计划 JSON（用于 refine_query old semantic plan，不等同于 Mongo execution
-      plan）
+  - description: 上一轮归一化语义计划 JSON（用于 refine_query old semantic plan，不等同于 Mongo execution plan）
     id: 0a4fcdb4-6ba6-4a0e-95fe-1d8d32f12c63
     name: last_normalized_semantic_plan_json
     selector:
@@ -469,18 +468,6 @@ workflow:
       type: custom
       zIndex: 0
     - data:
-        isInIteration: false
-        sourceType: if-else
-        targetType: llm
-      id: 1775000000014-false-1775000000018-target
-      selected: false
-      source: '1775000000014'
-      sourceHandle: 'false'
-      target: '1775000000018'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
         isInLoop: false
         sourceType: code
         targetType: if-else
@@ -499,17 +486,6 @@ workflow:
       source: '1775000000015'
       sourceHandle: 'true'
       target: '1775000000012'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        sourceType: if-else
-        targetType: llm
-      id: 1775000000015-false-1775000000018-target
-      source: '1775000000015'
-      sourceHandle: 'false'
-      target: '1775000000018'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -543,28 +519,6 @@ workflow:
       source: '1775000000017'
       sourceHandle: 'true'
       target: '1775000000013'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInIteration: false
-        sourceType: if-else
-        targetType: llm
-      id: 1775000000017-false-1775000000018-target
-      source: '1775000000017'
-      sourceHandle: 'false'
-      target: '1775000000018'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: 1775000000018-source-1775000000019-target
-      source: '1775000000018'
-      sourceHandle: source
-      target: '1775000000019'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -616,10 +570,10 @@ workflow:
         isInLoop: false
         sourceType: start
         targetType: code
-      id: 1773909192919-source-1776000000001-target
+      id: 1773909192919-source-1776100000000-target
       source: '1773909192919'
       sourceHandle: source
-      target: '1776000000001'
+      target: '1776100000000'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -631,28 +585,6 @@ workflow:
       source: '1776000000001'
       sourceHandle: source
       target: '1776000000002'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: llm
-      id: 1776000000002-source-1776000000003-target
-      source: '1776000000002'
-      sourceHandle: source
-      target: '1776000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: 1776000000003-source-1776000000004-target
-      source: '1776000000003'
-      sourceHandle: source
-      target: '1776000000004'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -802,28 +734,6 @@ workflow:
       zIndex: 0
     - data:
         isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: 1776000000020-source-1776000000028-target
-      source: '1776000000020'
-      sourceHandle: source
-      target: '1776000000028'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: llm
-      id: 1776000000027-source-1776000000020-target
-      source: '1776000000027'
-      sourceHandle: source
-      target: '1776000000020'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
         sourceType: code
         targetType: code
       id: 1776000000028-source-1776000000021-target
@@ -956,25 +866,65 @@ workflow:
       zIndex: 0
     - data:
         isInLoop: false
+        sourceType: iteration
+        targetType: code
+      id: 1780000000003-source-1780000000007-target
+      source: '1780000000003'
+      sourceHandle: source
+      target: '1780000000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
         sourceType: code
-        targetType: llm
-      id: 1775000000005-source-1773975766025-target
-      source: '1775000000005'
+        targetType: code
+      id: 1780000000007-source-1780000000008-target
+      source: '1780000000007'
       sourceHandle: source
-      target: '1773975766025'
+      target: '1780000000008'
       targetHandle: target
       type: custom
       zIndex: 0
     - data:
         isInLoop: false
-        sourceType: llm
+        sourceType: code
+        targetType: code
+      id: 1780000000008-source-1780000000009-target
+      source: '1780000000008'
+      sourceHandle: source
+      target: '1780000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1780000000009-source-1778000000001-target
+      source: '1780000000009'
+      sourceHandle: source
+      target: '1778000000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
         targetType: if-else
-      id: 1773975766025-source-1775000000014-target
-      source: '1773975766025'
+      id: 1778000000001-source-1778000000002-target
+      source: '1778000000001'
       sourceHandle: source
-      target: '1775000000014'
+      target: '1778000000002'
       targetHandle: target
       type: custom
       zIndex: 0
     - data:
-        isInLoop: false
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1778000000002-valid-1775000000007-target
+      source: '1778000000002'
+      sourceHandle: valid
+      target: '1775000000007'
+      targetHandle: target
