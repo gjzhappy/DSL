@@ -505,54 +505,10 @@
         prompt_template:
         - id: planner-system
           role: system
-          text: |
-            你是 Phase 7 的 LLM_查询规划节点：只生成 semantic_plan_contract JSON，不再承担 collection 初判职责。
-            输入包含用户问题、collection_selection_json、compact_context_json 以及已裁剪的 selected schema context / schema metadata / alias index。
-            硬性规则：
-            - 只输出 JSON；不要输出 markdown、解释、代码块。
-            - 顶层 contract_version 必须为 semantic_plan_contract。
-            - primary_collection 必须来自 collection_selection_json.selected_primary_collection。
-            - related_collections 只能填写本次查询实际需要读取、过滤、分组、投影、排序、merge/enrich 的集合。
-            - selected_related_collections 是可选候选，不是强制使用；如果 primary_collection 已经覆盖用户问题所需字段/指标/维度，则 related_collections 必须为空。
-            - final_merge.merge_mode="none" 且所有 stage 都在 primary_collection 时，related_collections 应为空。
-            - related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。
-            - 只能使用 schema_context / schema_metadata 中存在的 collection、field、metric、relation；别名必须解析为 canonical name。
-            - 不确定 collection/field/metric/relation 时，不要猜，输出 requires_clarification=true 或 needs_schema_retrieval=true。
-            - compact_context_json 只能作为弱上下文，不得继承当前用户已否定的旧字段。
-            - 不输出 Mongo pipeline、MQL、MGQL pipeline、AST、patch diff，也不要输出 $match、$group、$project、$lookup 等 Mongo stage。
-            - intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related。
-            - intent_type 不得使用 aggregate_group_by / aggregate / aggregation / group_by / group_by_metric / group_by_dimension / group_by_metric_with_time_filter / group_by_dimension_with_time_range_and_aggregation 这类泛化或别名值；按维度分组统计、按字段分组统计、group by 聚合统计必须统一使用 aggregate_summary，明细查询必须使用 detail_query；不要输出 aggregate_group_by 这类非 canonical intent_type。
-            必须输出完整 semantic_plan_contract：
-            {
-              "contract_version":"semantic_plan_contract",
-              "primary_collection":"",
-              "related_collections":[],
-              "execution_mode":"single_stage",
-              "answer_mode":"data",
-              "needs_chart":false,
-              "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],
-              "final_merge":{"merge_mode":"none"},
-              "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},
-              "requires_clarification":false,
-              "clarification_question":"",
-              "needs_schema_retrieval":false,
-              "warnings":[]
-            }
+          text: "{{#1775000000005.semantic_plan_system_prompt#}}"
         - id: planner-user
           role: user
-          text: |
-            question:
-            {{#sys.query#}}
-            collection_selection_json:
-            {{#1777000000001.collection_selection_json#}}
-            compact_context_json（弱上下文，不继承用户已否定字段）:
-            {{#1776000000001.last_context_json#}}
-            schema_context（已按 selected collections 裁剪）:
-            {{#1777100000005.schema_context#}}
-            schema_metadata_json（仅使用 canonical field/metric/relation/query_rules）:
-            {{#1777100000005.schema_metadata_json#}}
-            schema_alias_index_json（用于别名到 canonical name 映射）:
-            {{#1777100000005.schema_alias_index_json#}}
+          text: "{{#1775000000005.semantic_plan_user_prompt#}}"
         selected: false
         structured_output:
           schema:
@@ -583,8 +539,16 @@
                   type: string
               execution_mode:
                 type: string
+                enum:
+                - single_stage
+                - multi_stage
               answer_mode:
                 type: string
+                enum:
+                - data
+                - chart
+                - explain
+                - clarify
               needs_chart:
                 type: boolean
               stages:
