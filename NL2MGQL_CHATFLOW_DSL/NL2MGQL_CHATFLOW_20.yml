@@ -326,6 +326,360 @@
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        desc: 首轮 new_query schema hydration：逐个遍历 selector 输出的 schema_hydration_collections，确保每个 collection 单独检索。
+        error_handle_mode: terminated
+        height: 360
+        is_parallel: false
+        iterator_selector:
+        - '1777000000001'
+        - schema_hydration_collections
+        output_selector:
+        - '1791000000004'
+        - output
+        output_type: array[string]
+        parallel_nums: 3
+        selected: false
+        start_node_id: 1791000000001start
+        title: 迭代_遍历SchemaHydrationCollections
+        type: iteration
+        width: 980
+      height: 360
+      id: '1791000000001'
+      position:
+        x: 3710
+        y: -980
+      positionAbsolute:
+        x: 3710
+        y: -980
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 980
+    - data:
+        desc: ''
+        isInIteration: true
+        selected: false
+        title: ''
+        type: iteration-start
+      draggable: false
+      height: 48
+      id: 1791000000001start
+      parentId: '1791000000001'
+      position:
+        x: 40
+        y: 90
+      positionAbsolute:
+        x: 3750
+        y: -890
+      selectable: false
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom-iteration-start
+      width: 44
+      zIndex: 1002
+    - data:
+        code: |
+          def main(current_collection):
+              collection_name = str(current_collection or '').strip()
+              query_text = '\n'.join([
+                  'metadata_type: mongo_schema',
+                  'collection_name: ' + collection_name,
+                  '请返回该 collection 对应的完整 schema metadata。',
+              ])
+              return {'collection_name': collection_name, 'query_text': query_text}
+        code_language: python3
+        desc: 一次只为当前 collection 构造完整 schema metadata 检索 query，不拼接多个 collection。
+        isInIteration: true
+        isIterationStart: true
+        iteration_id: '1791000000001'
+        outputs:
+          collection_name:
+            children:
+            type: string
+          query_text:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_构建单CollectionSchema检索Query
+        type: code
+        variables:
+        - value_selector:
+          - '1791000000001'
+          - item
+          value_type: string
+          variable: current_collection
+      height: 52
+      id: '1791000000002'
+      parentId: '1791000000001'
+      position:
+        x: 380
+        y: 90
+      positionAbsolute:
+        x: 4090
+        y: -890
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1001
+    - data:
+        dataset_ids:
+        - 5922ed30-d8cf-4164-9658-7e4f7fb80514
+        isInIteration: true
+        iteration_id: '1791000000001'
+        metadata_filtering_conditions:
+          conditions:
+          - comparison_operator: is
+            id: new-query-hydration-metadata-type-filter
+            metadata_id: metadata_type
+            name: metadata_type
+            value: mongo_schema
+          - comparison_operator: is
+            id: new-query-hydration-collection-filter
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1791000000002.collection_name#}}"
+          logical_operator: and
+        metadata_filtering_mode: manual
+        multiple_retrieval_config:
+          reranking_enable: false
+          reranking_mode: weighted_score
+          top_k: 4
+          weights:
+            keyword_setting:
+              keyword_weight: 0.3
+            vector_setting:
+              embedding_model_name: nomic-embed-text:v1.5
+              embedding_provider_name: langgenius/ollama/ollama
+              vector_weight: 0.7
+            weight_type: customized
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1791000000002'
+        - query_text
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索_CandidateSchemaByCollection
+        type: knowledge-retrieval
+      height: 90
+      id: '1791000000003'
+      parentId: '1791000000001'
+      position:
+        x: 800
+        y: 90
+      positionAbsolute:
+        x: 4510
+        y: -890
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+          def main(collection_name: str, docs):
+              safe_docs = []
+              for item in docs or []:
+                  if isinstance(item, dict):
+                      safe_docs.append(item)
+              return {'output': json.dumps({'collection_name': str(collection_name or '').strip(), 'docs': safe_docs}, ensure_ascii=False, default=str)}
+        code_language: python3
+        desc: 将当前 collection 的检索结果打包为 iteration output，供外层合并节点计算 expected/actual/missing。
+        isInIteration: true
+        iteration_id: '1791000000001'
+        outputs:
+          output:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_打包单CollectionSchema检索结果
+        type: code
+        variables:
+        - value_selector:
+          - '1791000000002'
+          - collection_name
+          value_type: string
+          variable: collection_name
+        - value_selector:
+          - '1791000000003'
+          - result
+          value_type: array[object]
+          variable: docs
+      height: 52
+      id: '1791000000004'
+      parentId: '1791000000001'
+      position:
+        x: 1220
+        y: 90
+      positionAbsolute:
+        x: 4930
+        y: -890
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+      zIndex: 1002
+    - data:
+        code: |
+          import json
+          import re
+
+          def _loads(value, default):
+              if isinstance(value, (dict, list)):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return default
+              return default
+
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if isinstance(value, str) and value.strip():
+                  parsed = _loads(value, None)
+                  if isinstance(parsed, list):
+                      return [str(x).strip() for x in parsed if str(x).strip()]
+                  return [value.strip()]
+              return []
+
+          def _content(doc):
+              if not isinstance(doc, dict):
+                  return ''
+              for key in ('content', 'text', 'page_content'):
+                  if doc.get(key):
+                      return str(doc.get(key) or '')
+              data = doc.get('data') if isinstance(doc.get('data'), dict) else {}
+              for key in ('content', 'text', 'page_content'):
+                  if data.get(key):
+                      return str(data.get(key) or '')
+              return ''
+
+          def _metadata(doc):
+              if not isinstance(doc, dict):
+                  return {}
+              meta = doc.get('metadata') if isinstance(doc.get('metadata'), dict) else {}
+              data = doc.get('data') if isinstance(doc.get('data'), dict) else {}
+              if not meta and isinstance(data.get('metadata'), dict):
+                  meta = data.get('metadata')
+              return meta or {}
+
+          def _extract_collection(doc):
+              meta = _metadata(doc)
+              for key in ('collection_name', 'collection'):
+                  if meta.get(key):
+                      return str(meta.get(key) or '').strip()
+              text = _content(doc)
+              patterns = [r'collection_name\s*[:=]\s*["\']?([A-Za-z0-9_\-]+)', r'collection\s*[:=]\s*["\']?([A-Za-z0-9_\-]+)']
+              for pattern in patterns:
+                  m = re.search(pattern, text)
+                  if m:
+                      return m.group(1).strip()
+              try:
+                  raw = json.loads(text)
+                  if isinstance(raw, dict) and raw.get('collection_name'):
+                      return str(raw.get('collection_name') or '').strip()
+              except Exception:
+                  pass
+              return ''
+
+          def main(hydrated_results=None, expected_collections=None):
+              expected = _list(expected_collections)
+              expected_set = set(expected)
+              merged_docs = []
+              actual = []
+              warnings = []
+              for raw in hydrated_results or []:
+                  item = _loads(raw, {})
+                  requested = str(item.get('collection_name') or '').strip()
+                  docs = item.get('docs') if isinstance(item.get('docs'), list) else []
+                  if not docs:
+                      warnings.append({'type': 'schema_hydration_empty_retrieval', 'collection_name': requested})
+                  for doc in docs:
+                      if not isinstance(doc, dict):
+                          continue
+                      cname = _extract_collection(doc) or requested
+                      if cname and cname not in actual:
+                          actual.append(cname)
+                      if expected_set and cname and cname not in expected_set:
+                          warnings.append({'type': 'schema_hydration_unexpected_collection', 'collection_name': cname, 'requested_collection': requested})
+                      merged_docs.append(doc)
+              missing = [name for name in expected if name not in set(actual)]
+              complete = bool(expected) and not missing
+              summary = {
+                  'expected_collections': expected,
+                  'actual_collections': actual,
+                  'missing_collections': missing,
+                  'schema_hydration_complete': complete,
+                  'warnings': warnings,
+              }
+              return {
+                  'result': merged_docs,
+                  'hydration_expected_collections_json': json.dumps(expected, ensure_ascii=False),
+                  'hydration_actual_collections_json': json.dumps(actual, ensure_ascii=False),
+                  'hydration_missing_collections_json': json.dumps(missing, ensure_ascii=False),
+                  'schema_hydration_complete': complete,
+                  'schema_hydration_summary_json': json.dumps(summary, ensure_ascii=False),
+                  'hydration_warnings_json': json.dumps(warnings, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: 合并逐 collection schema retrieval 结果，计算 expected/actual/missing；missing 非空时由后续裁剪节点阻断 planner。
+        outputs:
+          result:
+            type: array[object]
+          hydration_expected_collections_json:
+            children:
+            type: string
+          hydration_actual_collections_json:
+            children:
+            type: string
+          hydration_missing_collections_json:
+            children:
+            type: string
+          schema_hydration_complete:
+            children:
+            type: boolean
+          schema_hydration_summary_json:
+            children:
+            type: string
+          hydration_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并HydratedCandidateSchemas
+        type: code
+        variables:
+        - value_selector:
+          - '1791000000001'
+          - output
+          value_type: array[string]
+          variable: hydrated_results
+        - value_selector:
+          - '1777000000001'
+          - schema_hydration_collections
+          value_type: array[string]
+          variable: expected_collections
+      height: 80
+      id: '1791000000005'
+      position:
+        x: 4910
+        y: -980
+      positionAbsolute:
+        x: 4910
+        y: -980
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
       x: -120
       y: 80
