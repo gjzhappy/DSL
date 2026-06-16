@@ -1,371 +1,888 @@
-    - data:
-        code: |
-          """Phase 9 runtime schema context helper for semantic_plan_validator.
-
-          Builds a transient schema_runtime_context_contract immediately before validation.
-          It never persists full schema metadata or alias index into compact conversation context.
-          """
-
-          from __future__ import annotations
-
-          import json
-          from typing import Any, Dict, List, Tuple
-
-          CONTRACT_VERSION = "schema_runtime_context_contract"
-
-
-          def _loads(v: Any, default: Any = None) -> Any:
-              if default is None:
-                  default = {}
-              if isinstance(v, (dict, list)):
-                  return v
-              if isinstance(v, str) and v.strip():
-                  try:
-                      return json.loads(v)
-                  except Exception:
                       return default
               return default
-
-
-          def _dumps(v: Any) -> str:
-              return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(",", ":"))
-
-
-          def _str(v: Any) -> str:
-              return str(v or "").strip()
 
 
           def _list(v: Any) -> List[Any]:
               if v is None or v == "":
                   return []
               if isinstance(v, list):
-                  return [x for x in v if x is not None and _str(x)]
+                  return [x for x in v if x is not None and str(x).strip()]
               if isinstance(v, str):
-                  parsed = _loads(v, None)
-                  if isinstance(parsed, list):
-                      return [x for x in parsed if x is not None and _str(x)]
-                  return [x.strip() for x in v.split(",") if x.strip()]
+                  s = v.strip()
+                  if not s:
+                      return []
+                  try:
+                      parsed = json.loads(s)
+                      if isinstance(parsed, list):
+                          return [x for x in parsed if x is not None and str(x).strip()]
+                  except Exception:
+                      pass
+                  return [x.strip() for x in re.split(r"\s*,\s*", s) if x.strip()]
               return [v]
 
 
-          def _add(xs: List[str], value: Any) -> None:
-              s = _str(value)
-              if s and s not in xs:
-                  xs.append(s)
+          def _str(v: Any) -> str:
+              return str(v or "").strip()
 
 
-          def _collections_from_plan(plan: Dict[str, Any]) -> Tuple[List[str], str]:
-              out: List[str] = []
-              primary = _str(plan.get("primary_collection"))
-              _add(out, primary)
-              for rc in _list(plan.get("related_collections")):
-                  _add(out, rc)
+          def _result(route: str, plan: Dict[str, Any] | None, errors=None, warnings=None, autofixes=None, clarification="", blocked="", debug=None, needs_schema_retrieval=False) -> Dict[str, Any]:
+              route = route if route in VALID_ROUTES else "invalid"
+              normalized = plan if isinstance(plan, dict) else {}
+              return {
+                  "contract_version": "validator_result_contract",
+                  "valid": route == "valid",
+                  "validator_route": route,
+                  "normalized_plan": normalized,
+                  "normalized_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
+                  "semantic_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
+                  "normalized_semantic_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
+                  "errors": errors or [],
+                  "warnings": warnings or [],
+                  "autofixes": autofixes or [],
+                  "needs_replan": route == "needs_replan",
+                  "needs_schema_retrieval": bool(needs_schema_retrieval),
+                  "requires_clarification": route == "requires_clarification",
+                  "clarification_question": clarification or ("我需要确认一下：当前查询中的字段或指标对应哪个 schema 字段？" if route == "requires_clarification" else ""),
+                  "blocked_reason": blocked or ("当前查询不符合安全或 schema 关系约束，未进入 Mongo 编译执行。" if route == "blocked" else ""),
+                  "debug": debug or {},
+                  "validator_result_json": "",  # filled by main for DSL convenience
+                  "answer_payload_json": "",
+                  "answer_type": {"requires_clarification": "clarification", "blocked": "validation_error", "needs_replan": "validation_error", "invalid": "system_error"}.get(route, "data"),
+                  "final_answer_markdown": "",
+                  "context_update_json": "",
+              }
+
+
+          def _field_ref_collections(value: Any) -> List[str]:
+              refs: List[str] = []
+              if isinstance(value, dict):
+                  for v in value.values():
+                      refs.extend(_field_ref_collections(v))
+              elif isinstance(value, list):
+                  for v in value:
+                      refs.extend(_field_ref_collections(v))
+              elif isinstance(value, str):
+                  for match in re.findall(r"\b([A-Za-z_][\w-]*)\.[A-Za-z_][\w-]*\b", value):
+                      if match not in refs:
+                          refs.append(match)
+              return refs
+
+
+          def _related_collection_used(plan: Dict[str, Any], related: str) -> bool:
               stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
               for stage in stages:
-                  if isinstance(stage, dict):
-                      _add(out, stage.get("collection"))
-                      _add(out, stage.get("primary_collection"))
-                      for rc in _list(stage.get("related_collections")):
-                          _add(out, rc)
-              return out, primary
+                  if isinstance(stage, dict) and _str(stage.get("collection")) == related:
+                      return True
+              final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
+              if _str(final_merge.get("merge_mode") or "none") != "none":
+                  if related in _field_ref_collections(final_merge) or related in [_str(x) for x in _list(final_merge.get("collections") or final_merge.get("related_collections") or final_merge.get("merge_collections"))]:
+                      return True
+                  if related in json.dumps(final_merge, ensure_ascii=False):
+                      return True
+              for key in ("joins", "join", "relations", "relation", "enrich", "enrichments", "lookup", "lookups"):
+                  if related in _field_ref_collections(plan.get(key)) or (isinstance(plan.get(key), (dict, list)) and related in json.dumps(plan.get(key), ensure_ascii=False)):
+                      return True
+              for key in ("filters", "group_fields", "projection_fields", "sort"):
+                  for stage in stages:
+                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                          return True
+              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+              if related in _field_ref_collections([chart.get("x_field"), chart.get("y_field")]):
+                  return True
+              for key in ("output_fields", "return_fields", "select_fields"):
+                  if related in _field_ref_collections(plan.get(key)):
+                      return True
+                  for stage in stages:
+                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
+                          return True
+              return False
 
 
-          def _collections_from_selection(selection: Dict[str, Any]) -> List[str]:
-              out: List[str] = []
-              _add(out, selection.get("selected_primary_collection"))
-              for key in ("selected_related_collections", "related_collections", "candidate_collections"):
-                  for c in _list(selection.get(key)):
-                      if isinstance(c, dict):
-                          _add(out, c.get("collection") or c.get("name"))
-                      else:
-                          _add(out, c)
-              return out
-
-
-          def _collections_from_compact(compact: Dict[str, Any]) -> List[str]:
-              out: List[str] = []
-              ref = compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {}
-              for c in _list(ref.get("collections")):
-                  _add(out, c)
-              _add(out, compact.get("last_primary_collection"))
-              for c in _list(compact.get("last_related_collections")):
-                  _add(out, c)
-              return out
-
-
-          def _schema_info(schema_raw: Any) -> Tuple[Dict[str, Any], bool, str]:
-              schema = _loads(schema_raw, {})
-              if not isinstance(schema, dict) or not schema:
-                  return {}, False, "empty_schema_metadata"
-              collections = schema.get("collections")
-              if not isinstance(collections, dict) or not collections:
-                  return schema, False, "missing_schema_metadata_collections"
-              return schema, True, ""
-
-
-          def _alias_ready(alias_raw: Any) -> Tuple[Dict[str, Any], bool, str]:
-              alias_index = _loads(alias_raw, {})
-              if not isinstance(alias_index, dict) or not alias_index:
-                  return {}, False, "empty_schema_alias_index"
-              return alias_index, True, ""
-
-
-          def _parsed_collection_names(schema: Dict[str, Any]) -> List[str]:
-              collections = schema.get("collections") if isinstance(schema, dict) else {}
-              return [str(k).strip() for k in collections.keys() if str(k).strip()] if isinstance(collections, dict) else []
-
-
-          def _prune_ref_to_parsed(collections: List[str], schema: Dict[str, Any], warnings: List[Any]) -> List[str]:
-              parsed = set(_parsed_collection_names(schema))
-              if not parsed:
-                  return collections
-              kept = [c for c in collections if c in parsed]
-              removed = [c for c in collections if c not in parsed]
+          def _prune_unused_related_collections(plan: Dict[str, Any], autofixes: List[Dict[str, Any]]) -> List[str]:
+              related = [_str(x) for x in _list(plan.get("related_collections"))]
+              kept = [rc for rc in related if _related_collection_used(plan, rc)]
+              removed = [rc for rc in related if rc not in kept]
               if removed:
-                  warnings.append({
-                      "type": "schema_context_ref_pruned_to_parsed_collections",
-                      "removed": removed,
-                      "reason": "requested collection was not parsed into schema_metadata.collections",
+                  plan["related_collections"] = kept
+                  autofixes.append({
+                      "type": "unused_related_collection_prune",
+                      "from": removed,
+                      "to": kept,
+                      "reason": "declared related collection is not referenced by stages/final_merge/fields/chart",
                   })
               return kept
 
 
-          def _primary_in_schema(schema: Dict[str, Any], primary: str) -> bool:
-              if not primary:
+          def _iter_named_items(v: Any):
+              """Support dict[name -> meta] and list[{"name": ..., ...}] schema sections."""
+              if isinstance(v, dict):
+                  for name, meta in v.items():
+                      if isinstance(meta, dict):
+                          item = dict(meta)
+                          item.setdefault("name", name)
+                          yield item
+                      else:
+                          yield {"name": _str(name), "value": meta}
+              elif isinstance(v, list):
+                  for item in v:
+                      if isinstance(item, dict):
+                          yield item
+
+
+          def _named_item_map(v: Any) -> Dict[str, Dict[str, Any]]:
+              out: Dict[str, Dict[str, Any]] = {}
+              for item in _iter_named_items(v):
+                  name = _str(item.get("name")).strip()
+                  if name:
+                      out[name] = item
+              return out
+
+
+          def _alias_hits(alias_index: Any, section: str, raw: str, collection: str, kind: str) -> List[Dict[str, Any]]:
+              if not isinstance(alias_index, dict):
+                  return []
+              bucket = alias_index.get(section)
+              if not isinstance(bucket, dict):
+                  return []
+              hits = bucket.get(raw) or []
+              if isinstance(hits, dict):
+                  hits = [hits]
+              out = []
+              for hit in hits if isinstance(hits, list) else []:
+                  if not isinstance(hit, dict):
+                      continue
+                  if collection and hit.get("collection") != collection:
+                      continue
+                  if hit.get("kind") and hit.get("kind") != kind:
+                      continue
+                  name = _str(hit.get("name")).strip()
+                  if name:
+                      out.append({"name": name, "source": section, "label": hit.get("label")})
+              return out
+
+
+          def _field_alias(raw: str, schema: Dict[str, Any], collection: str, alias_index: Any = None) -> Tuple[str, str, List[Dict[str, Any]]]:
+              raw = _str(raw).strip()
+              if not raw:
+                  return raw, "unresolved", []
+              hits = _alias_hits(alias_index, "field_aliases", raw, collection, "field")
+              if not hits:
+                  hits = _alias_hits(alias_index, "aliases", raw, collection, "field")
+              if len(hits) == 1:
+                  return hits[0]["name"], hits[0]["source"], hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              fields = coll.get("fields") or []
+              field_map = _named_item_map(fields)
+              if raw in field_map:
+                  return raw, "schema_field_name", []
+              for field in _iter_named_items(fields):
+                  name = _str(field.get("name")).strip()
+                  label = _str(field.get("label")).strip()
+                  aliases = field.get("aliases") or []
+                  if isinstance(aliases, str):
+                      aliases = [aliases]
+                  candidates = [name, label] + [_str(x).strip() for x in aliases if _str(x).strip()]
+                  if raw in candidates:
+                      hits.append({"name": name, "source": "field_alias", "label": field.get("label")})
+              if len(hits) == 1:
+                  return hits[0]["name"], "field_alias", hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              return raw, "unresolved", []
+
+
+          def _metric_alias(raw: str, schema: Dict[str, Any], collection: str, alias_index: Any = None) -> Tuple[str, str, List[Dict[str, Any]]]:
+              raw = _str(raw).strip()
+              if not raw:
+                  return raw, "unresolved", []
+              hits = _alias_hits(alias_index, "metric_aliases", raw, collection, "metric")
+              if not hits:
+                  hits = _alias_hits(alias_index, "aliases", raw, collection, "metric")
+              if len(hits) == 1:
+                  return hits[0]["name"], hits[0]["source"], hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              metrics = coll.get("metrics") or []
+              metric_map = _named_item_map(metrics)
+              if raw in metric_map:
+                  return raw, "schema_metric_name", []
+              for metric in _iter_named_items(metrics):
+                  name = _str(metric.get("name")).strip()
+                  label = _str(metric.get("label")).strip()
+                  aliases = metric.get("aliases") or []
+                  if isinstance(aliases, str):
+                      aliases = [aliases]
+                  candidates = [name, label] + [_str(x).strip() for x in aliases if _str(x).strip()]
+                  if raw in candidates:
+                      hits.append({"name": name, "source": "metric_alias", "label": metric.get("label")})
+              if len(hits) == 1:
+                  return hits[0]["name"], "metric_alias", hits
+              if len(hits) > 1:
+                  return raw, "ambiguous", hits
+              return raw, "unresolved", []
+
+
+          def _value_alias(value: Any, field: Dict[str, Any]) -> Tuple[Any, bool]:
+              aliases = field.get("value_aliases") or {}
+              key = _str(value)
+              if key in aliases:
+                  return aliases[key], True
+              return value, False
+
+
+          def _field(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              return _named_item_map(coll.get("fields") or {}).get(name) or {}
+
+
+          def _metric(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              return _named_item_map(coll.get("metrics") or {}).get(name) or {}
+
+
+          def _is_sensitive(f: Dict[str, Any]) -> bool:
+              return bool(f.get("sensitive") or f.get("pii") or f.get("pii_category"))
+
+
+          def _canonical_field(raw: str, schema: Dict[str, Any], collection: str, place: str, errors: List[str], warnings: List[str], autofixes: List[Dict[str, Any]], require_flag: str = "", alias_index: Any = None) -> str:
+              name, source, hits = _field_alias(raw, schema, collection, alias_index)
+              if source == "ambiguous":
+                  errors.append(f"字段 {raw} 在 collection={collection} 中存在多个候选，需要澄清。")
+                  return raw
+              if source == "unresolved":
+                  errors.append(f"未知字段 {raw}，未在 schema metadata 中声明。")
+                  return raw
+              if name != raw:
+                  autofixes.append({"type": "field_alias_canonicalize", "place": place, "from": raw, "to": name, "collection": collection})
+              f = _field(schema, collection, name)
+              if require_flag and not bool(f.get(require_flag)):
+                  if require_flag in {"projectable", "returnable"} and (f.get("projectable") or f.get("returnable")):
+                      warnings.append(f"字段 {name} 使用 {require_flag} 兼容策略放行。")
+                  else:
+                      errors.append(f"字段 {name} 不允许用于 {place}（{require_flag}=false）。")
+              if _is_sensitive(f) and place in {"group_fields", "projection_fields", "sort", "chart_x", "chart_y"}:
+                  errors.append(f"敏感/PII 字段 {name} 不允许用于 {place}。")
+              return name
+
+
+          def _stage_is_aggregate(stage: Dict[str, Any]) -> bool:
+              return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or canonicalize_intent_type(stage.get("intent_type"), stage) in {"aggregate_summary"} or _str(stage.get("intent_type")) in {"ranking", "trend"})
+
+
+          def _date_ok(s: str) -> bool:
+              if not s:
                   return True
-              collections = schema.get("collections") if isinstance(schema, dict) else {}
-              return isinstance(collections, dict) and primary in collections
+              for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%dT%H:%M:%S"):
+                  try:
+                      datetime.strptime(s[:19], fmt)
+                      return True
+                  except Exception:
+                      pass
+              return False
 
 
-          def _ref(compact: Dict[str, Any]) -> Dict[str, Any]:
-              return compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {}
+          def _negative_fields(compact: Dict[str, Any], patch: Dict[str, Any], patch_debug: Dict[str, Any], qref: Dict[str, Any]) -> List[str]:
+              out = []
+              sources = [patch.get("negative_fields"), patch_debug.get("negative_fields"), qref.get("negative_fields")]
+              for item in _list(patch.get("unapplied_refinements")):
+                  if isinstance(item, dict):
+                      sources.append(item.get("negative_fields") or item.get("field"))
+              text = json.dumps([patch, patch_debug, qref], ensure_ascii=False)
+              for src in sources:
+                  for x in _list(src):
+                      if isinstance(x, dict):
+                          x = x.get("field") or x.get("name")
+                      if _str(x):
+                          out.append(_str(x))
+              return list(dict.fromkeys(out))
 
 
-          def _result(**kwargs: Any) -> Dict[str, Any]:
-              base = {
-                  "contract_version": CONTRACT_VERSION,
-                  "schema_context_ready": False,
-                  "schema_hydration_needed": False,
-                  "schema_hydration_reason": "",
-                  "schema_hydration_collections": [],
-                  "schema_metadata_json": "{}",
-                  "schema_alias_index_json": "{}",
-                  "schema_digest": "",
-                  "schema_version": "",
-                  "catalog_digest": "",
-                  "schema_source": "missing",
-                  "schema_context_ref": {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
-                  "warnings": [],
-                  "errors": [],
-              }
-              base.update(kwargs)
-              if not isinstance(base.get("schema_context_ref"), dict):
-                  base["schema_context_ref"] = {
-                      "collections": base.get("schema_hydration_collections") or [],
-                      "schema_digest": base.get("schema_digest") or "",
-                      "schema_version": base.get("schema_version") or "",
-                      "catalog_digest": base.get("catalog_digest") or "",
-                  }
-              base["validator_schema_context_ready"] = bool(base["schema_context_ready"])
-              base["schema_runtime_context_json"] = _dumps({k: v for k, v in base.items() if k not in {"schema_runtime_context_json"}})
-              return base
-
-
-          def prepare_validator_schema_context(
-              semantic_plan_json: Any = "{}",
-              schema_metadata_json: Any = "{}",
-              schema_alias_index_json: Any = "{}",
-              collection_selection_json: Any = "{}",
-              compact_context_json: Any = "{}",
-              legacy_schema_metadata_json: Any = "{}",
-              legacy_schema_alias_index_json: Any = "{}",
-          ) -> Dict[str, Any]:
-              warnings: List[Any] = []
+          def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok", schema_runtime_context_json: str = "{}") -> Dict[str, Any]:
               errors: List[str] = []
+              warnings: List[str] = []
+              autofixes: List[Dict[str, Any]] = []
+              debug: Dict[str, Any] = {"normalizer_route": _str(normalizer_route)}
+
+              runtime_ctx = _loads(schema_runtime_context_json, {})
+              if not isinstance(runtime_ctx, dict):
+                  runtime_ctx = {}
               plan = _loads(semantic_plan_json, {})
-              if not isinstance(plan, dict):
-                  plan = {}
+              runtime_schema_json = runtime_ctx.get("schema_metadata_json") if runtime_ctx.get("schema_metadata_json") not in (None, "") else schema_metadata_json
+              runtime_alias_json = runtime_ctx.get("schema_alias_index_json") if runtime_ctx.get("schema_alias_index_json") not in (None, "") else schema_alias_index_json
+              schema = _loads(runtime_schema_json, {})
+              alias_index = _loads(runtime_alias_json, {})
               selection = _loads(collection_selection_json, {})
-              if not isinstance(selection, dict):
-                  selection = {}
               compact = _loads(compact_context_json, {})
               if not isinstance(compact, dict):
                   compact = {}
-              ref = _ref(compact)
+              debug["prior_compact_context"] = {
+                  "has_last_context": bool(compact),
+                  "last_primary_collection": compact.get("last_primary_collection") or "",
+                  "last_related_collections": compact.get("last_related_collections") if isinstance(compact.get("last_related_collections"), list) else [],
+                  "last_plan_summary": compact.get("last_plan_summary") if isinstance(compact.get("last_plan_summary"), dict) else {},
+                  "last_resolved_fields": compact.get("last_resolved_fields") if isinstance(compact.get("last_resolved_fields"), list) else [],
+                  "last_resolved_metrics": compact.get("last_resolved_metrics") if isinstance(compact.get("last_resolved_metrics"), list) else [],
+                  "last_chart_request": compact.get("last_chart_request") if isinstance(compact.get("last_chart_request"), dict) else {},
+                  "last_result_profile": compact.get("last_result_profile") if isinstance(compact.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+                  "schema_context_ref": compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {},
+              }
+              patch = _loads(patch_result_json, {})
+              if isinstance(patch, list):
+                  patch = {"unapplied_refinements": patch}
+              elif not isinstance(patch, dict):
+                  patch = {}
+              patch_debug = _loads(patch_debug_json, {})
+              if not isinstance(patch_debug, dict):
+                  patch_debug = {}
+              qref = _loads(query_refinement_json, {})
+              if not isinstance(qref, dict):
+                  qref = {}
 
-              plan_cols, primary = _collections_from_plan(plan)
-              collections: List[str] = []
-              for source in (plan_cols, _collections_from_selection(selection), _collections_from_compact(compact)):
-                  for c in source:
-                      _add(collections, c)
-
-              schema, schema_ok, schema_reason = _schema_info(schema_metadata_json)
-              alias_index, alias_ok, alias_reason = _alias_ready(schema_alias_index_json)
-              digest = _str(schema.get("schema_digest")) if isinstance(schema, dict) else ""
-              version = _str(schema.get("schema_version")) if isinstance(schema, dict) else ""
-              catalog_digest = _str(schema.get("catalog_digest") or ref.get("catalog_digest")) if isinstance(schema, dict) else _str(ref.get("catalog_digest"))
-              ref_digest = _str(ref.get("schema_digest"))
-              ref_version = _str(ref.get("schema_version"))
-
-              if ref_digest and digest and ref_digest != digest:
-                  warnings.append("schema_digest_mismatch_between_runtime_and_compact_ref")
-              if ref_version and version and ref_version != version:
-                  warnings.append("schema_version_mismatch_between_runtime_and_compact_ref")
-
-              needs_reasons: List[str] = []
-              if not schema_ok:
-                  needs_reasons.append(schema_reason)
-              if not alias_ok:
-                  needs_reasons.append(alias_reason)
-              if schema_ok and primary and not _primary_in_schema(schema, primary):
-                  needs_reasons.append("schema_metadata_missing_plan_primary_collection")
-              if ref_digest and not digest:
-                  needs_reasons.append("compact_ref_has_schema_digest_but_runtime_digest_missing")
-
-              if schema_ok and alias_ok and _primary_in_schema(schema, primary):
-                  collections = _prune_ref_to_parsed(collections, schema, warnings)
-                  return _result(
-                      schema_context_ready=True,
-                      schema_hydration_needed=False,
-                      schema_hydration_reason="",
-                      schema_hydration_collections=[],
-                      schema_metadata_json=_dumps(schema),
-                      schema_alias_index_json=_dumps(alias_index),
-                      schema_digest=digest,
-                      schema_version=version,
-                      catalog_digest=catalog_digest,
-                      schema_source="current_runtime",
-                      schema_context_ref={"collections": collections, "schema_digest": digest, "schema_version": version, "catalog_digest": catalog_digest},
-                      warnings=warnings,
-                      errors=[],
-                  )
-
-              legacy_schema, legacy_schema_ok, _ = _schema_info(legacy_schema_metadata_json)
-              legacy_alias, legacy_alias_ok, _ = _alias_ready(legacy_schema_alias_index_json)
-              if legacy_schema_ok and legacy_alias_ok and _primary_in_schema(legacy_schema, primary):
-                  warnings.append("legacy_conversation_schema_fallback_used_runtime_only")
-                  collections = _prune_ref_to_parsed(collections, legacy_schema, warnings)
-                  return _result(
-                      schema_context_ready=True,
-                      schema_hydration_needed=False,
-                      schema_hydration_reason="legacy_conversation_compat",
-                      schema_hydration_collections=[],
-                      schema_metadata_json=_dumps(legacy_schema),
-                      schema_alias_index_json=_dumps(legacy_alias),
-                      schema_digest=_str(legacy_schema.get("schema_digest") or digest or ref_digest),
-                      schema_version=_str(legacy_schema.get("schema_version") or version or ref_version),
-                      catalog_digest=_str(legacy_schema.get("catalog_digest") or catalog_digest),
-                      schema_source="legacy_conversation_compat",
-                      schema_context_ref={"collections": collections, "schema_digest": _str(legacy_schema.get("schema_digest") or digest or ref_digest), "schema_version": _str(legacy_schema.get("schema_version") or version or ref_version), "catalog_digest": _str(legacy_schema.get("catalog_digest") or catalog_digest)},
-                      warnings=warnings,
-                      errors=[],
-                  )
-
+              debug["question"] = _str(question)
+              debug["schema_source"] = _str(runtime_ctx.get("schema_source")) or "direct_runtime_fallback"
+              debug["schema_context_ref"] = runtime_ctx.get("schema_context_ref") if isinstance(runtime_ctx.get("schema_context_ref"), dict) else {}
+              debug["schema_context_ready"] = bool(runtime_ctx.get("schema_context_ready")) if runtime_ctx else bool(schema)
+              debug["schema_hydration_needed"] = bool(runtime_ctx.get("schema_hydration_needed"))
+              if runtime_ctx and not runtime_ctx.get("schema_context_ready"):
+                  reason = _str(runtime_ctx.get("schema_hydration_reason")) or "schema_runtime_context_not_ready"
+                  collections = runtime_ctx.get("schema_hydration_collections") or []
+                  msg = f"validator runtime schema context 未就绪：{reason}。"
+                  if collections:
+                      msg += f" 可基于 collections={collections} 轻量检索 schema 后重试校验。"
+                  return _finalize(_result("needs_replan", plan if isinstance(plan, dict) else {}, [msg] + _list(runtime_ctx.get("errors")), _list(runtime_ctx.get("warnings")), debug=debug, needs_schema_retrieval=bool(runtime_ctx.get("schema_hydration_needed"))))
+              if str(normalizer_valid).lower() in {"false", "0", "no"}:
+                  return _finalize(_result("invalid", {}, ["semantic_plan_normalizer 未通过，validator 拒绝进入 Mongo 编译。"], debug=debug))
+              if not isinstance(plan, dict) or not plan:
+                  return _finalize(_result("invalid", {}, ["semantic_plan_json 为空或不是 JSON 对象。"], debug=debug))
+              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+              if not stages:
+                  return _finalize(_result("invalid", plan, ["semantic_plan_contract 缺少 stages。"], debug=debug))
+              collections = schema.get("collections") or {}
               if not collections:
-                  errors.append("missing_collections_for_schema_hydration")
-                  return _result(
-                      schema_context_ready=False,
-                      schema_hydration_needed=False,
-                      schema_hydration_reason="missing_collections_for_schema_hydration",
-                      schema_hydration_collections=[],
-                      schema_digest=digest or ref_digest,
-                      schema_version=version or ref_version,
-                      catalog_digest=catalog_digest,
-                      schema_source="invalid" if schema_metadata_json and schema_metadata_json != "{}" else "missing",
-                      schema_context_ref={"collections": [], "schema_digest": digest or ref_digest, "schema_version": version or ref_version, "catalog_digest": catalog_digest},
-                      warnings=warnings,
-                      errors=errors,
-                  )
+                  return _finalize(_result("needs_replan", plan, ["缺少 schema_metadata.collections，无法校验字段与指标。"], debug=debug, needs_schema_retrieval=True))
 
-              reason = ";".join(dict.fromkeys([r for r in needs_reasons if r])) or "runtime_schema_context_not_ready"
-              if schema_ok:
-                  collections = _prune_ref_to_parsed(collections, schema, warnings)
-              return _result(
-                  schema_context_ready=False,
-                  schema_hydration_needed=True,
-                  schema_hydration_reason=reason,
-                  schema_hydration_collections=collections,
-                  schema_digest=digest or ref_digest,
-                  schema_version=version or ref_version,
-                  catalog_digest=catalog_digest,
-                  schema_source="invalid" if schema_metadata_json and schema_metadata_json != "{}" else "missing",
-                  schema_context_ref={"collections": collections, "schema_digest": digest or ref_digest, "schema_version": version or ref_version, "catalog_digest": catalog_digest},
-                  warnings=warnings,
-                  errors=errors,
-              )
+              plan = copy.deepcopy(plan)
+              primary = _str(plan.get("primary_collection") or (stages[0] or {}).get("collection"))
+              selected = _str(selection.get("selected_primary_collection"))
+              confidence = float(selection.get("confidence") or 0) if isinstance(selection, dict) else 0.0
+              if not primary or primary not in collections:
+                  errors.append(f"primary_collection={primary or '<empty>'} 不存在于 schema metadata。")
+              if selected and primary and selected != primary:
+                  msg = f"collection_selection.selected_primary_collection={selected} 与 plan.primary_collection={primary} 不一致。"
+                  if confidence and confidence < 0.6:
+                      return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
+                  errors.append(msg)
+              related = _prune_unused_related_collections(plan, autofixes)
+              for rc in related:
+                  if rc not in collections:
+                      errors.append(f"related_collection={rc} 不存在于 schema metadata。")
+
+              route_hint = "valid"
+              for i, stage in enumerate(plan.get("stages") or []):
+                  if not isinstance(stage, dict):
+                      errors.append(f"stage[{i}] 不是对象。")
+                      continue
+                  coll = _str(stage.get("collection") or primary)
+                  stage["collection"] = coll
+                  if coll not in collections:
+                      errors.append(f"stage[{i}].collection={coll} 不存在。")
+                      continue
+                  if primary and coll != primary and coll not in related:
+                      errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
+                  coll_meta = collections.get(coll) or {}
+                  rules = coll_meta.get("query_rules") or {}
+
+                  raw_intent_type = _str(stage.get("intent_type"))
+                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
+                  if canonical_intent_type != raw_intent_type:
+                      stage["intent_type"] = canonical_intent_type
+                      autofixes.append({
+                          "type": "intent_type_canonicalize",
+                          "from": raw_intent_type,
+                          "to": canonical_intent_type,
+                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
+                      })
+                  elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
+                      errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
+
+                  group_fields = []
+                  for gf in _list(stage.get("group_fields")):
+                      group_fields.append(_canonical_field(_str(gf), schema, coll, "group_fields", errors, warnings, autofixes, "groupable"))
+                  stage["group_fields"] = group_fields
+
+                  metric_alias = _str(stage.get("metric_alias"))
+                  derived_fields = set()
+                  for alias in _list(stage.get("metric_alias")):
+                      if _str(alias):
+                          derived_fields.add(_str(alias))
+                  for metric_item in _list(stage.get("metrics")):
+                      if isinstance(metric_item, dict):
+                          for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                              if _str(metric_item.get(alias_key)):
+                                  derived_fields.add(_str(metric_item.get(alias_key)))
+                  if metric_alias:
+                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll, alias_index)
+                      if msrc == "ambiguous":
+                          errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
+                      elif msrc == "unresolved":
+                          if _stage_is_aggregate(stage) and _str(stage.get("metric_function")):
+                              derived_fields.add(metric_alias)
+                              warnings.append(f"允许聚合派生字段 {metric_alias} 用于 sort/projection/chart.y_field。")
+                              autofixes.append({"type": "derived_metric_alias_allow", "field": metric_alias, "places": ["sort", "projection_fields", "chart_request.y_field"]})
+                          else:
+                              errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
+                      else:
+                          if mname != metric_alias:
+                              autofixes.append({"type": "metric_alias_canonicalize", "from": metric_alias, "to": mname, "collection": coll})
+                              if metric_alias in derived_fields:
+                                  derived_fields.remove(metric_alias)
+                              derived_fields.add(mname)
+                          stage["metric_alias"] = mname
+                          metric_alias = mname
+                          metric = _metric(schema, coll, mname)
+                          if not _str(stage.get("metric_function")) and _str(metric.get("function")):
+                              stage["metric_function"] = _str(metric.get("function")); autofixes.append({"type": "metric_function_fill", "metric": mname, "value": stage["metric_function"]})
+                          elif _str(stage.get("metric_function")) and _str(metric.get("function")) and _str(stage.get("metric_function")) != _str(metric.get("function")):
+                              errors.append(f"metric_function 与 schema metric {mname}.function 不一致。")
+                          if not _str(stage.get("metric_field")) and _str(metric.get("field")):
+                              stage["metric_field"] = _str(metric.get("field")); autofixes.append({"type": "metric_field_fill", "metric": mname, "value": stage["metric_field"]})
+                          elif _str(stage.get("metric_field")) and _str(metric.get("field")) and _str(stage.get("metric_field")) != _str(metric.get("field")):
+                              errors.append(f"metric_field 与 schema metric {mname}.field 不一致。")
+                          coll_field_map = _named_item_map(coll_meta.get("fields") or {})
+                          for sf in _list(metric.get("source_fields")):
+                              if sf not in coll_field_map:
+                                  errors.append(f"metric {mname}.source_field={sf} 不存在。")
+                          allowed_dims = [_str(x) for x in _list(metric.get("allowed_dimensions"))]
+                          if allowed_dims:
+                              for gf in group_fields:
+                                  if gf not in allowed_dims:
+                                      errors.append(f"字段 {gf} 不在 metric {mname}.allowed_dimensions 中。")
+                  elif _stage_is_aggregate(stage) and _str(stage.get("metric_field")):
+                      mf = _canonical_field(_str(stage.get("metric_field")), schema, coll, "metric_field", errors, warnings, autofixes, "")
+                      stage["metric_field"] = mf
+
+                  filters = []
+                  for f in _list(stage.get("filters")):
+                      if not isinstance(f, dict):
+                          errors.append("filter 不是对象，已拒绝。")
+                          continue
+                      nf = copy.deepcopy(f)
+                      fname = _canonical_field(_str(nf.get("field")), schema, coll, "filters", errors, warnings, autofixes, "filterable")
+                      nf["field"] = fname
+                      field = _field(schema, coll, fname)
+                      op = _str(nf.get("operator") or nf.get("op") or "eq")
+                      if op not in ALLOWED_OPERATORS:
+                          errors.append(f"filter operator={op} 不在允许范围。")
+                      nf["operator"] = op
+                      if _is_sensitive(field) and not bool((rules.get("allow_sensitive_filter") or rules.get("allow_pii_filter"))):
+                          errors.append(f"敏感/PII 字段 {fname} 默认不允许 filter。")
+                      if "value" in nf:
+                          new_value, changed = _value_alias(nf.get("value"), field)
+                          if changed:
+                              autofixes.append({"type": "value_alias_canonicalize", "field": fname, "from": nf.get("value"), "to": new_value})
+                              nf["value"] = new_value
+                          allowed_values = [_str(x) for x in _list(field.get("allowed_values"))]
+                          vals = _list(nf.get("value")) if op in {"in", "nin"} else [nf.get("value")]
+                          if allowed_values:
+                              for val in vals:
+                                  if _str(val) not in allowed_values:
+                                      errors.append(f"字段 {fname} 的枚举值 {val} 不在 allowed_values 中。")
+                      filters.append(nf)
+                  stage["filters"] = filters
+
+                  stage_output_field_alias_map = {}
+                  canonical_metric_alias = _str(stage.get("metric_alias"))
+                  if canonical_metric_alias:
+                      stage_output_field_alias_map[canonical_metric_alias] = canonical_metric_alias
+                      for alias in _list(stage.get("metric_alias")):
+                          if _str(alias):
+                              stage_output_field_alias_map[_str(alias)] = canonical_metric_alias
+                      for metric_item in _list(stage.get("metrics")):
+                          if isinstance(metric_item, dict):
+                              for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                                  if _str(metric_item.get(alias_key)):
+                                      stage_output_field_alias_map[_str(metric_item.get(alias_key))] = canonical_metric_alias
+                      stage_chart_request = stage.get("chart_request") if isinstance(stage.get("chart_request"), dict) else {}
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(stage_chart_request.get(chart_key)):
+                              stage_output_field_alias_map[_str(stage_chart_request.get(chart_key))] = canonical_metric_alias
+                      top_chart_request = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(top_chart_request.get(chart_key)):
+                              stage_output_field_alias_map[_str(top_chart_request.get(chart_key))] = canonical_metric_alias
+                      for fix in autofixes:
+                          if isinstance(fix, dict) and _str(fix.get("to")) == canonical_metric_alias and _str(fix.get("from")):
+                              stage_output_field_alias_map[_str(fix.get("from"))] = canonical_metric_alias
+                  if stage_output_field_alias_map:
+                      debug.setdefault("stage_output_field_alias_maps", {})[_str(stage.get("stage_name") or i)] = dict(stage_output_field_alias_map)
+
+                  def _canonical_stage_output_field(raw: str, place: str) -> Tuple[str, bool]:
+                      value = _str(raw)
+                      canonical = stage_output_field_alias_map.get(value, value)
+                      if canonical != value:
+                          autofixes.append({"type": "aggregate_output_alias_canonicalize", "place": place, "from": value, "to": canonical, "collection": coll})
+                          return canonical, True
+                      return value, value in stage_output_field_alias_map
+
+                  projections = []
+                  for pf in _list(stage.get("projection_fields")):
+                      pf_str = _str(pf)
+                      canonical_pf, is_stage_output = _canonical_stage_output_field(pf_str, "projection_fields")
+                      if is_stage_output or canonical_pf in derived_fields:
+                          projections.append(canonical_pf)
+                          autofixes.append({"type": "derived_metric_alias_allow", "field": canonical_pf, "place": "projection_fields"})
+                      else:
+                          projections.append(_canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                  stage["projection_fields"] = projections
+
+                  tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
+                  if _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
+                      return _finalize(_result("requires_clarification", plan, ["聚合查询按 query_rules 要求必须提供 time_range。"], clarification="我需要确认一下：这个聚合查询要统计哪个时间范围？", debug=debug))
+                  if tr:
+                      tf = _str(tr.get("field"))
+                      if not tf and _str(coll_meta.get("default_time_field")):
+                          tr["field"] = _str(coll_meta.get("default_time_field")); autofixes.append({"type": "time_range_field_fill", "value": tr["field"], "collection": coll})
+                      elif tf:
+                          tr["field"] = _canonical_field(tf, schema, coll, "time_range", errors, warnings, autofixes, "")
+                      if _str(tr.get("field")):
+                          fld = _field(schema, coll, _str(tr.get("field")))
+                          if _str(fld.get("semantic_type") or fld.get("role") or fld.get("type")).lower() not in {"time", "date", "datetime", "timestamp"}:
+                              warnings.append(f"time_range.field={tr.get('field')} 未显式标记为时间字段。")
+                      try:
+                          rd = int(tr.get("relative_days") or 0)
+                      except Exception:
+                          rd = 0
+                      if _str(tr.get("mode")) == "relative_days" and rd <= 0:
+                          errors.append("time_range.relative_days 必须大于 0。")
+                      max_days = int(rules.get("max_time_range_days") or 0)
+                      if rd and max_days and rd > max_days:
+                          tr["relative_days"] = max_days; warnings.append(f"relative_days 超过 max_time_range_days，已截断为 {max_days}。"); autofixes.append({"type": "relative_days_truncate", "from": rd, "to": max_days})
+                      if not _date_ok(_str(tr.get("start"))) or not _date_ok(_str(tr.get("end"))):
+                          errors.append("time_range.start/end 日期格式不合理。")
+                      stage["time_range"] = tr
+
+                  try:
+                      limit = int(stage.get("limit") or rules.get("default_limit") or 100)
+                  except Exception:
+                      limit = int(rules.get("default_limit") or 100)
+                      autofixes.append({"type": "limit_default", "value": limit})
+                  if limit <= 0:
+                      limit = int(rules.get("default_limit") or 100); autofixes.append({"type": "limit_default", "value": limit})
+                  max_limit = int(rules.get("max_limit") or 0)
+                  if max_limit and limit > max_limit:
+                      autofixes.append({"type": "limit_truncate", "from": limit, "to": max_limit}); warnings.append(f"limit 超过 max_limit，已截断为 {max_limit}。"); limit = max_limit
+                  stage["limit"] = limit
+
+                  valid_sort_fields = set(group_fields + projections + [_str(stage.get("metric_alias"))])
+                  for fld in _iter_named_items(coll_meta.get("fields") or {}):
+                      fname = _str(fld.get("name")).strip()
+                      if fname and fld.get("sortable"):
+                          valid_sort_fields.add(fname)
+                  sorts = []
+                  for s in _list(stage.get("sort")):
+                      if not isinstance(s, dict):
+                          errors.append("sort 不是对象。")
+                          continue
+                      ns = copy.deepcopy(s)
+                      sf = _str(ns.get("field"))
+                      if sf:
+                          canonical_sf, is_stage_output = _canonical_stage_output_field(sf, "sort.field")
+                          ns["field"] = canonical_sf
+                          if not is_stage_output and canonical_sf not in valid_sort_fields:
+                              cf = _canonical_field(canonical_sf, schema, coll, "sort", errors, warnings, autofixes, "sortable")
+                              ns["field"] = cf
+                              if cf not in valid_sort_fields and cf != _str(stage.get("metric_alias")):
+                                  errors.append(f"sort.field={sf} 不是 group/metric/projection/schema sortable 字段。")
+                      d = ns.get("direction", ns.get("order", "desc"))
+                      if d in (1, "1", "asc", "ASC", "ascending"):
+                          nd = "asc"
+                      elif d in (-1, "-1", "desc", "DESC", "descending"):
+                          nd = "desc"
+                      else:
+                          errors.append(f"sort.direction={d} 不合法。")
+                          nd = "desc"
+                      if nd != d:
+                          autofixes.append({"type": "sort_direction_normalize", "from": d, "to": nd})
+                      ns["direction"] = nd
+                      sorts.append(ns)
+                  if not sorts and _str(stage.get("metric_alias")):
+                      m = _metric(schema, coll, _str(stage.get("metric_alias")))
+                      if _str(m.get("default_sort")):
+                          sorts.append({"field": stage.get("metric_alias"), "direction": _str(m.get("default_sort"))}); autofixes.append({"type": "metric_default_sort", "metric": stage.get("metric_alias"), "direction": m.get("default_sort")})
+                  stage["sort"] = sorts
+
+              # relations
+              for rc in related:
+                  rels = [r for r in _iter_named_items((collections.get(primary) or {}).get("relations") or []) if _str(r.get("target_collection")) == rc]
+                  if not rels:
+                      errors.append(f"schema relations 未声明 {primary}->{rc}，禁止 LLM 发明 join。")
+                      continue
+                  for rel in rels:
+                      if not rel.get("join_keys"):
+                          errors.append(f"relation {primary}->{rc} 缺少 join_keys。")
+                      for jk in rel.get("join_keys") or []:
+                          primary_field_map = _named_item_map((collections.get(primary) or {}).get("fields") or {})
+                          target_field_map = _named_item_map((collections.get(rc) or {}).get("fields") or {})
+                          if _str(jk.get("source_field")) not in primary_field_map:
+                              errors.append(f"relation source_field={jk.get('source_field')} 不存在。")
+                          if _str(jk.get("target_field")) not in target_field_map:
+                              errors.append(f"relation target_field={jk.get('target_field')} 不存在。")
+                      intent_text = json.dumps(plan.get("stages") or [], ensure_ascii=False)
+                      for forbidden in _list(rel.get("forbidden_usage")):
+                          if _str(forbidden) and _str(forbidden) in intent_text:
+                              return _finalize(_result("blocked", plan, [f"relation {primary}->{rc} 命中 forbidden_usage={forbidden}。"], blocked="当前查询使用了 schema 禁止的关联关系。", debug=debug))
+
+              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+              if bool(chart.get("enabled")) or bool(plan.get("needs_chart")):
+                  first = (plan.get("stages") or [{}])[0]
+                  group_fields = _list(first.get("group_fields"))
+                  metric_alias = _str(first.get("metric_alias"))
+                  ctype = _str(chart.get("chart_type"))
+                  if ctype not in SUPPORTED_CHART_TYPES:
+                      errors.append(f"chart_type={ctype} 不支持。")
+                  x = _str(chart.get("x_field"))
+                  y = _str(chart.get("y_field"))
+                  chart_stage_output_field_alias_map = {}
+                  if metric_alias:
+                      chart_stage_output_field_alias_map[metric_alias] = metric_alias
+                      for alias in _list(first.get("metric_alias")):
+                          if _str(alias):
+                              chart_stage_output_field_alias_map[_str(alias)] = metric_alias
+                      for metric_item in _list(first.get("metrics")):
+                          if isinstance(metric_item, dict):
+                              for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                                  if _str(metric_item.get(alias_key)):
+                                      chart_stage_output_field_alias_map[_str(metric_item.get(alias_key))] = metric_alias
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(chart.get(chart_key)):
+                              chart_stage_output_field_alias_map[_str(chart.get(chart_key))] = metric_alias
+                      stage_chart_request = first.get("chart_request") if isinstance(first.get("chart_request"), dict) else {}
+                      for chart_key in ("y_field", "series_name"):
+                          if _str(stage_chart_request.get(chart_key)):
+                              chart_stage_output_field_alias_map[_str(stage_chart_request.get(chart_key))] = metric_alias
+                      for fix in autofixes:
+                          if isinstance(fix, dict) and _str(fix.get("to")) == metric_alias and _str(fix.get("from")):
+                              chart_stage_output_field_alias_map[_str(fix.get("from"))] = metric_alias
+                      if y in chart_stage_output_field_alias_map and chart_stage_output_field_alias_map[y] != y:
+                          chart["y_field"] = chart_stage_output_field_alias_map[y]
+                          autofixes.append({"type": "aggregate_output_alias_canonicalize", "place": "chart_request.y_field", "from": y, "to": chart["y_field"], "collection": primary})
+                          y = chart["y_field"]
+                  if not x and len(group_fields) == 1:
+                      chart["x_field"] = group_fields[0]; autofixes.append({"type": "chart_x_fill", "value": group_fields[0]})
+                  elif x and x not in group_fields:
+                      if len(group_fields) == 1:
+                          chart["x_field"] = group_fields[0]; autofixes.append({"type": "chart_x_align", "from": x, "to": group_fields[0]})
+                      else:
+                          errors.append("chart_request.x_field 未与 group_fields/输出字段对齐。")
+                  if not y and metric_alias:
+                      chart["y_field"] = metric_alias; autofixes.append({"type": "chart_y_fill", "value": metric_alias})
+                  elif y and metric_alias and y != metric_alias:
+                      ym, ysrc, _ = _metric_alias(y, schema, primary, alias_index)
+                      if ym == metric_alias:
+                          chart["y_field"] = metric_alias; autofixes.append({"type": "chart_y_metric_alias_align", "from": y, "to": metric_alias})
+                      else:
+                          errors.append("chart_request.y_field 未与 metric_alias 对齐。")
+                  if _str(chart.get("x_field")) and _is_sensitive(_field(schema, primary, _str(chart.get("x_field")))):
+                      errors.append("chart_request.x_field 命中敏感/PII 字段。")
+                  if any(k in json.dumps(chart, ensure_ascii=False).lower() for k in ["debug", "schema", "raw prompt", "prompt"]):
+                      warnings.append("chart_request.title 含 debug/schema/prompt 字样，已清空 title。")
+                      chart["title"] = ""; autofixes.append({"type": "chart_title_sanitize"})
+                  plan["chart_request"] = chart
+
+              # user negative old field residue
+              negative = _negative_fields(compact, patch, patch_debug, qref)
+              canonical_negative = []
+              for nf in negative:
+                  cn, _, _ = _field_alias(nf, schema, primary, alias_index)
+                  canonical_negative.append(cn)
+              used = []
+              for st in plan.get("stages") or []:
+                  used.extend(_list(st.get("group_fields")))
+              if any(x in canonical_negative or x in negative for x in used):
+                  return _finalize(_result("needs_replan", plan, ["检测到用户本轮否定的旧字段仍残留在 group_fields，拒绝进入 compiler。"], debug={**debug, "negative_fields": negative}))
+
+              question_l = _str(question).lower()
+              if any(w in question_l for w in PII_WORDS):
+                  for st in plan.get("stages") or []:
+                      for gf in _list(st.get("group_fields")):
+                          if _is_sensitive(_field(schema, _str(st.get("collection") or primary), gf)):
+                              return _finalize(_result("blocked", plan, ["用户要求按敏感/PII 字段统计。"], blocked="这个查询涉及敏感字段，不能直接按该字段分组或展示。", debug=debug))
+
+              if errors:
+                  joined = "；".join(errors)
+                  if any("敏感/PII" in e or "forbidden_usage" in e or "relation" in e or "join" in e for e in errors):
+                      return _finalize(_result("blocked", plan, errors, warnings, autofixes, blocked="这个查询涉及敏感字段或非法关联，不能直接执行。", debug=debug))
+                  if any("未知字段" in e or "多个候选" in e or "枚举值" in e for e in errors):
+                      return _finalize(_result("requires_clarification", plan, errors, warnings, autofixes, clarification="我需要确认一下：当前查询中的字段、指标或枚举值对应哪个 schema 定义？", debug=debug))
+                  return _finalize(_result("needs_replan", plan, errors, warnings, autofixes, debug=debug))
+
+              return _finalize(_result(route_hint, plan, [], warnings, autofixes, debug=debug))
+
+
+          def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
+              route = res.get("validator_route")
+              if route == "valid":
+                  text = ""
+                  answer_type = "query_only"
+                  should_save = False
+              elif route == "requires_clarification":
+                  text = res.get("clarification_question") or "我需要确认一下查询字段后再执行。"
+                  answer_type = "clarification"
+                  should_save = False
+              elif route in {"blocked", "needs_replan"}:
+                  reason = res.get("blocked_reason") or "; ".join(_list(res.get("errors"))) or "语义计划未通过校验。"
+                  text = "当前查询无法执行：" + reason
+                  answer_type = "validation_error"
+                  should_save = False
+              else:
+                  text = "系统在处理该查询时出现异常，请调整问题后重试。"
+                  answer_type = "system_error"
+                  should_save = False
+              res["answer_type"] = answer_type if route != "valid" else res.get("answer_type")
+              res["final_answer_markdown"] = text
+              res["answer_payload_markdown"] = text
+              schema_ref = {}
+              dbg = res.get("debug") if isinstance(res.get("debug"), dict) else {}
+              if isinstance(dbg.get("schema_context_ref"), dict):
+                  schema_ref = dbg.get("schema_context_ref")
+              prior = dbg.get("prior_compact_context") if isinstance(dbg.get("prior_compact_context"), dict) else {}
+              compact = {
+                  "context_version": "compact_context_contract",
+                  "has_last_context": bool(prior.get("has_last_context")),
+                  "last_question": _str(dbg.get("question")),
+                  "last_turn_intent": {"validator_route": route or "invalid", "answer_type": answer_type},
+                  "last_primary_collection": prior.get("last_primary_collection") or "",
+                  "last_related_collections": prior.get("last_related_collections") if isinstance(prior.get("last_related_collections"), list) else [],
+                  "last_plan_summary": prior.get("last_plan_summary") if isinstance(prior.get("last_plan_summary"), dict) else {},
+                  "last_resolved_fields": prior.get("last_resolved_fields") if isinstance(prior.get("last_resolved_fields"), list) else [],
+                  "last_resolved_metrics": prior.get("last_resolved_metrics") if isinstance(prior.get("last_resolved_metrics"), list) else [],
+                  "last_chart_request": prior.get("last_chart_request") if isinstance(prior.get("last_chart_request"), dict) else {},
+                  "last_result_profile": prior.get("last_result_profile") if isinstance(prior.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+                  "schema_context_ref": schema_ref or prior.get("schema_context_ref") or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
+                  "answer_summary": text[:800],
+                  "size_guard": {},
+                  "context_warnings": [],
+              }
+              compact_json = json.dumps(compact, ensure_ascii=False)
+              answer_payload = {
+                  "contract_version": "answer_payload_contract",
+                  "answer_type": answer_type if route != "valid" else (res.get("answer_type") or "query_only"),
+                  "answer_text": text,
+                  "chart_echarts_markdown": "",
+                  "result_summary": text[:800],
+                  "message": "",
+                  "chart_payload": {},
+                  "query_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
+                  "state_update": {"should_save_context": should_save, "context_summary": compact},
+              }
+              context_update = {"contract_version": "context_update_contract", "should_save_context": should_save, "compact_context": compact, "last_context_json": compact_json, "warnings": [], "clear_fields": []}
+              res["answer_payload_json"] = json.dumps(answer_payload, ensure_ascii=False)
+              res["context_update_json"] = json.dumps(context_update, ensure_ascii=False)
+              res["compact_context_json"] = compact_json
+              res["validator_result_json"] = json.dumps({k: v for k, v in res.items() if k not in {"validator_result_json"}}, ensure_ascii=False)
+              return res
 
 
           def main(**kwargs: Any) -> Dict[str, Any]:
-              return prepare_validator_schema_context(**kwargs)
+              return semantic_plan_validator(**kwargs)
 
-        desc: Phase 9 validator runtime schema context：在 semantic_plan_validator 前准备运行时
-          schema metadata/alias index；缺失时输出 hydration 需求但不写入 compact context。
         code_language: python3
+        desc: Phase 8 semantic_plan_validator：在 Mongo 编译执行前校验 collection/field/metric/filter/time_range/relation/PII/chart/negative
+          residue，并输出 validator_result_contract。
         outputs:
           contract_version:
             children:
             type: string
-          schema_context_ready:
+          valid:
             children:
             type: boolean
-          validator_schema_context_ready:
-            children:
-            type: boolean
-          schema_hydration_needed:
-            children:
-            type: boolean
-          schema_hydration_reason:
+          validator_route:
             children:
             type: string
-          schema_hydration_collections:
-            children:
-            type: array[string]
-          schema_metadata_json:
-            children:
-            type: string
-          schema_alias_index_json:
-            children:
-            type: string
-          schema_digest:
-            children:
-            type: string
-          schema_version:
-            children:
-            type: string
-          catalog_digest:
-            children:
-            type: string
-          schema_source:
-            children:
-            type: string
-          schema_context_ref:
+          normalized_plan:
             children:
             type: object
-          warnings:
+          normalized_plan_json:
             children:
-            type: array[string]
+            type: string
+          normalized_semantic_plan_json:
+            children:
+            type: string
+          semantic_plan_json:
+            children:
+            type: string
+          validator_result_json:
+            children:
+            type: string
           errors:
             children:
             type: array[string]
-          schema_runtime_context_json:
+          warnings:
+            children:
+            type: array[string]
+          autofixes:
+            children:
+            type: array[object]
+          needs_replan:
+            children:
+            type: boolean
+          needs_schema_retrieval:
+            children:
+            type: boolean
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
+            children:
+            type: string
+          blocked_reason:
+            children:
+            type: string
+          debug:
+            children:
+            type: object
+          answer_payload_json:
+            children:
+            type: string
+          answer_type:
+            children:
+            type: string
+          final_answer_markdown:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          compact_context_json:
             children:
             type: string
         selected: false
-        title: 代码执行_准备Validator运行时Schema上下文
+        title: 代码执行_semantic_plan_validator
         type: code
         variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
         - value_selector:
           - '1776000000024'
           - semantic_plan_contract_json
           value_type: string
           variable: semantic_plan_json
         - value_selector:
-          - '1776000000024'
+          - '1780000000009'
           - schema_metadata_json
           value_type: string
           variable: schema_metadata_json
         - value_selector:
-          - '1776000000024'
+          - '1780000000009'
           - schema_alias_index_json
           value_type: string
           variable: schema_alias_index_json
@@ -380,25 +897,4 @@
           value_type: string
           variable: compact_context_json
         - value_selector:
-          - conversation
-          - last_schema_metadata_json
-          value_type: string
-          variable: legacy_schema_metadata_json
-        - value_selector:
-          - conversation
-          - last_schema_alias_index_json
-          value_type: string
-          variable: legacy_schema_alias_index_json
-      height: 80
-      id: '1779000000001'
-      position:
-        x: 11780
-        y: 120
-      positionAbsolute:
-        x: 11780
-        y: 120
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
+          - '1776000000019'

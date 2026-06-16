@@ -1,1026 +1,3 @@
-    - data:
-        code: |
-          """Phase 8 semantic_plan_validator runtime contract helper.
-
-          This module mirrors the code embedded in the DSL node `代码执行_semantic_plan_validator`.
-          It intentionally validates and canonicalizes semantic_plan_contract JSON without generating
-          Mongo pipelines or rewriting compiler/executor behavior.
-          """
-
-          from __future__ import annotations
-
-          import copy
-          import json
-          import re
-          from datetime import datetime
-          from typing import Any, Dict, List, Tuple
-
-          VALID_ROUTES = {"valid", "needs_replan", "requires_clarification", "blocked", "invalid"}
-          ALLOWED_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte", "in", "nin", "contains", "regex", "between"}
-          SUPPORTED_CHART_TYPES = {"", "bar", "line", "pie", "table", "area", "scatter", "柱状图", "折线图", "饼图", "表格"}
-          PII_WORDS = ("手机", "手机号", "电话", "身份证", "邮箱", "email", "phone", "mobile", "id_card")
-
-          COMPILER_SUPPORTED_INTENT_TYPES = {"detail_query", "aggregate_summary", "group_top_entity", "group_top_record", "enrich_related"}
-          INTENT_TYPE_ALIASES = {
-              "aggregate": "aggregate_summary",
-              "aggregation": "aggregate_summary",
-              "summary": "aggregate_summary",
-              "aggregate_summary": "aggregate_summary",
-              "group_by": "aggregate_summary",
-              "group": "aggregate_summary",
-              "grouping": "aggregate_summary",
-              "group_count": "aggregate_summary",
-              "group_stat": "aggregate_summary",
-              "group_statistics": "aggregate_summary",
-              "count_by_group": "aggregate_summary",
-              "grouped_count": "aggregate_summary",
-              "group_by_metric": "aggregate_summary",
-              "group_and_metric": "aggregate_summary",
-              "aggregation_by_group": "aggregate_summary",
-              "group_summary": "aggregate_summary",
-              "metric_by_group": "aggregate_summary",
-              "chart_aggregate": "aggregate_summary",
-              "group_by_dimension": "aggregate_summary",
-              "group_by_dimension_with_time_range_and_aggregation": "aggregate_summary",
-              "group_by_metric_with_time_filter": "aggregate_summary",
-              "aggregate_group_by": "aggregate_summary",
-              "aggregate_group": "aggregate_summary",
-              "aggregation_group": "aggregate_summary",
-              "aggregate_grouped": "aggregate_summary",
-              "aggregation_grouped": "aggregate_summary",
-              "group_metric": "aggregate_summary",
-              "group_metric_summary": "aggregate_summary",
-              "group_metric_aggregate": "aggregate_summary",
-              "group_metric_aggregation": "aggregate_summary",
-              "group_aggregate": "aggregate_summary",
-              "grouped_aggregate": "aggregate_summary",
-              "grouped_aggregation": "aggregate_summary",
-              "aggregation_grouped": "aggregate_summary",
-              "grouped_metric_aggregation": "aggregate_summary",
-              "aggregate_by_group": "aggregate_summary",
-              "aggregate_by_dimension": "aggregate_summary",
-              "dimension_aggregate": "aggregate_summary",
-              "summary_by_group": "aggregate_summary",
-              "summary_by_dimension": "aggregate_summary",
-              "detail": "detail_query",
-              "detail_query": "detail_query",
-              "find": "detail_query",
-              "find_query": "detail_query",
-              "query": "detail_query",
-              "group_top_entity": "group_top_entity",
-              "top_entity": "group_top_entity",
-              "group_top_record": "group_top_record",
-              "top_record": "group_top_record",
-              "enrich_related": "enrich_related",
-              "join": "enrich_related",
-          }
-
-
-          def _looks_like_grouped_aggregate(stage: Dict[str, Any] | None = None) -> bool:
-              stage = stage if isinstance(stage, dict) else {}
-              group_fields = stage.get("group_fields") or stage.get("group_by") or []
-              metrics = stage.get("metrics") or []
-              return bool(group_fields) and (
-                  bool(stage.get("metric_function"))
-                  or bool(stage.get("metric_field"))
-                  or bool(stage.get("metric_alias"))
-                  or bool(metrics)
-              )
-
-
-          def canonicalize_intent_type(intent_type: Any, stage: Dict[str, Any] | None = None) -> str:
-              raw = _str(intent_type).lower()
-              stage = stage if isinstance(stage, dict) else {}
-              if raw in {"aggregate", "aggregation"}:
-                  if stage.get("group_fields") and (stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field")):
-                      return "aggregate_summary"
-                  if stage.get("metric_function") or stage.get("metric_alias") or stage.get("metric_field"):
-                      return "aggregate_summary"
-                  if stage.get("filters") or stage.get("projection_fields"):
-                      return "detail_query"
-              if raw in INTENT_TYPE_ALIASES:
-                  return INTENT_TYPE_ALIASES[raw]
-              normalized_tokens = {token for token in raw.replace("-", "_").split("_") if token}
-              has_aggregate_token = bool(normalized_tokens & {"aggregate", "aggregation"})
-              has_group_token = bool(normalized_tokens & {"group", "grouped"})
-              if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and has_aggregate_token and has_group_token:
-                  return "aggregate_summary"
-              if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and _looks_like_grouped_aggregate(stage):
-                  return "aggregate_summary"
-              if not raw:
-                  return "aggregate_summary" if (stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or stage.get("metrics")) else "detail_query"
-              return raw
-
-
-          def _loads(v: Any, default: Any = None) -> Any:
-              if default is None:
-                  default = {}
-              if isinstance(v, (dict, list)):
-                  return v
-              if isinstance(v, str) and v.strip():
-                  try:
-                      return json.loads(v)
-                  except Exception:
-                      return default
-              return default
-
-
-          def _list(v: Any) -> List[Any]:
-              if v is None or v == "":
-                  return []
-              if isinstance(v, list):
-                  return [x for x in v if x is not None and str(x).strip()]
-              if isinstance(v, str):
-                  s = v.strip()
-                  if not s:
-                      return []
-                  try:
-                      parsed = json.loads(s)
-                      if isinstance(parsed, list):
-                          return [x for x in parsed if x is not None and str(x).strip()]
-                  except Exception:
-                      pass
-                  return [x.strip() for x in re.split(r"\s*,\s*", s) if x.strip()]
-              return [v]
-
-
-          def _str(v: Any) -> str:
-              return str(v or "").strip()
-
-
-          def _result(route: str, plan: Dict[str, Any] | None, errors=None, warnings=None, autofixes=None, clarification="", blocked="", debug=None, needs_schema_retrieval=False) -> Dict[str, Any]:
-              route = route if route in VALID_ROUTES else "invalid"
-              normalized = plan if isinstance(plan, dict) else {}
-              return {
-                  "contract_version": "validator_result_contract",
-                  "valid": route == "valid",
-                  "validator_route": route,
-                  "normalized_plan": normalized,
-                  "normalized_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
-                  "semantic_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
-                  "normalized_semantic_plan_json": json.dumps(normalized, ensure_ascii=False) if route == "valid" and normalized else "{}",
-                  "errors": errors or [],
-                  "warnings": warnings or [],
-                  "autofixes": autofixes or [],
-                  "needs_replan": route == "needs_replan",
-                  "needs_schema_retrieval": bool(needs_schema_retrieval),
-                  "requires_clarification": route == "requires_clarification",
-                  "clarification_question": clarification or ("我需要确认一下：当前查询中的字段或指标对应哪个 schema 字段？" if route == "requires_clarification" else ""),
-                  "blocked_reason": blocked or ("当前查询不符合安全或 schema 关系约束，未进入 Mongo 编译执行。" if route == "blocked" else ""),
-                  "debug": debug or {},
-                  "validator_result_json": "",  # filled by main for DSL convenience
-                  "answer_payload_json": "",
-                  "answer_type": {"requires_clarification": "clarification", "blocked": "validation_error", "needs_replan": "validation_error", "invalid": "system_error"}.get(route, "data"),
-                  "final_answer_markdown": "",
-                  "context_update_json": "",
-              }
-
-
-          def _field_ref_collections(value: Any) -> List[str]:
-              refs: List[str] = []
-              if isinstance(value, dict):
-                  for v in value.values():
-                      refs.extend(_field_ref_collections(v))
-              elif isinstance(value, list):
-                  for v in value:
-                      refs.extend(_field_ref_collections(v))
-              elif isinstance(value, str):
-                  for match in re.findall(r"\b([A-Za-z_][\w-]*)\.[A-Za-z_][\w-]*\b", value):
-                      if match not in refs:
-                          refs.append(match)
-              return refs
-
-
-          def _related_collection_used(plan: Dict[str, Any], related: str) -> bool:
-              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
-              for stage in stages:
-                  if isinstance(stage, dict) and _str(stage.get("collection")) == related:
-                      return True
-              final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
-              if _str(final_merge.get("merge_mode") or "none") != "none":
-                  if related in _field_ref_collections(final_merge) or related in [_str(x) for x in _list(final_merge.get("collections") or final_merge.get("related_collections") or final_merge.get("merge_collections"))]:
-                      return True
-                  if related in json.dumps(final_merge, ensure_ascii=False):
-                      return True
-              for key in ("joins", "join", "relations", "relation", "enrich", "enrichments", "lookup", "lookups"):
-                  if related in _field_ref_collections(plan.get(key)) or (isinstance(plan.get(key), (dict, list)) and related in json.dumps(plan.get(key), ensure_ascii=False)):
-                      return True
-              for key in ("filters", "group_fields", "projection_fields", "sort"):
-                  for stage in stages:
-                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
-                          return True
-              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
-              if related in _field_ref_collections([chart.get("x_field"), chart.get("y_field")]):
-                  return True
-              for key in ("output_fields", "return_fields", "select_fields"):
-                  if related in _field_ref_collections(plan.get(key)):
-                      return True
-                  for stage in stages:
-                      if isinstance(stage, dict) and related in _field_ref_collections(stage.get(key)):
-                          return True
-              return False
-
-
-          def _prune_unused_related_collections(plan: Dict[str, Any], autofixes: List[Dict[str, Any]]) -> List[str]:
-              related = [_str(x) for x in _list(plan.get("related_collections"))]
-              kept = [rc for rc in related if _related_collection_used(plan, rc)]
-              removed = [rc for rc in related if rc not in kept]
-              if removed:
-                  plan["related_collections"] = kept
-                  autofixes.append({
-                      "type": "unused_related_collection_prune",
-                      "from": removed,
-                      "to": kept,
-                      "reason": "declared related collection is not referenced by stages/final_merge/fields/chart",
-                  })
-              return kept
-
-
-          def _iter_named_items(v: Any):
-              """Support dict[name -> meta] and list[{"name": ..., ...}] schema sections."""
-              if isinstance(v, dict):
-                  for name, meta in v.items():
-                      if isinstance(meta, dict):
-                          item = dict(meta)
-                          item.setdefault("name", name)
-                          yield item
-                      else:
-                          yield {"name": _str(name), "value": meta}
-              elif isinstance(v, list):
-                  for item in v:
-                      if isinstance(item, dict):
-                          yield item
-
-
-          def _named_item_map(v: Any) -> Dict[str, Dict[str, Any]]:
-              out: Dict[str, Dict[str, Any]] = {}
-              for item in _iter_named_items(v):
-                  name = _str(item.get("name")).strip()
-                  if name:
-                      out[name] = item
-              return out
-
-
-          def _alias_hits(alias_index: Any, section: str, raw: str, collection: str, kind: str) -> List[Dict[str, Any]]:
-              if not isinstance(alias_index, dict):
-                  return []
-              bucket = alias_index.get(section)
-              if not isinstance(bucket, dict):
-                  return []
-              hits = bucket.get(raw) or []
-              if isinstance(hits, dict):
-                  hits = [hits]
-              out = []
-              for hit in hits if isinstance(hits, list) else []:
-                  if not isinstance(hit, dict):
-                      continue
-                  if collection and hit.get("collection") != collection:
-                      continue
-                  if hit.get("kind") and hit.get("kind") != kind:
-                      continue
-                  name = _str(hit.get("name")).strip()
-                  if name:
-                      out.append({"name": name, "source": section, "label": hit.get("label")})
-              return out
-
-
-          def _field_alias(raw: str, schema: Dict[str, Any], collection: str, alias_index: Any = None) -> Tuple[str, str, List[Dict[str, Any]]]:
-              raw = _str(raw).strip()
-              if not raw:
-                  return raw, "unresolved", []
-              hits = _alias_hits(alias_index, "field_aliases", raw, collection, "field")
-              if not hits:
-                  hits = _alias_hits(alias_index, "aliases", raw, collection, "field")
-              if len(hits) == 1:
-                  return hits[0]["name"], hits[0]["source"], hits
-              if len(hits) > 1:
-                  return raw, "ambiguous", hits
-              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
-              fields = coll.get("fields") or []
-              field_map = _named_item_map(fields)
-              if raw in field_map:
-                  return raw, "schema_field_name", []
-              for field in _iter_named_items(fields):
-                  name = _str(field.get("name")).strip()
-                  label = _str(field.get("label")).strip()
-                  aliases = field.get("aliases") or []
-                  if isinstance(aliases, str):
-                      aliases = [aliases]
-                  candidates = [name, label] + [_str(x).strip() for x in aliases if _str(x).strip()]
-                  if raw in candidates:
-                      hits.append({"name": name, "source": "field_alias", "label": field.get("label")})
-              if len(hits) == 1:
-                  return hits[0]["name"], "field_alias", hits
-              if len(hits) > 1:
-                  return raw, "ambiguous", hits
-              return raw, "unresolved", []
-
-
-          def _metric_alias(raw: str, schema: Dict[str, Any], collection: str, alias_index: Any = None) -> Tuple[str, str, List[Dict[str, Any]]]:
-              raw = _str(raw).strip()
-              if not raw:
-                  return raw, "unresolved", []
-              hits = _alias_hits(alias_index, "metric_aliases", raw, collection, "metric")
-              if not hits:
-                  hits = _alias_hits(alias_index, "aliases", raw, collection, "metric")
-              if len(hits) == 1:
-                  return hits[0]["name"], hits[0]["source"], hits
-              if len(hits) > 1:
-                  return raw, "ambiguous", hits
-              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
-              metrics = coll.get("metrics") or []
-              metric_map = _named_item_map(metrics)
-              if raw in metric_map:
-                  return raw, "schema_metric_name", []
-              for metric in _iter_named_items(metrics):
-                  name = _str(metric.get("name")).strip()
-                  label = _str(metric.get("label")).strip()
-                  aliases = metric.get("aliases") or []
-                  if isinstance(aliases, str):
-                      aliases = [aliases]
-                  candidates = [name, label] + [_str(x).strip() for x in aliases if _str(x).strip()]
-                  if raw in candidates:
-                      hits.append({"name": name, "source": "metric_alias", "label": metric.get("label")})
-              if len(hits) == 1:
-                  return hits[0]["name"], "metric_alias", hits
-              if len(hits) > 1:
-                  return raw, "ambiguous", hits
-              return raw, "unresolved", []
-
-
-          def _value_alias(value: Any, field: Dict[str, Any]) -> Tuple[Any, bool]:
-              aliases = field.get("value_aliases") or {}
-              key = _str(value)
-              if key in aliases:
-                  return aliases[key], True
-              return value, False
-
-
-          def _field(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
-              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
-              return _named_item_map(coll.get("fields") or {}).get(name) or {}
-
-
-          def _metric(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
-              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
-              return _named_item_map(coll.get("metrics") or {}).get(name) or {}
-
-
-          def _is_sensitive(f: Dict[str, Any]) -> bool:
-              return bool(f.get("sensitive") or f.get("pii") or f.get("pii_category"))
-
-
-          def _canonical_field(raw: str, schema: Dict[str, Any], collection: str, place: str, errors: List[str], warnings: List[str], autofixes: List[Dict[str, Any]], require_flag: str = "", alias_index: Any = None) -> str:
-              name, source, hits = _field_alias(raw, schema, collection, alias_index)
-              if source == "ambiguous":
-                  errors.append(f"字段 {raw} 在 collection={collection} 中存在多个候选，需要澄清。")
-                  return raw
-              if source == "unresolved":
-                  errors.append(f"未知字段 {raw}，未在 schema metadata 中声明。")
-                  return raw
-              if name != raw:
-                  autofixes.append({"type": "field_alias_canonicalize", "place": place, "from": raw, "to": name, "collection": collection})
-              f = _field(schema, collection, name)
-              if require_flag and not bool(f.get(require_flag)):
-                  if require_flag in {"projectable", "returnable"} and (f.get("projectable") or f.get("returnable")):
-                      warnings.append(f"字段 {name} 使用 {require_flag} 兼容策略放行。")
-                  else:
-                      errors.append(f"字段 {name} 不允许用于 {place}（{require_flag}=false）。")
-              if _is_sensitive(f) and place in {"group_fields", "projection_fields", "sort", "chart_x", "chart_y"}:
-                  errors.append(f"敏感/PII 字段 {name} 不允许用于 {place}。")
-              return name
-
-
-          def _stage_is_aggregate(stage: Dict[str, Any]) -> bool:
-              return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or canonicalize_intent_type(stage.get("intent_type"), stage) in {"aggregate_summary"} or _str(stage.get("intent_type")) in {"ranking", "trend"})
-
-
-          def _date_ok(s: str) -> bool:
-              if not s:
-                  return True
-              for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%dT%H:%M:%S"):
-                  try:
-                      datetime.strptime(s[:19], fmt)
-                      return True
-                  except Exception:
-                      pass
-              return False
-
-
-          def _negative_fields(compact: Dict[str, Any], patch: Dict[str, Any], patch_debug: Dict[str, Any], qref: Dict[str, Any]) -> List[str]:
-              out = []
-              sources = [patch.get("negative_fields"), patch_debug.get("negative_fields"), qref.get("negative_fields")]
-              for item in _list(patch.get("unapplied_refinements")):
-                  if isinstance(item, dict):
-                      sources.append(item.get("negative_fields") or item.get("field"))
-              text = json.dumps([patch, patch_debug, qref], ensure_ascii=False)
-              for src in sources:
-                  for x in _list(src):
-                      if isinstance(x, dict):
-                          x = x.get("field") or x.get("name")
-                      if _str(x):
-                          out.append(_str(x))
-              return list(dict.fromkeys(out))
-
-
-          def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok", schema_runtime_context_json: str = "{}") -> Dict[str, Any]:
-              errors: List[str] = []
-              warnings: List[str] = []
-              autofixes: List[Dict[str, Any]] = []
-              debug: Dict[str, Any] = {"normalizer_route": _str(normalizer_route)}
-
-              runtime_ctx = _loads(schema_runtime_context_json, {})
-              if not isinstance(runtime_ctx, dict):
-                  runtime_ctx = {}
-              plan = _loads(semantic_plan_json, {})
-              runtime_schema_json = runtime_ctx.get("schema_metadata_json") if runtime_ctx.get("schema_metadata_json") not in (None, "") else schema_metadata_json
-              runtime_alias_json = runtime_ctx.get("schema_alias_index_json") if runtime_ctx.get("schema_alias_index_json") not in (None, "") else schema_alias_index_json
-              schema = _loads(runtime_schema_json, {})
-              alias_index = _loads(runtime_alias_json, {})
-              selection = _loads(collection_selection_json, {})
-              compact = _loads(compact_context_json, {})
-              if not isinstance(compact, dict):
-                  compact = {}
-              debug["prior_compact_context"] = {
-                  "has_last_context": bool(compact),
-                  "last_primary_collection": compact.get("last_primary_collection") or "",
-                  "last_related_collections": compact.get("last_related_collections") if isinstance(compact.get("last_related_collections"), list) else [],
-                  "last_plan_summary": compact.get("last_plan_summary") if isinstance(compact.get("last_plan_summary"), dict) else {},
-                  "last_resolved_fields": compact.get("last_resolved_fields") if isinstance(compact.get("last_resolved_fields"), list) else [],
-                  "last_resolved_metrics": compact.get("last_resolved_metrics") if isinstance(compact.get("last_resolved_metrics"), list) else [],
-                  "last_chart_request": compact.get("last_chart_request") if isinstance(compact.get("last_chart_request"), dict) else {},
-                  "last_result_profile": compact.get("last_result_profile") if isinstance(compact.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
-                  "schema_context_ref": compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {},
-              }
-              patch = _loads(patch_result_json, {})
-              if isinstance(patch, list):
-                  patch = {"unapplied_refinements": patch}
-              elif not isinstance(patch, dict):
-                  patch = {}
-              patch_debug = _loads(patch_debug_json, {})
-              if not isinstance(patch_debug, dict):
-                  patch_debug = {}
-              qref = _loads(query_refinement_json, {})
-              if not isinstance(qref, dict):
-                  qref = {}
-
-              debug["question"] = _str(question)
-              debug["schema_source"] = _str(runtime_ctx.get("schema_source")) or "direct_runtime_fallback"
-              debug["schema_context_ref"] = runtime_ctx.get("schema_context_ref") if isinstance(runtime_ctx.get("schema_context_ref"), dict) else {}
-              debug["schema_context_ready"] = bool(runtime_ctx.get("schema_context_ready")) if runtime_ctx else bool(schema)
-              debug["schema_hydration_needed"] = bool(runtime_ctx.get("schema_hydration_needed"))
-              if runtime_ctx and not runtime_ctx.get("schema_context_ready"):
-                  reason = _str(runtime_ctx.get("schema_hydration_reason")) or "schema_runtime_context_not_ready"
-                  collections = runtime_ctx.get("schema_hydration_collections") or []
-                  msg = f"validator runtime schema context 未就绪：{reason}。"
-                  if collections:
-                      msg += f" 可基于 collections={collections} 轻量检索 schema 后重试校验。"
-                  return _finalize(_result("needs_replan", plan if isinstance(plan, dict) else {}, [msg] + _list(runtime_ctx.get("errors")), _list(runtime_ctx.get("warnings")), debug=debug, needs_schema_retrieval=bool(runtime_ctx.get("schema_hydration_needed"))))
-              if str(normalizer_valid).lower() in {"false", "0", "no"}:
-                  return _finalize(_result("invalid", {}, ["semantic_plan_normalizer 未通过，validator 拒绝进入 Mongo 编译。"], debug=debug))
-              if not isinstance(plan, dict) or not plan:
-                  return _finalize(_result("invalid", {}, ["semantic_plan_json 为空或不是 JSON 对象。"], debug=debug))
-              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
-              if not stages:
-                  return _finalize(_result("invalid", plan, ["semantic_plan_contract 缺少 stages。"], debug=debug))
-              collections = schema.get("collections") or {}
-              if not collections:
-                  return _finalize(_result("needs_replan", plan, ["缺少 schema_metadata.collections，无法校验字段与指标。"], debug=debug, needs_schema_retrieval=True))
-
-              plan = copy.deepcopy(plan)
-              primary = _str(plan.get("primary_collection") or (stages[0] or {}).get("collection"))
-              selected = _str(selection.get("selected_primary_collection"))
-              confidence = float(selection.get("confidence") or 0) if isinstance(selection, dict) else 0.0
-              if not primary or primary not in collections:
-                  errors.append(f"primary_collection={primary or '<empty>'} 不存在于 schema metadata。")
-              if selected and primary and selected != primary:
-                  msg = f"collection_selection.selected_primary_collection={selected} 与 plan.primary_collection={primary} 不一致。"
-                  if confidence and confidence < 0.6:
-                      return _finalize(_result("requires_clarification", plan, [msg], clarification="我需要确认一下：当前查询应该使用哪个业务集合？", debug=debug))
-                  errors.append(msg)
-              related = _prune_unused_related_collections(plan, autofixes)
-              for rc in related:
-                  if rc not in collections:
-                      errors.append(f"related_collection={rc} 不存在于 schema metadata。")
-
-              route_hint = "valid"
-              for i, stage in enumerate(plan.get("stages") or []):
-                  if not isinstance(stage, dict):
-                      errors.append(f"stage[{i}] 不是对象。")
-                      continue
-                  coll = _str(stage.get("collection") or primary)
-                  stage["collection"] = coll
-                  if coll not in collections:
-                      errors.append(f"stage[{i}].collection={coll} 不存在。")
-                      continue
-                  if primary and coll != primary and coll not in related:
-                      errors.append(f"stage[{i}].collection={coll} 不属于 primary/related collections。")
-                  coll_meta = collections.get(coll) or {}
-                  rules = coll_meta.get("query_rules") or {}
-
-                  raw_intent_type = _str(stage.get("intent_type"))
-                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
-                  if canonical_intent_type != raw_intent_type:
-                      stage["intent_type"] = canonical_intent_type
-                      autofixes.append({
-                          "type": "intent_type_canonicalize",
-                          "from": raw_intent_type,
-                          "to": canonical_intent_type,
-                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
-                      })
-                  elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
-                      errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
-
-                  group_fields = []
-                  for gf in _list(stage.get("group_fields")):
-                      group_fields.append(_canonical_field(_str(gf), schema, coll, "group_fields", errors, warnings, autofixes, "groupable"))
-                  stage["group_fields"] = group_fields
-
-                  metric_alias = _str(stage.get("metric_alias"))
-                  derived_fields = set()
-                  for alias in _list(stage.get("metric_alias")):
-                      if _str(alias):
-                          derived_fields.add(_str(alias))
-                  for metric_item in _list(stage.get("metrics")):
-                      if isinstance(metric_item, dict):
-                          for alias_key in ("alias", "metric_alias", "name", "output_field"):
-                              if _str(metric_item.get(alias_key)):
-                                  derived_fields.add(_str(metric_item.get(alias_key)))
-                  if metric_alias:
-                      mname, msrc, _ = _metric_alias(metric_alias, schema, coll, alias_index)
-                      if msrc == "ambiguous":
-                          errors.append(f"指标 {metric_alias} 存在多个候选，需要澄清。")
-                      elif msrc == "unresolved":
-                          if _stage_is_aggregate(stage) and _str(stage.get("metric_function")):
-                              derived_fields.add(metric_alias)
-                              warnings.append(f"允许聚合派生字段 {metric_alias} 用于 sort/projection/chart.y_field。")
-                              autofixes.append({"type": "derived_metric_alias_allow", "field": metric_alias, "places": ["sort", "projection_fields", "chart_request.y_field"]})
-                          else:
-                              errors.append(f"未知指标 {metric_alias}，不允许当作字段或自动猜测。")
-                      else:
-                          if mname != metric_alias:
-                              autofixes.append({"type": "metric_alias_canonicalize", "from": metric_alias, "to": mname, "collection": coll})
-                              if metric_alias in derived_fields:
-                                  derived_fields.remove(metric_alias)
-                              derived_fields.add(mname)
-                          stage["metric_alias"] = mname
-                          metric_alias = mname
-                          metric = _metric(schema, coll, mname)
-                          if not _str(stage.get("metric_function")) and _str(metric.get("function")):
-                              stage["metric_function"] = _str(metric.get("function")); autofixes.append({"type": "metric_function_fill", "metric": mname, "value": stage["metric_function"]})
-                          elif _str(stage.get("metric_function")) and _str(metric.get("function")) and _str(stage.get("metric_function")) != _str(metric.get("function")):
-                              errors.append(f"metric_function 与 schema metric {mname}.function 不一致。")
-                          if not _str(stage.get("metric_field")) and _str(metric.get("field")):
-                              stage["metric_field"] = _str(metric.get("field")); autofixes.append({"type": "metric_field_fill", "metric": mname, "value": stage["metric_field"]})
-                          elif _str(stage.get("metric_field")) and _str(metric.get("field")) and _str(stage.get("metric_field")) != _str(metric.get("field")):
-                              errors.append(f"metric_field 与 schema metric {mname}.field 不一致。")
-                          coll_field_map = _named_item_map(coll_meta.get("fields") or {})
-                          for sf in _list(metric.get("source_fields")):
-                              if sf not in coll_field_map:
-                                  errors.append(f"metric {mname}.source_field={sf} 不存在。")
-                          allowed_dims = [_str(x) for x in _list(metric.get("allowed_dimensions"))]
-                          if allowed_dims:
-                              for gf in group_fields:
-                                  if gf not in allowed_dims:
-                                      errors.append(f"字段 {gf} 不在 metric {mname}.allowed_dimensions 中。")
-                  elif _stage_is_aggregate(stage) and _str(stage.get("metric_field")):
-                      mf = _canonical_field(_str(stage.get("metric_field")), schema, coll, "metric_field", errors, warnings, autofixes, "")
-                      stage["metric_field"] = mf
-
-                  filters = []
-                  for f in _list(stage.get("filters")):
-                      if not isinstance(f, dict):
-                          errors.append("filter 不是对象，已拒绝。")
-                          continue
-                      nf = copy.deepcopy(f)
-                      fname = _canonical_field(_str(nf.get("field")), schema, coll, "filters", errors, warnings, autofixes, "filterable")
-                      nf["field"] = fname
-                      field = _field(schema, coll, fname)
-                      op = _str(nf.get("operator") or nf.get("op") or "eq")
-                      if op not in ALLOWED_OPERATORS:
-                          errors.append(f"filter operator={op} 不在允许范围。")
-                      nf["operator"] = op
-                      if _is_sensitive(field) and not bool((rules.get("allow_sensitive_filter") or rules.get("allow_pii_filter"))):
-                          errors.append(f"敏感/PII 字段 {fname} 默认不允许 filter。")
-                      if "value" in nf:
-                          new_value, changed = _value_alias(nf.get("value"), field)
-                          if changed:
-                              autofixes.append({"type": "value_alias_canonicalize", "field": fname, "from": nf.get("value"), "to": new_value})
-                              nf["value"] = new_value
-                          allowed_values = [_str(x) for x in _list(field.get("allowed_values"))]
-                          vals = _list(nf.get("value")) if op in {"in", "nin"} else [nf.get("value")]
-                          if allowed_values:
-                              for val in vals:
-                                  if _str(val) not in allowed_values:
-                                      errors.append(f"字段 {fname} 的枚举值 {val} 不在 allowed_values 中。")
-                      filters.append(nf)
-                  stage["filters"] = filters
-
-                  stage_output_field_alias_map = {}
-                  canonical_metric_alias = _str(stage.get("metric_alias"))
-                  if canonical_metric_alias:
-                      stage_output_field_alias_map[canonical_metric_alias] = canonical_metric_alias
-                      for alias in _list(stage.get("metric_alias")):
-                          if _str(alias):
-                              stage_output_field_alias_map[_str(alias)] = canonical_metric_alias
-                      for metric_item in _list(stage.get("metrics")):
-                          if isinstance(metric_item, dict):
-                              for alias_key in ("alias", "metric_alias", "name", "output_field"):
-                                  if _str(metric_item.get(alias_key)):
-                                      stage_output_field_alias_map[_str(metric_item.get(alias_key))] = canonical_metric_alias
-                      stage_chart_request = stage.get("chart_request") if isinstance(stage.get("chart_request"), dict) else {}
-                      for chart_key in ("y_field", "series_name"):
-                          if _str(stage_chart_request.get(chart_key)):
-                              stage_output_field_alias_map[_str(stage_chart_request.get(chart_key))] = canonical_metric_alias
-                      top_chart_request = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
-                      for chart_key in ("y_field", "series_name"):
-                          if _str(top_chart_request.get(chart_key)):
-                              stage_output_field_alias_map[_str(top_chart_request.get(chart_key))] = canonical_metric_alias
-                      for fix in autofixes:
-                          if isinstance(fix, dict) and _str(fix.get("to")) == canonical_metric_alias and _str(fix.get("from")):
-                              stage_output_field_alias_map[_str(fix.get("from"))] = canonical_metric_alias
-                  if stage_output_field_alias_map:
-                      debug.setdefault("stage_output_field_alias_maps", {})[_str(stage.get("stage_name") or i)] = dict(stage_output_field_alias_map)
-
-                  def _canonical_stage_output_field(raw: str, place: str) -> Tuple[str, bool]:
-                      value = _str(raw)
-                      canonical = stage_output_field_alias_map.get(value, value)
-                      if canonical != value:
-                          autofixes.append({"type": "aggregate_output_alias_canonicalize", "place": place, "from": value, "to": canonical, "collection": coll})
-                          return canonical, True
-                      return value, value in stage_output_field_alias_map
-
-                  projections = []
-                  for pf in _list(stage.get("projection_fields")):
-                      pf_str = _str(pf)
-                      canonical_pf, is_stage_output = _canonical_stage_output_field(pf_str, "projection_fields")
-                      if is_stage_output or canonical_pf in derived_fields:
-                          projections.append(canonical_pf)
-                          autofixes.append({"type": "derived_metric_alias_allow", "field": canonical_pf, "place": "projection_fields"})
-                      else:
-                          projections.append(_canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
-                  stage["projection_fields"] = projections
-
-                  tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
-                  if _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
-                      return _finalize(_result("requires_clarification", plan, ["聚合查询按 query_rules 要求必须提供 time_range。"], clarification="我需要确认一下：这个聚合查询要统计哪个时间范围？", debug=debug))
-                  if tr:
-                      tf = _str(tr.get("field"))
-                      if not tf and _str(coll_meta.get("default_time_field")):
-                          tr["field"] = _str(coll_meta.get("default_time_field")); autofixes.append({"type": "time_range_field_fill", "value": tr["field"], "collection": coll})
-                      elif tf:
-                          tr["field"] = _canonical_field(tf, schema, coll, "time_range", errors, warnings, autofixes, "")
-                      if _str(tr.get("field")):
-                          fld = _field(schema, coll, _str(tr.get("field")))
-                          if _str(fld.get("semantic_type") or fld.get("role") or fld.get("type")).lower() not in {"time", "date", "datetime", "timestamp"}:
-                              warnings.append(f"time_range.field={tr.get('field')} 未显式标记为时间字段。")
-                      try:
-                          rd = int(tr.get("relative_days") or 0)
-                      except Exception:
-                          rd = 0
-                      if _str(tr.get("mode")) == "relative_days" and rd <= 0:
-                          errors.append("time_range.relative_days 必须大于 0。")
-                      max_days = int(rules.get("max_time_range_days") or 0)
-                      if rd and max_days and rd > max_days:
-                          tr["relative_days"] = max_days; warnings.append(f"relative_days 超过 max_time_range_days，已截断为 {max_days}。"); autofixes.append({"type": "relative_days_truncate", "from": rd, "to": max_days})
-                      if not _date_ok(_str(tr.get("start"))) or not _date_ok(_str(tr.get("end"))):
-                          errors.append("time_range.start/end 日期格式不合理。")
-                      stage["time_range"] = tr
-
-                  try:
-                      limit = int(stage.get("limit") or rules.get("default_limit") or 100)
-                  except Exception:
-                      limit = int(rules.get("default_limit") or 100)
-                      autofixes.append({"type": "limit_default", "value": limit})
-                  if limit <= 0:
-                      limit = int(rules.get("default_limit") or 100); autofixes.append({"type": "limit_default", "value": limit})
-                  max_limit = int(rules.get("max_limit") or 0)
-                  if max_limit and limit > max_limit:
-                      autofixes.append({"type": "limit_truncate", "from": limit, "to": max_limit}); warnings.append(f"limit 超过 max_limit，已截断为 {max_limit}。"); limit = max_limit
-                  stage["limit"] = limit
-
-                  valid_sort_fields = set(group_fields + projections + [_str(stage.get("metric_alias"))])
-                  for fld in _iter_named_items(coll_meta.get("fields") or {}):
-                      fname = _str(fld.get("name")).strip()
-                      if fname and fld.get("sortable"):
-                          valid_sort_fields.add(fname)
-                  sorts = []
-                  for s in _list(stage.get("sort")):
-                      if not isinstance(s, dict):
-                          errors.append("sort 不是对象。")
-                          continue
-                      ns = copy.deepcopy(s)
-                      sf = _str(ns.get("field"))
-                      if sf:
-                          canonical_sf, is_stage_output = _canonical_stage_output_field(sf, "sort.field")
-                          ns["field"] = canonical_sf
-                          if not is_stage_output and canonical_sf not in valid_sort_fields:
-                              cf = _canonical_field(canonical_sf, schema, coll, "sort", errors, warnings, autofixes, "sortable")
-                              ns["field"] = cf
-                              if cf not in valid_sort_fields and cf != _str(stage.get("metric_alias")):
-                                  errors.append(f"sort.field={sf} 不是 group/metric/projection/schema sortable 字段。")
-                      d = ns.get("direction", ns.get("order", "desc"))
-                      if d in (1, "1", "asc", "ASC", "ascending"):
-                          nd = "asc"
-                      elif d in (-1, "-1", "desc", "DESC", "descending"):
-                          nd = "desc"
-                      else:
-                          errors.append(f"sort.direction={d} 不合法。")
-                          nd = "desc"
-                      if nd != d:
-                          autofixes.append({"type": "sort_direction_normalize", "from": d, "to": nd})
-                      ns["direction"] = nd
-                      sorts.append(ns)
-                  if not sorts and _str(stage.get("metric_alias")):
-                      m = _metric(schema, coll, _str(stage.get("metric_alias")))
-                      if _str(m.get("default_sort")):
-                          sorts.append({"field": stage.get("metric_alias"), "direction": _str(m.get("default_sort"))}); autofixes.append({"type": "metric_default_sort", "metric": stage.get("metric_alias"), "direction": m.get("default_sort")})
-                  stage["sort"] = sorts
-
-              # relations
-              for rc in related:
-                  rels = [r for r in _iter_named_items((collections.get(primary) or {}).get("relations") or []) if _str(r.get("target_collection")) == rc]
-                  if not rels:
-                      errors.append(f"schema relations 未声明 {primary}->{rc}，禁止 LLM 发明 join。")
-                      continue
-                  for rel in rels:
-                      if not rel.get("join_keys"):
-                          errors.append(f"relation {primary}->{rc} 缺少 join_keys。")
-                      for jk in rel.get("join_keys") or []:
-                          primary_field_map = _named_item_map((collections.get(primary) or {}).get("fields") or {})
-                          target_field_map = _named_item_map((collections.get(rc) or {}).get("fields") or {})
-                          if _str(jk.get("source_field")) not in primary_field_map:
-                              errors.append(f"relation source_field={jk.get('source_field')} 不存在。")
-                          if _str(jk.get("target_field")) not in target_field_map:
-                              errors.append(f"relation target_field={jk.get('target_field')} 不存在。")
-                      intent_text = json.dumps(plan.get("stages") or [], ensure_ascii=False)
-                      for forbidden in _list(rel.get("forbidden_usage")):
-                          if _str(forbidden) and _str(forbidden) in intent_text:
-                              return _finalize(_result("blocked", plan, [f"relation {primary}->{rc} 命中 forbidden_usage={forbidden}。"], blocked="当前查询使用了 schema 禁止的关联关系。", debug=debug))
-
-              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
-              if bool(chart.get("enabled")) or bool(plan.get("needs_chart")):
-                  first = (plan.get("stages") or [{}])[0]
-                  group_fields = _list(first.get("group_fields"))
-                  metric_alias = _str(first.get("metric_alias"))
-                  ctype = _str(chart.get("chart_type"))
-                  if ctype not in SUPPORTED_CHART_TYPES:
-                      errors.append(f"chart_type={ctype} 不支持。")
-                  x = _str(chart.get("x_field"))
-                  y = _str(chart.get("y_field"))
-                  chart_stage_output_field_alias_map = {}
-                  if metric_alias:
-                      chart_stage_output_field_alias_map[metric_alias] = metric_alias
-                      for alias in _list(first.get("metric_alias")):
-                          if _str(alias):
-                              chart_stage_output_field_alias_map[_str(alias)] = metric_alias
-                      for metric_item in _list(first.get("metrics")):
-                          if isinstance(metric_item, dict):
-                              for alias_key in ("alias", "metric_alias", "name", "output_field"):
-                                  if _str(metric_item.get(alias_key)):
-                                      chart_stage_output_field_alias_map[_str(metric_item.get(alias_key))] = metric_alias
-                      for chart_key in ("y_field", "series_name"):
-                          if _str(chart.get(chart_key)):
-                              chart_stage_output_field_alias_map[_str(chart.get(chart_key))] = metric_alias
-                      stage_chart_request = first.get("chart_request") if isinstance(first.get("chart_request"), dict) else {}
-                      for chart_key in ("y_field", "series_name"):
-                          if _str(stage_chart_request.get(chart_key)):
-                              chart_stage_output_field_alias_map[_str(stage_chart_request.get(chart_key))] = metric_alias
-                      for fix in autofixes:
-                          if isinstance(fix, dict) and _str(fix.get("to")) == metric_alias and _str(fix.get("from")):
-                              chart_stage_output_field_alias_map[_str(fix.get("from"))] = metric_alias
-                      if y in chart_stage_output_field_alias_map and chart_stage_output_field_alias_map[y] != y:
-                          chart["y_field"] = chart_stage_output_field_alias_map[y]
-                          autofixes.append({"type": "aggregate_output_alias_canonicalize", "place": "chart_request.y_field", "from": y, "to": chart["y_field"], "collection": primary})
-                          y = chart["y_field"]
-                  if not x and len(group_fields) == 1:
-                      chart["x_field"] = group_fields[0]; autofixes.append({"type": "chart_x_fill", "value": group_fields[0]})
-                  elif x and x not in group_fields:
-                      if len(group_fields) == 1:
-                          chart["x_field"] = group_fields[0]; autofixes.append({"type": "chart_x_align", "from": x, "to": group_fields[0]})
-                      else:
-                          errors.append("chart_request.x_field 未与 group_fields/输出字段对齐。")
-                  if not y and metric_alias:
-                      chart["y_field"] = metric_alias; autofixes.append({"type": "chart_y_fill", "value": metric_alias})
-                  elif y and metric_alias and y != metric_alias:
-                      ym, ysrc, _ = _metric_alias(y, schema, primary, alias_index)
-                      if ym == metric_alias:
-                          chart["y_field"] = metric_alias; autofixes.append({"type": "chart_y_metric_alias_align", "from": y, "to": metric_alias})
-                      else:
-                          errors.append("chart_request.y_field 未与 metric_alias 对齐。")
-                  if _str(chart.get("x_field")) and _is_sensitive(_field(schema, primary, _str(chart.get("x_field")))):
-                      errors.append("chart_request.x_field 命中敏感/PII 字段。")
-                  if any(k in json.dumps(chart, ensure_ascii=False).lower() for k in ["debug", "schema", "raw prompt", "prompt"]):
-                      warnings.append("chart_request.title 含 debug/schema/prompt 字样，已清空 title。")
-                      chart["title"] = ""; autofixes.append({"type": "chart_title_sanitize"})
-                  plan["chart_request"] = chart
-
-              # user negative old field residue
-              negative = _negative_fields(compact, patch, patch_debug, qref)
-              canonical_negative = []
-              for nf in negative:
-                  cn, _, _ = _field_alias(nf, schema, primary, alias_index)
-                  canonical_negative.append(cn)
-              used = []
-              for st in plan.get("stages") or []:
-                  used.extend(_list(st.get("group_fields")))
-              if any(x in canonical_negative or x in negative for x in used):
-                  return _finalize(_result("needs_replan", plan, ["检测到用户本轮否定的旧字段仍残留在 group_fields，拒绝进入 compiler。"], debug={**debug, "negative_fields": negative}))
-
-              question_l = _str(question).lower()
-              if any(w in question_l for w in PII_WORDS):
-                  for st in plan.get("stages") or []:
-                      for gf in _list(st.get("group_fields")):
-                          if _is_sensitive(_field(schema, _str(st.get("collection") or primary), gf)):
-                              return _finalize(_result("blocked", plan, ["用户要求按敏感/PII 字段统计。"], blocked="这个查询涉及敏感字段，不能直接按该字段分组或展示。", debug=debug))
-
-              if errors:
-                  joined = "；".join(errors)
-                  if any("敏感/PII" in e or "forbidden_usage" in e or "relation" in e or "join" in e for e in errors):
-                      return _finalize(_result("blocked", plan, errors, warnings, autofixes, blocked="这个查询涉及敏感字段或非法关联，不能直接执行。", debug=debug))
-                  if any("未知字段" in e or "多个候选" in e or "枚举值" in e for e in errors):
-                      return _finalize(_result("requires_clarification", plan, errors, warnings, autofixes, clarification="我需要确认一下：当前查询中的字段、指标或枚举值对应哪个 schema 定义？", debug=debug))
-                  return _finalize(_result("needs_replan", plan, errors, warnings, autofixes, debug=debug))
-
-              return _finalize(_result(route_hint, plan, [], warnings, autofixes, debug=debug))
-
-
-          def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
-              route = res.get("validator_route")
-              if route == "valid":
-                  text = ""
-                  answer_type = "query_only"
-                  should_save = False
-              elif route == "requires_clarification":
-                  text = res.get("clarification_question") or "我需要确认一下查询字段后再执行。"
-                  answer_type = "clarification"
-                  should_save = False
-              elif route in {"blocked", "needs_replan"}:
-                  reason = res.get("blocked_reason") or "; ".join(_list(res.get("errors"))) or "语义计划未通过校验。"
-                  text = "当前查询无法执行：" + reason
-                  answer_type = "validation_error"
-                  should_save = False
-              else:
-                  text = "系统在处理该查询时出现异常，请调整问题后重试。"
-                  answer_type = "system_error"
-                  should_save = False
-              res["answer_type"] = answer_type if route != "valid" else res.get("answer_type")
-              res["final_answer_markdown"] = text
-              res["answer_payload_markdown"] = text
-              schema_ref = {}
-              dbg = res.get("debug") if isinstance(res.get("debug"), dict) else {}
-              if isinstance(dbg.get("schema_context_ref"), dict):
-                  schema_ref = dbg.get("schema_context_ref")
-              prior = dbg.get("prior_compact_context") if isinstance(dbg.get("prior_compact_context"), dict) else {}
-              compact = {
-                  "context_version": "compact_context_contract",
-                  "has_last_context": bool(prior.get("has_last_context")),
-                  "last_question": _str(dbg.get("question")),
-                  "last_turn_intent": {"validator_route": route or "invalid", "answer_type": answer_type},
-                  "last_primary_collection": prior.get("last_primary_collection") or "",
-                  "last_related_collections": prior.get("last_related_collections") if isinstance(prior.get("last_related_collections"), list) else [],
-                  "last_plan_summary": prior.get("last_plan_summary") if isinstance(prior.get("last_plan_summary"), dict) else {},
-                  "last_resolved_fields": prior.get("last_resolved_fields") if isinstance(prior.get("last_resolved_fields"), list) else [],
-                  "last_resolved_metrics": prior.get("last_resolved_metrics") if isinstance(prior.get("last_resolved_metrics"), list) else [],
-                  "last_chart_request": prior.get("last_chart_request") if isinstance(prior.get("last_chart_request"), dict) else {},
-                  "last_result_profile": prior.get("last_result_profile") if isinstance(prior.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
-                  "schema_context_ref": schema_ref or prior.get("schema_context_ref") or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
-                  "answer_summary": text[:800],
-                  "size_guard": {},
-                  "context_warnings": [],
-              }
-              compact_json = json.dumps(compact, ensure_ascii=False)
-              answer_payload = {
-                  "contract_version": "answer_payload_contract",
-                  "answer_type": answer_type if route != "valid" else (res.get("answer_type") or "query_only"),
-                  "answer_text": text,
-                  "chart_echarts_markdown": "",
-                  "result_summary": text[:800],
-                  "message": "",
-                  "chart_payload": {},
-                  "query_result_profile": {"row_count": 0, "fields": [], "preview_rows": []},
-                  "state_update": {"should_save_context": should_save, "context_summary": compact},
-              }
-              context_update = {"contract_version": "context_update_contract", "should_save_context": should_save, "compact_context": compact, "last_context_json": compact_json, "warnings": [], "clear_fields": []}
-              res["answer_payload_json"] = json.dumps(answer_payload, ensure_ascii=False)
-              res["context_update_json"] = json.dumps(context_update, ensure_ascii=False)
-              res["compact_context_json"] = compact_json
-              res["validator_result_json"] = json.dumps({k: v for k, v in res.items() if k not in {"validator_result_json"}}, ensure_ascii=False)
-              return res
-
-
-          def main(**kwargs: Any) -> Dict[str, Any]:
-              return semantic_plan_validator(**kwargs)
-
-        code_language: python3
-        desc: Phase 8 semantic_plan_validator：在 Mongo 编译执行前校验 collection/field/metric/filter/time_range/relation/PII/chart/negative
-          residue，并输出 validator_result_contract。
-        outputs:
-          contract_version:
-            children:
-            type: string
-          valid:
-            children:
-            type: boolean
-          validator_route:
-            children:
-            type: string
-          normalized_plan:
-            children:
-            type: object
-          normalized_plan_json:
-            children:
-            type: string
-          normalized_semantic_plan_json:
-            children:
-            type: string
-          semantic_plan_json:
-            children:
-            type: string
-          validator_result_json:
-            children:
-            type: string
-          errors:
-            children:
-            type: array[string]
-          warnings:
-            children:
-            type: array[string]
-          autofixes:
-            children:
-            type: array[object]
-          needs_replan:
-            children:
-            type: boolean
-          needs_schema_retrieval:
-            children:
-            type: boolean
-          requires_clarification:
-            children:
-            type: boolean
-          clarification_question:
-            children:
-            type: string
-          blocked_reason:
-            children:
-            type: string
-          debug:
-            children:
-            type: object
-          answer_payload_json:
-            children:
-            type: string
-          answer_type:
-            children:
-            type: string
-          final_answer_markdown:
-            children:
-            type: string
-          context_update_json:
-            children:
-            type: string
-          answer_payload_markdown:
-            children:
-            type: string
-          compact_context_json:
-            children:
-            type: string
-        selected: false
-        title: 代码执行_semantic_plan_validator
-        type: code
-        variables:
-        - value_selector:
-          - sys
-          - query
-          value_type: string
-          variable: question
-        - value_selector:
-          - '1776000000024'
-          - semantic_plan_contract_json
-          value_type: string
-          variable: semantic_plan_json
-        - value_selector:
-          - '1780000000009'
-          - schema_metadata_json
-          value_type: string
-          variable: schema_metadata_json
-        - value_selector:
-          - '1780000000009'
-          - schema_alias_index_json
-          value_type: string
-          variable: schema_alias_index_json
-        - value_selector:
-          - '1777000000001'
-          - collection_selection_json
-          value_type: string
-          variable: collection_selection_json
-        - value_selector:
-          - conversation
-          - last_context_json
-          value_type: string
-          variable: compact_context_json
-        - value_selector:
-          - '1776000000019'
           - patch_debug_json
           value_type: string
           variable: patch_debug_json
@@ -1062,3 +39,862 @@
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        cases:
+        - case_id: valid
+          conditions:
+          - comparison_operator: is
+            id: validator-route-valid
+            value: valid
+            varType: string
+            variable_selector:
+            - '1778000000001'
+            - validator_route
+          id: valid
+          logical_operator: and
+        - case_id: requires_clarification
+          conditions:
+          - comparison_operator: is
+            id: validator-route-clarification
+            value: requires_clarification
+            varType: string
+            variable_selector:
+            - '1778000000001'
+            - validator_route
+          id: requires_clarification
+          logical_operator: and
+        - case_id: blocked
+          conditions:
+          - comparison_operator: is
+            id: validator-route-blocked
+            value: blocked
+            varType: string
+            variable_selector:
+            - '1778000000001'
+            - validator_route
+          id: blocked
+          logical_operator: and
+        - case_id: needs_replan
+          conditions:
+          - comparison_operator: is
+            id: validator-route-needs-replan
+            value: needs_replan
+            varType: string
+            variable_selector:
+            - '1778000000001'
+            - validator_route
+          id: needs_replan
+          logical_operator: and
+        desc: Phase 8 validator route：仅 valid 允许进入 Mongo 输入/编译执行，其他分支输出校验回答。
+        selected: false
+        title: 条件分支_validator结果判断
+        type: if-else
+      height: 246
+      id: '1778000000002'
+      position:
+        x: 15000
+        y: 120
+      positionAbsolute:
+        x: 15000
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          def _loads(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      return parsed if isinstance(parsed, dict) else {}
+                  except Exception:
+                      return {}
+              return {}
+
+          def _as_list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if value in (None, '', {}, []):
+                  return []
+              return [str(value).strip()]
+
+          def _first_stage(plan):
+              stages = ((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan, dict) else []
+              return stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
+
+          def _add(out, value):
+              text = str(value or '').strip()
+              if text and text not in out:
+                  out.append(text)
+
+          def _hit_score(question, value, weight):
+              text = str(value or '').strip()
+              return weight if text and text.lower() in question.lower() else 0
+
+          def _registry_match(question, registry):
+              scores = []
+              for item in registry.get('collections') or []:
+                  if not isinstance(item, dict):
+                      continue
+                  name = str(item.get('collection_name') or '').strip()
+                  if not name:
+                      continue
+                  score = 0; reasons = []
+                  for key, weight in [('collection_name',100),('collection_label',90)]:
+                      hit = _hit_score(question, item.get(key), weight)
+                      if hit:
+                          score += hit; reasons.append(key)
+                  for key, weight in [('aliases',80),('primary_terms',60),('fields',45),('metrics',45)]:
+                      hits = sum(1 for value in _as_list(item.get(key)) if _hit_score(question, value, weight))
+                      if hits:
+                          score += hits * weight; reasons.append(key)
+                  desc_hits = 0
+                  for token in str(item.get('description') or '').replace('，',' ').replace('。',' ').split():
+                      if len(token) >= 2 and token in question:
+                          desc_hits += 1
+                  if desc_hits:
+                      score += min(desc_hits, 3) * 10; reasons.append('description')
+                  if score > 0:
+                      scores.append({'collection_name': name, 'score': score, 'matched_fields': reasons})
+              scores.sort(key=lambda x: x.get('score',0), reverse=True)
+              if not scores:
+                  return [], scores
+              top = scores[0].get('score',0)
+              winners = [x.get('collection_name') for x in scores if x.get('score',0) == top and x.get('collection_name')]
+              return (winners if len(winners) == 1 else []), scores
+
+          def _context_binding(qref, intent, old_plan):
+              st = _first_stage(old_plan)
+              base = str(old_plan.get('primary_collection') or st.get('collection') or st.get('primary_collection') or '').strip()
+              return {'base_primary_collection': base, 'old_primary_collection': base, 'collection_switch': bool(qref.get('collection_switch'))}
+
+          def main(question: str = '', query_refinement_json: str = '{}', normalized_turn_intent_json: str = '{}', last_context_json: str = '{}', old_normalized_semantic_plan_json: str = '{}', patch_reason: str = '', changed_fields: str = '', collection_registry_json: str = '', **kwargs):
+              q = str(question or '').strip()
+              qref = _loads(query_refinement_json)
+              intent = _loads(normalized_turn_intent_json)
+              old_plan = _loads(old_normalized_semantic_plan_json)
+              registry = _loads(collection_registry_json)
+              cb = _context_binding(qref, intent, old_plan)
+              registry_names, scores = _registry_match(q, registry)
+              old_primary = cb.get('base_primary_collection') or ''
+              explicit_switch = bool(registry_names and old_primary and registry_names[0] != old_primary and qref.get('collection_switch'))
+              selected = str(qref.get('selected_primary_collection') or qref.get('target_collection') or qref.get('collection') or '').strip()
+              if explicit_switch:
+                  names = registry_names; strategy = 'explicit_switch_by_registry'; collection_switch = True
+              elif old_primary:
+                  names = [old_primary]; strategy = 'inherit_previous'; collection_switch = False
+              elif selected:
+                  names = [selected]; strategy = 'selected_primary_collection'; collection_switch = False
+              elif registry_names:
+                  names = registry_names; strategy = 'registry_match'; collection_switch = False
+              else:
+                  names = []; strategy = 'registry_no_match'; collection_switch = False
+              ready = bool(names); primary = names[0] if names else ''
+              query = '\n'.join(['当前是 refine/full-replan。','metadata_type: mongo_schema','collection_name: '+primary,'只检索 candidate_collection_names 中 collection 对应的完整 schema metadata。','用户问题：'+q])
+              debug = {'candidate_collection_scores': scores, 'strategy': strategy, 'context_binding': cb}
+              return {
+                  'query_text': query,
+                  'old_normalized_semantic_plan_json': json.dumps(old_plan, ensure_ascii=False),
+                  'query_refinement_json': json.dumps(qref, ensure_ascii=False),
+                  'patch_reason': str(patch_reason or ''),
+                  'changed_fields_json': json.dumps(_as_list(changed_fields), ensure_ascii=False),
+                  'refine_retrieval_valid': ready,
+                  'refine_retrieval_error': '' if ready else 'schema_missing',
+                  'refine_query_debug_json': json.dumps(debug, ensure_ascii=False),
+                  'context_binding_json': json.dumps(cb, ensure_ascii=False),
+                  'must_include_collections_json': json.dumps(names, ensure_ascii=False),
+                  'preferred_collections_json': json.dumps(names, ensure_ascii=False),
+                  'deprecated_fields_json': '[]',
+                  'collection_strategy': strategy,
+                  'schema_strategy': 'metadata_exact' if ready else 'requires_clarification',
+                  'base_primary_collection': old_primary,
+                  'target_semantic_terms_json': json.dumps([q], ensure_ascii=False),
+                  'candidate_collection_names': names,
+                  'candidate_collection_name': primary,
+                  'candidate_collection_ready': ready,
+                  'candidate_collection_strategy': strategy,
+                  'candidate_collection_scores_json': json.dumps(scores, ensure_ascii=False),
+                  'candidate_collection_reason': 'matched by registry or inherited context' if ready else 'no collection available',
+                  'collection_switch': collection_switch,
+                  'requires_clarification': not ready,
+                  'clarification_question': '' if ready else '请明确要查询的业务对象或 collection。',
+              }
+        code_language: python3
+        desc: 为 refine full-replan 一次性 CandidateSchemas schema retrieval 构造查询，优先体现当前 refine
+          语义。
+        outputs:
+          query_text:
+            children:
+            type: string
+          old_normalized_semantic_plan_json:
+            children:
+            type: string
+          query_refinement_json:
+            children:
+            type: string
+          patch_reason:
+            children:
+            type: string
+          changed_fields_json:
+            children:
+            type: string
+          refine_retrieval_valid:
+            children:
+            type: boolean
+          refine_retrieval_error:
+            children:
+            type: string
+          refine_query_debug_json:
+            children:
+            type: string
+          context_binding_json:
+            children:
+            type: string
+          must_include_collections_json:
+            children:
+            type: string
+          preferred_collections_json:
+            children:
+            type: string
+          deprecated_fields_json:
+            children:
+            type: string
+          collection_strategy:
+            children:
+            type: string
+          schema_strategy:
+            children:
+            type: string
+          base_primary_collection:
+            children:
+            type: string
+          target_semantic_terms_json:
+            children:
+            type: string
+          candidate_collection_names:
+            type: array[string]
+          candidate_collection_name:
+            children:
+            type: string
+          candidate_collection_ready:
+            children:
+            type: boolean
+          candidate_collection_strategy:
+            children:
+            type: string
+          candidate_collection_scores_json:
+            children:
+            type: string
+          candidate_collection_reason:
+            children:
+            type: string
+          collection_switch:
+            children:
+            type: boolean
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_构建CandidateSchemas检索查询_Refine
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000004'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1776000000001'
+          - old_normalized_semantic_plan_json
+          value_type: string
+          variable: old_normalized_semantic_plan_json
+        - value_selector:
+          - '1776000000019'
+          - patch_reason
+          value_type: string
+          variable: patch_reason
+        - value_selector:
+          - '1776000000019'
+          - changed_fields
+          value_type: string
+          variable: changed_fields
+        - value_selector:
+          - env
+          - COLLECTION_REGISTRY_JSON
+          value_type: string
+          variable: collection_registry_json
+      height: 80
+      id: '1776000000025'
+      position:
+        x: 5520
+        y: 520
+      positionAbsolute:
+        x: 5520
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+          import re
+
+          SCHEMA_CONTRACT_VERSION = 'schema_metadata_contract'
+          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
+          CATALOG_VERSION = 'collection_catalog_contract'
+
+
+          def _strip_quotes(v):
+              v = str(v or '').strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                  return v[1:-1]
+              return v
+
+
+          def _split_inline_list(body):
+              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
+
+
+          def _parse_scalar(v):
+              v = str(v or '').strip()
+              if not v:
+                  return ''
+              if v in {'|', '>', '|-', '>-'}:
+                  return ''
+              if v in {'true', 'True'}:
+                  return True
+              if v in {'false', 'False'}:
+                  return False
+              if v in {'null', 'Null', 'NULL', '~'}:
+                  return None
+              if v.startswith('[') and v.endswith(']'):
+                  return _split_inline_list(v[1:-1].strip())
+              if v.startswith('{') and v.endswith('}'):
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return _strip_quotes(v)
+              if re.match(r'^-?\d+$', v):
+                  try:
+                      return int(v)
+                  except Exception:
+                      pass
+              if re.match(r'^-?\d+\.\d+$', v):
+                  try:
+                      return float(v)
+                  except Exception:
+                      pass
+              return _strip_quotes(v)
+
+
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1
+                      continue
+                  if ':' in s:
+                      k, v = s.split(':', 1)
+                      key = k.strip()
+                      val = v.strip()
+                      if isinstance(parent, dict):
+                          if val:
+                              parent[key] = _parse_scalar(val)
+                              i += 1
+                              continue
+                          j = i + 1
+                          nxt = ''
+                          while j < len(lines):
+                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
+                                  nxt = lines[j].strip()
+                                  break
+                              j += 1
+                          container = [] if nxt.startswith('- ') else {}
+                          parent[key] = container
+                          stack.append((indent, container))
+                  i += 1
+              return root
+
+
+          def _content(doc):
+              if isinstance(doc, dict):
+                  return str(doc.get('content') or doc.get('text') or doc.get('document') or '')
+              return str(doc or '')
+
+
+          def _extract_blocks(text):
+              raw = str(text or '')
+              blocks = []
+              for pat in [
+                  r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```',
+                  r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema").*?)\n```',
+              ]:
+                  blocks.extend(m.group(2 if 'Schema Metadata' in pat else 1) for m in re.finditer(pat, raw, re.I | re.S))
+              if not blocks and re.search(r'metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"', raw, re.I):
+                  blocks.append(raw)
+              return blocks
+
+
+          def _parse_block(block):
+              text = str(block or '').strip()
+              if not text:
+                  return {}
+              if text.startswith('{'):
+                  return json.loads(text)
+              return _parse_simple_yaml(text)
+
+
+          def _as_list(value):
+              if value in (None, ''):
+                  return []
+              if isinstance(value, list):
+                  return [x for x in value if x is not None and str(x).strip()]
+              return [x for x in _split_inline_list(value) if str(x).strip()]
+
+
+          def _str_list(value, limit=0):
+              out, seen = [], set()
+              for item in _as_list(value):
+                  s = str(item or '').strip()
+                  if s and s not in seen:
+                      seen.add(s); out.append(s)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
+          def _named_map(value):
+              result = {}
+              if isinstance(value, dict):
+                  for name, item in value.items():
+                      if isinstance(item, dict):
+                          obj = dict(item); obj.setdefault('name', name); result[str(obj.get('name') or name).strip()] = obj
+              elif isinstance(value, list):
+                  for item in value:
+                      if isinstance(item, dict) and str(item.get('name') or '').strip():
+                          result[str(item.get('name')).strip()] = dict(item)
+              return result
+
+
+          def _normalize_collection(doc):
+              cname = str((doc or {}).get('collection_name') or '').strip()
+              if not cname:
+                  return None
+              fields = _named_map(doc.get('fields'))
+              metrics = _named_map(doc.get('metrics'))
+              relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
+              normalized = dict(doc)
+              normalized.update({
+                  'collection_name': cname,
+                  'collection_label': str(doc.get('collection_label') or cname).strip() or cname,
+                  'collection_aliases': _str_list(doc.get('collection_aliases')),
+                  'fields': fields,
+                  'metrics': metrics,
+                  'relations': [r for r in relations if isinstance(r, dict)],
+                  'query_rules': doc.get('query_rules') if isinstance(doc.get('query_rules'), dict) else {},
+              })
+              return normalized
+
+
+          def _digest(obj, key):
+              tmp = json.loads(json.dumps(obj or {}, ensure_ascii=False))
+              if isinstance(tmp, dict):
+                  tmp.pop(key, None)
+              payload = json.dumps(tmp, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+              return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+          def _add_alias(bucket, alias, collection, kind, canonical, label='', source='', field=''):
+              alias = str(alias or '').strip()
+              if not alias:
+                  return
+              bucket.setdefault(alias, [])
+              item = {'collection': collection, 'kind': kind, 'canonical': canonical, 'label': str(label or '').strip(), 'source': source}
+              if field:
+                  item['field'] = field
+              if item not in bucket[alias]:
+                  bucket[alias].append(item)
+
+
+          def _alias_index(meta):
+              aliases, ca, fa, ma, va = {}, {}, {}, {}, {}
+              simple = {'fields': {}, 'metrics': {}, 'collections': {}}
+              for cname, coll in (meta.get('collections') or {}).items():
+                  for alias, source in [(cname, 'collection.name'), (coll.get('collection_label'), 'collection.label')]:
+                      _add_alias(aliases, alias, cname, 'collection', cname, coll.get('collection_label'), source)
+                      _add_alias(ca, alias, cname, 'collection', cname, coll.get('collection_label'), source)
+                      if alias: simple['collections'][str(alias)] = cname
+                  for a in coll.get('collection_aliases') or []:
+                      _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                      _add_alias(ca, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                      simple['collections'][str(a)] = cname
+                  for fname, f in (coll.get('fields') or {}).items():
+                      for alias, source in [(fname, 'field.name'), (f.get('label'), 'field.label')] + [(a, 'field.aliases') for a in (f.get('aliases') or [])]:
+                          _add_alias(aliases, alias, cname, 'field', fname, f.get('label'), source)
+                          _add_alias(fa, alias, cname, 'field', fname, f.get('label'), source)
+                          if alias: simple['fields'].setdefault(cname, {})[str(alias)] = fname
+                      for val_alias, canonical_value in (f.get('value_aliases') or {}).items() if isinstance(f.get('value_aliases'), dict) else []:
+                          _add_alias(aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                          _add_alias(va, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                  for mname, m in (coll.get('metrics') or {}).items():
+                      for alias, source in [(mname, 'metric.name'), (m.get('label'), 'metric.label')] + [(a, 'metric.aliases') for a in (m.get('aliases') or [])]:
+                          _add_alias(aliases, alias, cname, 'metric', mname, m.get('label'), source)
+                          _add_alias(ma, alias, cname, 'metric', mname, m.get('label'), source)
+                          if alias: simple['metrics'].setdefault(cname, {})[str(alias)] = mname
+              return {'contract_version': ALIAS_INDEX_CONTRACT_VERSION, 'aliases': aliases, 'collection_aliases': ca, 'field_aliases': fa, 'metric_aliases': ma, 'value_aliases': va, 'fields': simple['fields'], 'metrics': simple['metrics'], 'collections': simple['collections'], 'warnings': []}
+
+
+          def _catalog(meta):
+              cols = []
+              warnings = []
+              for idx, (cname, coll) in enumerate((meta.get('collections') or {}).items()):
+                  metrics = []
+                  for mname, m in (coll.get('metrics') or {}).items():
+                      metrics.extend([mname, m.get('label')]); metrics.extend(m.get('aliases') or [])
+                  dims = []
+                  default_time = str(coll.get('default_time_field') or '').strip()
+                  for fname, f in (coll.get('fields') or {}).items():
+                      role = str(f.get('role') or f.get('semantic_type') or '').strip()
+                      if role in {'dimension', 'time'} or f.get('groupable') or f.get('filterable') or (default_time and fname == default_time):
+                          dims.extend([fname, f.get('label')]); dims.extend(f.get('aliases') or [])
+                  related = []
+                  for r in coll.get('relations') or []:
+                      target = str((r or {}).get('target_collection') or '').strip()
+                      if target and target not in related:
+                          related.append(target)
+                  try:
+                      priority = int(coll.get('priority')) if str(coll.get('priority') or '').strip() != '' else 60
+                  except Exception:
+                      priority = 60
+                  cols.append({'collection_name': cname, 'collection_label': str(coll.get('collection_label') or cname).strip() or cname, 'aliases': _str_list([cname, coll.get('collection_label')] + (coll.get('collection_aliases') or []), 32), 'description': str(coll.get('purpose') or coll.get('description') or '').strip(), 'default_time_field': default_time, 'primary_metrics': _str_list(metrics, 64), 'primary_dimensions': _str_list(dims, 80), 'supported_intents': _str_list(coll.get('supported_intents') or ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'], 16), 'related_collections': related, 'priority': priority})
+              if not cols:
+                  warnings.append('schema metadata 中没有 collections，collection catalog 为空。')
+              cat = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': cols, 'warnings': warnings}
+              cat['catalog_digest'] = _digest(cat, 'catalog_digest') if cols else ''
+              return cat
+
+
+          def _schema_context(meta):
+              sections = []
+              for cname, coll in (meta.get('collections') or {}).items():
+                  sections.append('## collection=' + cname + '\n```json\n' + json.dumps(coll, ensure_ascii=False, indent=2) + '\n```')
+              return '\n\n'.join(sections)
+
+
+          def main(docs):
+              warnings = []
+              collections = {}
+              schema_version = ''
+              for doc in (docs or []):
+                  text = _content(doc)
+                  for block in _extract_blocks(text):
+                      try:
+                          raw = _parse_block(block)
+                          if not isinstance(raw, dict):
+                              warnings.append('跳过非对象 schema block')
+                              continue
+                          if raw.get('metadata_type') != 'mongo_schema' and not raw.get('collection_name'):
+                              warnings.append('跳过非 mongo_schema block')
+                              continue
+                          if not schema_version:
+                              schema_version = str(raw.get('schema_version') or raw.get('metadata_version') or '').strip()
+                          coll = _normalize_collection(raw)
+                          if coll:
+                              collections[coll['collection_name']] = coll
+                      except Exception as e:
+                          warnings.append('CandidateSchemas block 解析失败: ' + str(e)[:160])
+              meta = {'metadata_type': SCHEMA_CONTRACT_VERSION, 'contract_version': SCHEMA_CONTRACT_VERSION, 'schema_version': schema_version, 'schema_digest': '', 'collections': collections, 'warnings': warnings, 'parse_errors': []}
+              meta['schema_digest'] = _digest(meta, 'schema_digest') if collections else ''
+              alias = _alias_index(meta) if collections else {'contract_version': ALIAS_INDEX_CONTRACT_VERSION, 'aliases': {}, 'collection_aliases': {}, 'field_aliases': {}, 'metric_aliases': {}, 'value_aliases': {}, 'fields': {}, 'metrics': {}, 'collections': {}, 'warnings': []}
+              cat = _catalog(meta)
+              context_ref = {'collections': list(collections.keys()), 'schema_digest': meta.get('schema_digest', ''), 'schema_version': schema_version, 'catalog_digest': cat.get('catalog_digest', '')}
+              if not docs:
+                  warnings.append('CandidateSchemas retrieval returned no documents')
+              if docs and not collections:
+                  warnings.append('CandidateSchemas parse failed or contained no mongo_schema')
+              meta['warnings'] = warnings
+              cat['warnings'] = (cat.get('warnings') or []) + warnings
+              return {
+                  'schema_context': _schema_context(meta),
+                  'schema_metadata_json': json.dumps(meta, ensure_ascii=False),
+                  'schema_alias_index_json': json.dumps(alias, ensure_ascii=False),
+                  'collection_catalog_json': json.dumps(cat, ensure_ascii=False),
+                  'schema_context_ref_json': json.dumps(context_ref, ensure_ascii=False),
+                  'candidate_schema_collections_json': json.dumps(list(collections.keys()), ensure_ascii=False),
+                  'parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
+                  'catalog_parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
+              }
+        code_language: python3
+        desc: 解析 refine CandidateSchemas 检索结果中的 mongo_schema 文档，输出裁剪前 schema metadata、alias
+          index、派生 catalog 与 schema context ref。
+        outputs:
+          schema_context:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          collection_catalog_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          candidate_schema_collections_json:
+            children:
+            type: string
+          parse_warnings_json:
+            children:
+            type: string
+          catalog_parse_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_打包CandidateSchemas并派生Catalog_Refine
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000032'
+          - result
+          value_type: array[object]
+          variable: docs
+      height: 80
+      id: '1776000000026'
+      position:
+        x: 7640
+        y: 520
+      positionAbsolute:
+        x: 7640
+        y: 520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nimport re\n\n# schema metadata C contract helpers\nimport
+          copy\nimport hashlib\nimport json\nimport re\n\n\nCONTRACT_VERSION = 'schema_metadata_contract'\nALIAS_INDEX_CONTRACT_VERSION
+          = 'schema_alias_index_contract'\nNON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors',
+          'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}\n\n\ndef default_query_rules():\n
+          \   return {\n        'require_time_range_for_aggregate': True,\n        'max_limit':
+          100,\n        'allowed_operations': ['find', 'aggregate'],\n        'aggregate_required_when':
+          [],\n        'find_allowed_when': [],\n        'sensitive_field_policy': 'deny_return_group_sort',\n
+          \       'default_limit': 100,\n        'max_time_range_days': 366,\n    }\n\n\ndef
+          _strip_quotes(v):\n    v = str(v or '').strip()\n    if len(v) >= 2 and v[0]
+          == v[-1] and v[0] in {'\"', \"'\"}:\n        return v[1:-1]\n    return v\n\n\ndef
+          _split_inline_list(body):\n    # Simple comma split that keeps quoted Chinese/ASCII
+          aliases intact for the schema docs used here.\n    return [_strip_quotes(x.strip())
+          for x in re.split(r'\\s*,\\s*', str(body or '')) if x.strip()]\n\n\ndef _parse_scalar(v):\n
+          \   v = str(v or '').strip()\n    if not v:\n        return ''\n    if v in
+          {'|', '>', '|-', '>-'}:\n        return ''\n    if v in {'true', 'True'}:\n
+          \       return True\n    if v in {'false', 'False'}:\n        return False\n
+          \   if v in {'null', 'Null', 'NULL', '~'}:\n        return None\n    if v.startswith('[')
+          and v.endswith(']'):\n        return _split_inline_list(v[1:-1].strip())\n    if
+          v.startswith('{') and v.endswith('}'):\n        try:\n            return json.loads(v)\n
+          \       except Exception:\n            return _strip_quotes(v)\n    if re.match(r'^-?\\d+$',
+          v):\n        try:\n            return int(v)\n        except Exception:\n            pass\n
+          \   if re.match(r'^-?\\d+\\.\\d+$', v):\n        try:\n            return float(v)\n
+          \       except Exception:\n            pass\n    return _strip_quotes(v)\n\n\ndef
+          _parse_simple_yaml(text):\n    root = {}\n    stack = [(-1, root)]\n    lines
+          = str(text or '').replace('\\r\\n', '\\n').replace('\\r', '\\n').split('\\n')\n
+          \   i = 0\n    while i < len(lines):\n        raw = lines[i]\n        if not
+          raw.strip() or raw.lstrip().startswith('#'):\n            i += 1\n            continue\n
+          \       indent = len(raw) - len(raw.lstrip(' '))\n        s = raw.strip()\n
+          \       mblock = re.match(r'^([A-Za-z_][\\w\\-]*)\\s*:\\s*([>|][\\-+]?)\\s*$',
+          s)\n        if mblock:\n            key = mblock.group(1)\n            parts
+          = []\n            base = None\n            j = i + 1\n            while j <
+          len(lines):\n                nr = lines[j]\n                if nr.strip():\n
+          \                   ni = len(nr) - len(nr.lstrip(' '))\n                    if
+          ni <= indent:\n                        break\n                    if base is
+          None:\n                        base = ni\n                    parts.append(nr[base:]
+          if len(nr) >= base else nr.strip())\n                else:\n                    parts.append('')\n
+          \               j += 1\n            while stack and indent <= stack[-1][0]:\n
+          \               stack.pop()\n            parent = stack[-1][1]\n            if
+          isinstance(parent, dict):\n                parent[key] = '\\n'.join(parts).strip()\n
+          \           i = j\n            continue\n        while stack and indent <= stack[-1][0]:\n
+          \           stack.pop()\n        parent = stack[-1][1]\n        if s.startswith('-
+          '):\n            item = s[2:].strip()\n            if not isinstance(parent,
+          list):\n                i += 1\n                continue\n            if ':'
+          in item and re.match(r'^[A-Za-z_][\\w\\-]*\\s*:', item):\n                k,
+          v = item.split(':', 1)\n                obj = {k.strip(): _parse_scalar(v)}
+          if v.strip() else {k.strip(): {}}\n                parent.append(obj)\n                stack.append((indent,
+          obj))\n                if not v.strip():\n                    stack.append((indent
+          + 2, obj[k.strip()]))\n            else:\n                parent.append(_parse_scalar(item))\n
+          \           i += 1\n            continue\n        if ':' in s:\n            k,
+          v = s.split(':', 1)\n            key = k.strip()\n            val = v.strip()\n
+          \           if isinstance(parent, dict):\n                if val:\n                    parent[key]
+          = _parse_scalar(val)\n                    i += 1\n                    continue\n
+          \               j = i + 1\n                nxt = ''\n                while j
+          < len(lines):\n                    if lines[j].strip() and not lines[j].lstrip().startswith('#'):\n
+          \                       nxt = lines[j].strip()\n                        break\n
+          \                   j += 1\n                container = [] if nxt.startswith('-
+          ') else {}\n                parent[key] = container\n                stack.append((indent,
+          container))\n        i += 1\n    return root\n\n\ndef _json_loads_maybe(text):\n
+          \   text = str(text or '').strip()\n    if not text:\n        raise ValueError('empty
+          JSON text')\n    return json.loads(text)\n\n\ndef _parse_metadata_block(block):\n
+          \   block = str(block or '').strip()\n    if not block:\n        return {}\n
+          \   if block.startswith('{') or block.startswith('['):\n        return json.loads(block)\n
+          \   return _parse_simple_yaml(block)\n\n\ndef extract_schema_metadata_blocks(text):\n
+          \   raw = str(text or '')\n    blocks = []\n    # Prefer explicit Schema Metadata
+          fenced blocks, YAML or JSON.\n    pattern = re.compile(r'(^|\\n)##\\s*Schema
+          Metadata\\s*\\n+```(?:yaml|yml|json)?\\s*\\n(.*?)\\n```', re.I | re.S)\n    blocks.extend(m.group(2)
+          for m in pattern.finditer(raw))\n    if blocks:\n        return blocks\n    #
+          Then accept any fenced YAML/JSON block that declares mongo/schema contract metadata.\n
+          \   pattern2 = re.compile(r'```(?:yaml|yml|json)?\\s*\\n(.*?(?:metadata_type\\s*:\\s*mongo_schema|\"metadata_type\"\\s*:\\s*\"mongo_schema\"|\"contract_version\"\\s*:\\s*\"schema_metadata_contract\").*?)\\n```',
+          re.I | re.S)\n    blocks.extend(m.group(1) for m in pattern2.finditer(raw))\n
+          \   return blocks\n\n\ndef _as_list(value):\n    if value is None or value ==
+          '':\n        return []\n    if isinstance(value, list):\n        return [x for
+          x in value if x is not None and str(x).strip()]\n    return [x for x in _split_inline_list(value)
+          if str(x).strip()]\n\n\ndef _as_str_list(value):\n    return [str(x).strip()
+          for x in _as_list(value) if str(x).strip()]\n\n\ndef _as_dict(value):\n    return
+          value if isinstance(value, dict) else {}\n\n\ndef _normalize_named_map(value,
+          kind, warnings, collection_name):\n    result = {}\n    if value is None or
+          value == '':\n        return result\n    if isinstance(value, dict):\n        iterable
+          = []\n        for name, item in value.items():\n            if isinstance(item,
+          dict):\n                merged = dict(item)\n                merged.setdefault('name',
+          name)\n                iterable.append(merged)\n            else:\n                warnings.append(f'{collection_name}.{kind}.{name}
+          不是对象，已忽略。')\n        source_shape = 'dict'\n    elif isinstance(value, list):\n
+          \       iterable = value\n        source_shape = 'list'\n    else:\n        warnings.append(f'{collection_name}.{kind}
+          不是 list/dict，已按空对象处理。')\n        return result\n    for item in iterable:\n
+          \       if not isinstance(item, dict):\n            warnings.append(f'{collection_name}.{kind}
+          中存在非对象条目，已忽略。')\n            continue\n        name = str(item.get('name') or
+          '').strip()\n        if not name:\n            warnings.append(f'{collection_name}.{kind}
+          中存在缺少 name 的条目，已忽略。')\n            continue\n        normalized = copy.deepcopy(item)\n
+          \       normalized['name'] = name\n        result[name] = normalized\n    return
+          result\n\n\ndef _infer_function(expression):\n    expr = str(expression or '').strip().lower()\n
+          \   m = re.match(r'^\\s*([a-z_][\\w]*)\\s*\\(', expr)\n    return m.group(1)
+          if m else ''\n\n\ndef _normalize_field(field, collection_name, warnings):\n
+          \   item = copy.deepcopy(field) if isinstance(field, dict) else {}\n    name
+          = str(item.get('name') or '').strip()\n    sensitive = bool(item.get('sensitive',
+          False))\n    pii = bool(item.get('pii', False))\n    role = str(item.get('role')
+          or 'dimension').strip() or 'dimension'\n    if 'returnable' not in item:\n        item['returnable']
+          = False if sensitive or pii else True\n        if not (sensitive or pii):\n
+          \           warnings.append(f'{collection_name}.{name}.returnable 缺失，C-MVP 兼容期默认
+          true。')\n    if 'projectable' not in item:\n        item['projectable'] = False
+          if sensitive or pii else True\n        if not (sensitive or pii):\n            warnings.append(f'{collection_name}.{name}.projectable
+          缺失，C-MVP 兼容期默认 true。')\n    normalized = {\n        'name': name,\n        'label':
+          str(item.get('label') or name).strip(),\n        'type': str(item.get('type')
+          or '').strip(),\n        'role': role,\n        'semantic_type': str(item.get('semantic_type')
+          or role).strip() or role,\n        'description': str(item.get('description')
+          or '').strip(),\n        'aliases': _as_str_list(item.get('aliases')),\n        'allowed_values':
+          _as_str_list(item.get('allowed_values')),\n        'value_aliases': {str(k).strip():
+          str(v).strip() for k, v in _as_dict(item.get('value_aliases')).items() if str(k).strip()
+          and str(v).strip()},\n        'filterable': bool(item.get('filterable', False)),\n
+          \       'groupable': False if (sensitive or pii) and 'groupable' not in item
+          else bool(item.get('groupable', False)),\n        'sortable': False if (sensitive
+          or pii) and 'sortable' not in item else bool(item.get('sortable', False)),\n
+          \       'returnable': bool(item.get('returnable', False)),\n        'projectable':
+          bool(item.get('projectable', False)),\n        'chartable': bool(item.get('chartable',
+          False)),\n        'aggregatable': _as_str_list(item.get('aggregatable')),\n
+          \       'sensitive': sensitive,\n        'pii': pii,\n        'pii_category':
+          str(item.get('pii_category') or '').strip(),\n        'default_display': bool(item.get('default_display',
+          False)),\n    }\n    # Preserve current/forward-compatible extra field properties.\n
+          \   for k, v in item.items():\n        if k not in normalized and k not in NON_SEMANTIC_SCHEMA_KEYS:\n
+          \           normalized[k] = v\n    return normalized\n\n\ndef _normalize_metric(metric,
+          primary_key):\n    item = copy.deepcopy(metric) if isinstance(metric, dict)
+          else {}\n    name = str(item.get('name') or '').strip()\n    function = str(item.get('function')
+          or _infer_function(item.get('expression'))).strip()\n    field = str(item.get('field')
+          or '').strip()\n    if not field and function == 'count' and primary_key:\n
+          \       field = primary_key\n    source_fields = _as_str_list(item.get('source_fields'))\n
+          \   if not source_fields and field:\n        source_fields = [field]\n    normalized
+          = {\n        'name': name,\n        'label': str(item.get('label') or name).strip(),\n
+          \       'role': str(item.get('role') or 'metric').strip() or 'metric',\n        'description':
+          str(item.get('description') or '').strip(),\n        'aliases': _as_str_list(item.get('aliases')),\n
+          \       'expression': str(item.get('expression') or '').strip(),\n        'function':
+          function,\n        'field': field,\n        'source_fields': source_fields,\n
+          \       'output_type': str(item.get('output_type') or 'number').strip() or 'number',\n
+          \       'aggregate_only': bool(item.get('aggregate_only', True)),\n        'allowed_dimensions':
+          _as_str_list(item.get('allowed_dimensions')),\n        'default_sort': str(item.get('default_sort')
+          or 'desc').strip() or 'desc',\n        'chartable': bool(item.get('chartable',
+          True)),\n    }\n    for k, v in item.items():\n        if k not in normalized
+          and k not in NON_SEMANTIC_SCHEMA_KEYS:\n            normalized[k] = v\n    return
+          normalized\n\n\ndef _normalize_relation(relation, collection_name, warnings):\n
+          \   item = copy.deepcopy(relation) if isinstance(relation, dict) else {}\n    join_keys
+          = item.get('join_keys') if isinstance(item.get('join_keys'), list) else []\n
+          \   if not join_keys:\n        warnings.append(f'{collection_name}.relations
+          关系缺少 join_keys。')\n    normalized_join_keys = []\n    for jk in join_keys:\n
+          \       if isinstance(jk, dict):\n            normalized_join_keys.append({\n
+          \               'source_field': str(jk.get('source_field') or '').strip(),\n
+          \               'target_field': str(jk.get('target_field') or '').strip(),\n
+          \               'match_type': str(jk.get('match_type') or 'exact').strip() or
+          'exact',\n            })\n    normalized = {\n        'target_collection': str(item.get('target_collection')
