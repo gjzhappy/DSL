@@ -201,7 +201,7 @@ workflow:
     - env
     - COLLECTION_REGISTRY_JSON
     value: |
-      {"registry_version":"2026-03-19","database":"shennong","collections":[{"collection_name":"orders","collection_label":"订单","aliases":["订单","订单表","订单集合","下单记录","销售订单"],"description":"订单主集合，用于订单明细查询、订单状态筛选、品牌/省份/时间维度统计、销售额聚合分析。","primary_terms":["订单数","订单量","销售额","GMV","下单时间","支付状态","订单状态","省份","购买数量"],"fields":["order_id","product_name","brand","category","province","status","payment_status","amount","quantity","created_at"],"metrics":["order_count","gmv_sum","quantity_sum"]},{"collection_name":"products","collection_label":"商品","aliases":["商品","商品表","商品集合","SKU主数据","商品主数据"],"description":"商品主数据集合，用于商品基础信息查询、品牌/类目/价格维度统计、上架状态分析。","primary_terms":["商品数","SKU数量","商品数量","价格","库存","上架状态","商品状态","类目"],"fields":["product_id","sku_id","spu_id","product_name","brand","category","status","price","stock","created_at"],"metrics":["product_count","avg_price","stock_sum"]}]}
+      {"registry_version":"2026-03-19","database":"shennong","collections":[{"collection_name":"orders","collection_label":"订单","aliases":["订单","订单表","订单集合","下单记录","销售订单"],"description":"订单主集合，用于订单明细查询、订单状态筛选、品牌/省份/时间维度统计、销售额聚合分析。","primary_terms":["订单数","订单量","销售额","GMV","下单时间","支付状态","订单状态","省份","购买数量"],"fields":["order_id","product_name","brand","category","province","status","payment_status","amount","quantity","created_at"],"metrics":["order_count","gmv_sum","quantity_sum"],"relations":[{"target_collection":"products","relation_type":"enrich","join_keys":[{"source_field":"product_name","target_field":"product_name","match_type":"exact"}],"usage":"orders 作为主查询集合时，可通过 product_name 关联 products 补充商品类目、品牌等商品主数据。"}]},{"collection_name":"products","collection_label":"商品","aliases":["商品","商品表","商品集合","SKU主数据","商品主数据"],"description":"商品主数据集合，用于商品基础信息查询、品牌/类目/价格维度统计、上架状态分析。","primary_terms":["商品数","SKU数量","商品数量","价格","库存","上架状态","商品状态","类目"],"fields":["product_id","sku_id","spu_id","product_name","brand","category","status","price","stock","created_at"],"metrics":["product_count","avg_price","stock_sum"],"relations":[{"target_collection":"orders","relation_type":"enrich_source","join_keys":[{"source_field":"product_name","target_field":"product_name","match_type":"exact"}],"usage":"products 可作为订单统计结果的补充集合，用于补充商品类目、品牌等商品主数据。"}]}]}
     value_type: string
   - description: 用静态 token 换动态 token 的接口
     id: 4fef4aee-cdc8-4b9c-bef8-be75bfeafa43
@@ -430,6 +430,42 @@ workflow:
       source: '1780000000005'
       sourceHandle: source
       target: '1780000000006'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1791000000001'
+        sourceType: iteration-start
+        targetType: code
+      id: 1791000000001start-source-1791000000002-target
+      source: 1791000000001start
+      sourceHandle: source
+      target: '1791000000002'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1791000000001'
+        sourceType: code
+        targetType: knowledge-retrieval
+      id: 1791000000002-source-1791000000003-target
+      source: '1791000000002'
+      sourceHandle: source
+      target: '1791000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 1002
+    - data:
+        isInIteration: true
+        iteration_id: '1791000000001'
+        sourceType: knowledge-retrieval
+        targetType: code
+      id: 1791000000003-source-1791000000004-target
+      source: '1791000000003'
+      sourceHandle: source
+      target: '1791000000004'
       targetHandle: target
       type: custom
       zIndex: 1002
@@ -746,7 +782,7 @@ workflow:
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: knowledge-retrieval
+        targetType: code
       id: 1776000000022-false-1777099999998-target
       source: '1776000000022'
       sourceHandle: 'false'
@@ -757,31 +793,20 @@ workflow:
     - data:
         isInLoop: false
         sourceType: code
-        targetType: knowledge-retrieval
-      id: 1777099999998-source-1777099999999-target
+        targetType: llm
+      id: 1777099999998-source-1777000000100-target
       source: '1777099999998'
       sourceHandle: source
-      target: '1777099999999'
+      target: '1777000000100'
       targetHandle: target
       type: custom
       zIndex: 0
     - data:
         isInLoop: false
-        sourceType: knowledge-retrieval
+        sourceType: llm
         targetType: code
-      id: 1777099999999-source-1777100000000-target
-      source: '1777099999999'
-      sourceHandle: source
-      target: '1777100000000'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: code
-      id: 1777100000000-source-1777000000001-target
-      source: '1777100000000'
+      id: 1777000000100-source-1777000000001-target
+      source: '1777000000100'
       sourceHandle: source
       target: '1777000000001'
       targetHandle: target
