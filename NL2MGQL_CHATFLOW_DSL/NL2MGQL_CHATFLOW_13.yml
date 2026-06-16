@@ -671,17 +671,6 @@
             - patched_normalized_semantic_plan_json
           id: case_use_patch
           logical_operator: and
-        - case_id: case_chart_only
-          conditions:
-          - comparison_operator: is
-            id: patch-route-chart-only
-            value: chart_only
-            varType: string
-            variable_selector:
-            - '1776000000019'
-            - patch_route
-          id: case_chart_only
-          logical_operator: and
         desc: refine_query patch 结果分流：use_patch 必须同时满足 patch_applied=true、requires_full_replan=false
           且 patched_normalized_semantic_plan_json 非空，才进入 semantic_plan_normalizer/Mongo
           输入准备；默认进入 collection selector + schema retrieval + LLM_Refine查询规划。
