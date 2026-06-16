@@ -5,6 +5,8 @@
               collection_selection_json = collection_selection_json or arg2
               question = question or arg3
               planner = json.loads(collection_selection_json) if isinstance(collection_selection_json, str) and collection_selection_json.strip() else (collection_selection_json or {})
+              effective_current_date = str(current_date or '').strip() or '2026-06-16'
+              effective_timezone = 'Asia/Singapore'
 
               output_limits = {
                   'schema_context': 30000,
@@ -238,9 +240,11 @@
               compact_schema_check_json = limit_text(json.dumps({'compact_schema_check': compact_schema_check}, ensure_ascii=False, separators=(',', ':')), 5000)
               schema_context = (
                   f"### 用户问题\n{question}\n\n"
-                  f"### current_date\n{current_date or ''}\n\n"
+                  f"### current_date\n{effective_current_date}\n\n"
+                  f"### timezone\n{effective_timezone}\n\n"
                   f"### collection_selection_json（primary_collection 必须来自 selected_primary_collection）\n{collection_selection_text}\n\n"
-                  f"### LLM_查询规划 bootstrap 输出（弱参考，不可覆盖 collection_selection/schema）\n{planner_json}\n\n"
+                  f"### collection_selection_context（只用于约束 collection，不是最终查询计划）\n"
+                  f"该 JSON 不是 semantic_plan_contract。不得直接复制该 JSON 作为最终输出。最终必须生成新的 semantic_plan_contract。\n{planner_json}\n\n"
                   f"### compact_schema_context（仅含 planner 必需字段/指标/relation/query_rules；禁止猜测未列字段）\n{compact_schema_json}\n\n"
                   f"### compact_schema_check\n{compact_schema_check_json}\n\n"
                   f"### compact_context_json（弱上下文；不得继承用户已否定字段）\n{compact_context_text}"
@@ -257,7 +261,50 @@
                       f"query_refinement_json:\n{limit_text(query_refinement_json, 4000)}\n",
                       18000,
                   )
-              semantic_plan_user_prompt = f"用户问题:\n{question}\n\nSchema上下文:\n{schema_context}{refine_context}"
+              planning_rules = "\n\n".join([
+                  "【规划要求】",
+                  "1. primary_collection 必须等于 collection_selection_context.selected_primary_collection。",
+                  "2. related_collections 必须来自 collection_selection_context.selected_related_collections。",
+                  "3. 如果用户要求“关联/补充/带出/合并/join/lookup/enrich”，且 compact_schema_context 中存在 relation，则 execution_mode 应为 \"multi_stage\"。",
+                  "4. primary_query stage 使用 primary_collection。",
+                  "5. enrich_related stage 使用 related collection。",
+                  "6. join_source_field / join_target_field 必须来自 compact_schema_context.collections[primary].relations[].join_keys。",
+                  "7. 用户要求的补充字段必须来自 related collection 的 fields。",
+                  "8. 用户要求的分组字段必须来自 primary collection 或明确的最终合并字段。",
+                  "9. 用户要求统计数量时，优先使用对应 collection 的 count metric；若 metric 存在 order_count，则 metric_alias 使用该 metric name。",
+                  "10. 相对时间“过去三个月”使用 time_range.mode=\"relative_days\"，relative_days=90，field 使用 primary collection 的 default_time_field。",
+              ])
+              json_only_closure = "\n\n".join([
+                  "【现在开始输出】",
+                  "",
+                  "请基于以上用户问题、collection_selection_context、compact_schema_context，生成完整 semantic_plan_contract JSON。",
+                  "",
+                  "再次强调：",
+                  "- 只输出 JSON object。",
+                  "- 第一个字符必须是 {。",
+                  "- 最后一个字符必须是 }。",
+                  "- 不要输出“收到”。",
+                  "- 不要输出“综上”。",
+                  "- 不要输出“以下是”。",
+                  "- 不要输出 markdown。",
+                  "- 不要输出代码块。",
+                  "- 不要输出解释文字。",
+                  "- 不要输出 Mongo pipeline。",
+                  "- 不要输出 schema 原文。",
+                  "- contract_version 必须是 \"semantic_plan_contract\"。",
+                  "",
+                  "如果可以规划：",
+                  "requires_clarification=false。",
+                  "",
+                  "如果不能规划：",
+                  "仍然必须输出 semantic_plan_contract JSON；",
+                  "requires_clarification=true；",
+                  "clarification_question 写需要澄清的问题；",
+                  "不要输出自然语言解释。",
+              ])
+              prompt_body = f"用户问题:\n{question}\n\nSchema上下文:\n{schema_context}{refine_context}{planning_rules}"
+              prompt_body = limit_text(prompt_body, output_limits['semantic_plan_user_prompt'] - len(json_only_closure), 'semantic_plan_user_prompt_body')
+              semantic_plan_user_prompt = prompt_body + json_only_closure
               semantic_plan_user_prompt = limit_text(semantic_plan_user_prompt, output_limits['semantic_plan_user_prompt'], 'semantic_plan_user_prompt')
               llm_config = {
                   "tokenUrl": str(llm_token_url or "").strip(),
