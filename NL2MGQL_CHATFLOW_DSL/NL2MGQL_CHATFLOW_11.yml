@@ -19,6 +19,70 @@
                       _add(target_terms, v)
               return {'inherit_previous_collection': inherit, 'collection_switch': explicit_switch, 'base_primary_collection': base, 'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '', 'old_primary_collection': base, 'old_stage_collection': str(st.get('collection') or ''), 'old_group_fields': old_groups, 'old_metric_field': str(st.get('metric_field') or ''), 'old_metric_alias': str(st.get('metric_alias') or ''), 'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '', 'target_group_dimension': qref.get('group_by_dimension'), 'target_metric': qref.get('metric'), 'target_time_range': qref.get('time_range'), 'changed_slots': changed, 'replaced_slots': replaced, 'deprecated_fields': deprecated, 'target_semantic_terms': target_terms}
 
+          def _safe_int(value, default=0):
+              try:
+                  if value in (None, ''):
+                      return default
+                  return int(value)
+              except Exception:
+                  return default
+
+          def _has_reusable_result_context(ctx):
+              if not isinstance(ctx, dict):
+                  return False
+
+              # 兼容旧字段
+              if _safe_int(ctx.get('result_rows_count')) > 0:
+                  return True
+
+              profile = ctx.get('last_result_profile') if isinstance(ctx.get('last_result_profile'), dict) else {}
+
+              if _safe_int(profile.get('row_count')) > 0:
+                  return True
+
+              preview_rows = profile.get('preview_rows')
+              if isinstance(preview_rows, list) and len(preview_rows) > 0:
+                  return True
+
+              # 兼容可能误写或历史字段：review_rows
+              review_rows = profile.get('review_rows')
+              if isinstance(review_rows, list) and len(review_rows) > 0:
+                  return True
+
+              return False
+
+          def _has_reusable_chart_context(ctx, old_plan=None):
+              if not isinstance(ctx, dict):
+                  return False
+
+              profile = ctx.get('last_result_profile') if isinstance(ctx.get('last_result_profile'), dict) else {}
+              chart_request = ctx.get('last_chart_request') if isinstance(ctx.get('last_chart_request'), dict) else {}
+
+              preview_rows = profile.get('preview_rows')
+              review_rows = profile.get('review_rows')
+
+              has_rows = (
+                  _safe_int(ctx.get('result_rows_count')) > 0
+                  or _safe_int(profile.get('row_count')) > 0
+                  or (isinstance(preview_rows, list) and len(preview_rows) > 0)
+                  or (isinstance(review_rows, list) and len(review_rows) > 0)
+              )
+
+              x_field = str(chart_request.get('x_field') or '').strip()
+              y_field = str(chart_request.get('y_field') or '').strip()
+
+              if has_rows and x_field and y_field:
+                  return True
+
+              if isinstance(old_plan, dict):
+                  old_chart = old_plan.get('chart_request') if isinstance(old_plan.get('chart_request'), dict) else {}
+                  old_x = str(old_chart.get('x_field') or '').strip()
+                  old_y = str(old_chart.get('y_field') or '').strip()
+                  if has_rows and old_x and old_y:
+                      return True
+
+              return False
+
           def _defaults(intent):
               base = {'need_previous_context': False, 'need_requery': True, 'need_rechart': False, 'need_analysis': True, 'can_answer_directly': False}
               if intent == 'modify_chart':
@@ -62,15 +126,24 @@
 
               q = str(question or '')
               has_context = bool(ctx.get('has_last_context'))
-              rows_count = int(ctx.get('result_rows_count') or 0)
+              has_reusable_result = _has_reusable_result_context(ctx)
+              has_reusable_chart = _has_reusable_chart_context(ctx, old_plan)
               chart_words = ['换成饼图','改成饼图','折线图','柱状图','标题','标签','top','Top','排序']
               analysis_words = ['分析','解释','为什么','说明什么','差异','继续','接着','刚才']
               if obj['need_previous_context'] and not has_context:
                   intent = 'clarify'; obj.update(_defaults('clarify')); obj['turn_intent'] = intent; obj['reason'] = '缺少可复用的上一轮上下文'
-              if any(w in q for w in chart_words) and rows_count <= 0 and intent in {'modify_chart','continue_previous','fix_result'}:
+              if any(w in q for w in chart_words) and not has_reusable_chart and intent in {'modify_chart','continue_previous','fix_result'}:
                   intent = 'clarify'; obj.update(_defaults('clarify')); obj['turn_intent'] = intent; obj['reason'] = '没有可复用的上一轮查询结果用于改图'
-              if any(w in q for w in analysis_words) and rows_count <= 0 and intent in {'explain_result','reanalyze_result','continue_previous'}:
+              if any(w in q for w in analysis_words) and not has_reusable_result and intent in {'explain_result','reanalyze_result','continue_previous'}:
                   intent = 'clarify'; obj.update(_defaults('clarify')); obj['turn_intent'] = intent; obj['reason'] = '没有可复用的上一轮查询结果用于分析'
+              if intent == 'modify_chart' and has_reusable_chart:
+                  obj['turn_intent'] = 'modify_chart'
+                  obj['need_previous_context'] = True
+                  obj['need_requery'] = False
+                  obj['need_rechart'] = True
+                  obj['need_analysis'] = False
+                  obj['can_answer_directly'] = False
+                  intent = 'modify_chart'
               if intent == 'fix_result':
                   ref = obj.get('query_refinement') or {}
                   mod = obj.get('chart_modification') or {}
