@@ -1,155 +1,3 @@
-                      raise ValueError(f'unsupported intent_type: {raw_intent_type}')
-                  default_limit = 0 if intent_type in {'group_top_entity', 'group_top_record'} else 20
-                  limit = int(raw.get('limit') if raw.get('limit') is not None else default_limit)
-                  if limit < 0:
-                      raise ValueError(f'stages[{idx}].limit must be >= 0')
-                  rank_n = int(raw.get('rank_n') or 0)
-                  if intent_type in {'group_top_entity', 'group_top_record'} and rank_n <= 0:
-                      rank_n = 1
-                  stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
-                  stage = {
-                      'stage_name': stage_name,
-                      'collection': collection,
-                      'depends_on': str(raw.get('depends_on') or '').strip(),
-                      'intent_type': intent_type,
-                      'time_range': stage_time_range,
-                      'group_fields': _ensure_string_list(raw.get('group_fields') or [], f'stages[{idx}].group_fields'),
-                      'entity_field': str(raw.get('entity_field') or '').strip(),
-                      'metric_function': str(raw.get('metric_function') or '').strip(),
-                      'metric_field': str(raw.get('metric_field') or '').strip(),
-                      'metric_alias': str(raw.get('metric_alias') or '').strip(),
-                      'rank_n': rank_n,
-                      'rank_order_field': str(raw.get('rank_order_field') or '').strip(),
-                      'rank_direction': str(raw.get('rank_direction') or '').strip() or 'desc',
-                      'sort': raw.get('sort') or [],
-                      'limit': limit,
-                      'projection_mode': str(raw.get('projection_mode') or 'none').strip() or 'none',
-                      'projection_fields': _ensure_string_list(raw.get('projection_fields') or [], f'stages[{idx}].projection_fields'),
-                      'join_source_field': str(raw.get('join_source_field') or '').strip(),
-                      'apply_global_limit': bool(raw.get('apply_global_limit', False)),
-                  }
-                  stage['filters'] = _sanitize_stage_filters(raw.get('filters') or [], stage['time_range'])
-                  if intent_type == 'enrich_related':
-                      stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
-                      stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
-                  if _is_effectively_empty_stage(stage):
-                      continue
-                  normalized_stages.append(stage)
-
-              final_merge = plan.get('final_merge') or {}
-              if not normalized_stages:
-                  raise ValueError('execution_plan has no effective stages')
-              if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
-                  execution_mode = 'single_stage'
-              if execution_mode == 'single_stage':
-                  normalized_stages = normalized_stages[:1]
-              visualization = _normalize_visualization(plan.get('visualization'))
-              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
-              chart_request_title = str(chart_request.get('title') or '').strip()
-              if chart_request_title:
-                  visualization['title'] = chart_request_title
-              # Phase 11: Mongo compiler consumes validator-normalized chart_request
-              # only. Do not infer visualization intent from the user's natural
-              # language in the compile path.
-
-              merge_mode = str(final_merge.get('merge_mode') or 'none').strip() or 'none'
-              if len(normalized_stages) <= 1 or merge_mode == 'none':
-                  execution_mode = 'single_stage'
-                  merge_mode = 'none'
-              return {
-                  'execution_mode': execution_mode,
-                  'primary_collection': primary_collection,
-                  'collections': collections,
-                  'reasoning': str(plan.get('reasoning') or '').strip(),
-                  'visualization': visualization,
-                  'stages': normalized_stages,
-                  'final_merge': {
-                      'merge_mode': merge_mode,
-                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
-                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
-                      'left_field': str(final_merge.get('left_field') or '').strip(),
-                      'right_field': str(final_merge.get('right_field') or '').strip(),
-                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
-                  },
-              }
-
-
-          def _build_stage_match(stage):
-              parts = []
-              time_expr = _apply_time_range(stage.get('time_range'))
-              if time_expr:
-                  parts.append(time_expr)
-              for idx, f in enumerate(stage.get('filters') or []):
-                  if not isinstance(f, dict):
-                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
-                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
-                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
-                  value = f.get('value')
-                  parts.append(_build_match_expr(field, operator, value))
-              return _merge_match(parts)
-
-
-          def _append_projection(pipeline, fields):
-              unique_fields = []
-              seen = set()
-              for field in fields or []:
-                  text = str(field or '').strip()
-                  if text and text not in seen:
-                      seen.add(text)
-                      unique_fields.append(text)
-              if not unique_fields:
-                  return
-              proj = {'_id': 0}
-              for field in unique_fields:
-                  proj[field] = f'${field}'
-              pipeline.append({'$project': proj})
-
-
-          def _compile_detail_query(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              _append_projection(pipeline, stage.get('projection_fields'))
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              validated_ast = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [],
-                  'group_by': [],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_ast, pipeline
-
-
-          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
                       raise ValueError(f'unsupported metric_function: {metric_function}')
                   agg_expr = {op_map[metric_function]: f'${metric_field}'}
               group_id = {field: f'${field}' for field in group_fields} if group_fields else None
@@ -898,3 +746,201 @@
                   else:
                       dimension_fields.append(name)
               return {
+                  'row_count': len(rows),
+                  'fields': fields,
+                  'numeric_fields': numeric_fields,
+                  'dimension_fields': dimension_fields,
+                  'preview_rows': rows[:10],
+              }
+
+
+          def _select_compiler_plan(semantic_plan, validator_result_json=None):
+              debug = {'plan_source': '', 'legacy_unvalidated_plan_fallback': False, 'legacy_compiler_resolution_used': False}
+              validator_result = _ensure_obj(validator_result_json, 'validator_result') if validator_result_json else {}
+              for key in ('normalized_plan_json', 'normalized_semantic_plan_json', 'semantic_plan_json'):
+                  raw = validator_result.get(key) if isinstance(validator_result, dict) else None
+                  if isinstance(raw, str) and raw.strip():
+                      debug['plan_source'] = 'validator_result.' + key
+                      return _ensure_obj(raw, key), debug
+                  if isinstance(raw, dict) and raw:
+                      debug['plan_source'] = 'validator_result.' + key
+                      return raw, debug
+              plan = _ensure_obj(semantic_plan, 'semantic_plan')
+              if plan:
+                  debug['plan_source'] = 'validator.normalized_plan_json_input'
+                  return plan, debug
+              debug['legacy_unvalidated_plan_fallback'] = True
+              debug['plan_source'] = 'empty_or_legacy_unvalidated_fallback'
+              return {}, debug
+
+
+          def _schema_from_runtime(schema_runtime_context_json='', schema_metadata_json='', schema_alias_index_json='', fallback_context=''):
+              ctx = _ensure_obj(schema_runtime_context_json, 'schema_runtime_context_json') if schema_runtime_context_json else {}
+              meta = _ensure_obj(ctx.get('schema_metadata_json'), 'runtime.schema_metadata_json') if isinstance(ctx, dict) and ctx.get('schema_metadata_json') else {}
+              alias = _ensure_obj(ctx.get('schema_alias_index_json'), 'runtime.schema_alias_index_json') if isinstance(ctx, dict) and ctx.get('schema_alias_index_json') else {}
+              if not meta and schema_metadata_json:
+                  meta = _ensure_obj(schema_metadata_json, 'schema_metadata_json')
+              if not alias and schema_alias_index_json:
+                  alias = _ensure_obj(schema_alias_index_json, 'schema_alias_index_json')
+              if not meta:
+                  meta = extract_schema_metadata(fallback_context)
+              if not alias:
+                  alias = build_alias_index(meta)
+              return meta, alias
+
+
+          def _sync_limit(validated_ast, pipeline):
+              limit = 0
+              if isinstance(pipeline, list):
+                  for stage in pipeline:
+                      if isinstance(stage, dict) and '$limit' in stage:
+                          try: limit = int(stage.get('$limit') or 0)
+                          except Exception: limit = 0
+              if isinstance(validated_ast, dict) and limit > 0:
+                  validated_ast['limit'] = limit
+              return validated_ast
+
+
+          def _dedupe_equivalent_project(pipeline):
+              out=[]
+              for st in pipeline or []:
+                  if out and isinstance(st,dict) and isinstance(out[-1],dict) and '$project' in st and '$project' in out[-1] and st.get('$project') == out[-1].get('$project'):
+                      continue
+                  out.append(st)
+              return out
+
+
+          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str, validator_route: str='valid', validator_result_json: str='', schema_runtime_context_json: str='', schema_metadata_json: str='', schema_alias_index_json: str=''):
+              if str(validator_route or '').strip() != 'valid':
+                  out = _compiler_contract_defaults('validator_route is not valid; compiler execution is blocked')
+                  out['question'] = str(question or '').strip()
+                  out['compiler_debug_json'] = _safe_json_dumps({'validator_route': str(validator_route or ''), 'blocked_before_compile': True})
+                  return out
+              plan, compiler_debug = _select_compiler_plan(semantic_plan, validator_result_json)
+              if not plan:
+                  out = _compiler_contract_defaults('compiler received empty validator normalized plan')
+                  out['question'] = str(question or '').strip()
+                  out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                  return out
+              if str(plan.get('contract_version') or '').strip() != 'semantic_plan_contract':
+                  out = _compiler_contract_defaults('compiler input contract_version must be semantic_plan_contract')
+                  out['question'] = str(question or '').strip()
+                  compiler_debug['input_contract_version'] = str(plan.get('contract_version') or '')
+                  out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                  return out
+              planner = _ensure_obj(planner, 'planner')
+              urls = _parse_query_urls(query_urls)
+              if not urls:
+                  out = _compiler_contract_defaults('SN_MONGODB_QUERY_URLS is empty')
+                  out['question'] = str(question or '').strip()
+                  out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                  return out
+
+              try:
+                  normalized_execution_plan = _normalize_plan(plan, planner, question)
+              except ValueError as e:
+                  err = str(e)
+                  if 'unsupported intent_type:' in err:
+                      unsupported = err.split('unsupported intent_type:', 1)[1].strip()
+                      out = _compiler_contract_defaults(err)
+                      out['question'] = str(question or '').strip()
+                      out['query_result_json'] = _safe_json_dumps({'success': False, 'error_type': 'unsupported_intent_type', 'error': err, 'rows': [], 'row_count': 0, 'fields': []})
+                      out['final_response_summary_json'] = _safe_json_dumps({'summary': '当前查询暂不支持该查询意图类型：' + unsupported})
+                      out['answer_text'] = '当前查询暂不支持该查询意图类型：' + unsupported
+                      compiler_debug['error_type'] = 'unsupported_intent_type'
+                      compiler_debug['unsupported_intent_type'] = unsupported
+                      out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
+                      return out
+                  raise
+              schema_metadata, schema_alias_index = _schema_from_runtime(schema_runtime_context_json, schema_metadata_json, schema_alias_index_json, schema_context)
+              compiler_debug['legacy_compiler_resolution_used'] = False
+              compiler_debug['schema_metadata_loaded_for_labels_only'] = bool(schema_metadata.get('collections'))
+              normalized_execution_plan['schema_context'] = str(schema_context or '')
+              normalized_execution_plan['schema_metadata'] = schema_metadata
+              normalized_execution_plan['schema_alias_index'] = schema_alias_index
+              stage_outputs = {}
+              stage_execution_trace = []
+
+              for stage in normalized_execution_plan.get('stages') or []:
+                  stage = _sanitize_stage_for_compile(stage)
+                  validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
+                  pipeline = _dedupe_equivalent_project(_assert_safe_pipeline(pipeline))
+                  validated_ast = _sync_limit(validated_ast, pipeline)
+                  pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
+                  selected_url = ''
+                  request_id = uuid.uuid4().hex
+                  request_body = {}
+                  status_code = 0
+                  response_body = ''
+                  response_headers = {}
+                  rows = []
+                  reason = ''
+                  if (not skip_query) and (not pipeline):
+                      skip_query = True
+                      reason = 'empty pipeline'
+                  if not skip_query:
+                      selected_url = random.choice(urls)
+                      request_body = {
+                          'validated_ast': validated_ast or {},
+                          'pipeline_json': pipeline_json,
+                          'validation_message': 'ok',
+                          'request_id': request_id,
+                      }
+                      status_code, response_body, response_headers = _post_json(selected_url, request_body)
+                      if status_code < 200 or status_code >= 300:
+                          raise ValueError(f"stage `{stage['stage_name']}` query failed: status={status_code}, body={response_body[:1200]}")
+                      response_json = _read_json_text(response_body)
+                      expected_row_fields = _collect_expected_row_fields(stage, validated_ast, normalized_execution_plan)
+                      rows = _find_best_rows(response_json, expected_row_fields)
+                  else:
+                      response_body = json.dumps({'msg': 'skip query', 'code': 200, 'data': {'rows': []}}, ensure_ascii=False)
+                      rows = []
+                      if not reason:
+                          reason = 'no join values from previous stage'
+
+                  trace_item = {
+                      'stage_name': stage['stage_name'],
+                      'collection': stage['collection'],
+                      'intent_type': stage['intent_type'],
+                      'sanitize_report': stage.get('sanitize_report') or {},
+                      'validated_ast': validated_ast,
+                      'pipeline': pipeline,
+                      'pipeline_json': pipeline_json,
+                      'selected_url': selected_url,
+                      'request_id': request_id,
+                      'query_request_body': request_body,
+                      'query_status_code': status_code,
+                      'query_response_body': response_body,
+                      'query_response_headers': response_headers,
+                      'rows': rows,
+                      'skipped': bool(skip_query),
+                      'skip_reason': reason,
+                  }
+                  stage_execution_trace.append(trace_item)
+                  stage_outputs[stage['stage_name']] = trace_item
+
+              execution_mode = normalized_execution_plan.get('execution_mode')
+              final_merge = normalized_execution_plan.get('final_merge') or {}
+              if execution_mode == 'multi_stage' and final_merge.get('left_stage') and final_merge.get('right_stage'):
+                  left_rows = (stage_outputs.get(final_merge['left_stage']) or {}).get('rows') or []
+                  right_rows = (stage_outputs.get(final_merge['right_stage']) or {}).get('rows') or []
+                  merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), final_merge.get('attach_as') or 'related_info')
+              else:
+                  first_stage_name = normalized_execution_plan['stages'][0]['stage_name']
+                  merged_rows = (stage_outputs.get(first_stage_name) or {}).get('rows') or []
+              visualization = normalized_execution_plan.get('visualization') or {}
+              chart_decision = _choose_chart_type(visualization, merged_rows, {'bar', 'line', 'pie'})
+              chart_option = _build_echarts_option(visualization, merged_rows)
+              chart_x_field = str(chart_decision.get('x_field') or '')
+              chart_y_field = str(chart_decision.get('y_field') or '')
+              chart_enabled, chart_option, chart_markdown, chart_x_field, chart_y_field, chart_type_final, chart_warning = _build_chart_payload(visualization, merged_rows, {'bar', 'line', 'pie'}, normalized_execution_plan, question)
+              if chart_enabled and chart_option:
+                  viz_out = normalized_execution_plan.setdefault('visualization', {})
+                  chart_stage0 = ((normalized_execution_plan.get('stages') or [{}])[0] or {})
+                  metric_alias_for_chart = str(chart_stage0.get('metric_alias') or '').strip()
+                  chart_metric_name = metric_alias_for_chart or str(chart_y_field or '').strip()
+                  viz_out['enabled'] = True
+                  viz_out['chart_type'] = str(chart_type_final or chart_decision.get('chart_type') or 'bar')
+                  viz_out['x_field'] = str(chart_x_field or '')
+                  viz_out['y_field'] = str(chart_y_field or '')
+                  if not str(viz_out.get('series_name') or '').strip() or str(viz_out.get('series_name') or '').strip() == 'value':

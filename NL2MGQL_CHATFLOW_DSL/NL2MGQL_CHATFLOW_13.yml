@@ -1,302 +1,3 @@
-              'bar': ('换成柱状图', '换为柱状图', '改成柱状图', '柱状图'),
-          }
-          CN_NUMBERS = {
-              '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6,
-              '七': 7, '八': 8, '九': 9, '十': 10, '十一': 11, '十二': 12, '半': 0.5
-          }
-          OLD_TITLE_TIME_PATTERNS = (
-              '过去一个月', '过去1个月', '过去30天', '近一个月', '近1个月', '近30天',
-              '最近一个月', '最近1个月', '最近30天', '过去二个月', '过去两个月',
-              '过去2个月', '近两个月', '最近两个月', '近三个月', '最近3个月',
-              '过去60天', '最近60天', '近90天', '过去半年', '最近半年', '过去一年', '最近一年'
-          )
-          STRUCTURAL_KEYS = (
-              'group_by', 'group_field', 'group_fields', 'replace_group_fields',
-              'metric', 'metric_hint', 'replace_metric', 'metric_function', 'metric_field',
-              'filter', 'filters', 'add_filters', 'where',
-              'collection', 'primary_collection', 'related_collections',
-              'relation', 'join', 'enrich',
-              'intent', 'intent_type', 'business_rule_change', 'negative_fields',
-              'entity_field', 'business_logic', 'semantic_change', 'new_schema_needed'
-          )
-          STRUCTURAL_NESTED_PATHS = (
-              ('chart_request', 'x_field'),
-              ('chart_request', 'y_field'),
-          )
-          UNCHANGED_GUARDS = ('group_fields_unchanged', 'metric_unchanged', 'filters_unchanged', 'collection_unchanged')
-          STRUCTURAL_PATTERNS = (
-              r'不再按', r'不要按', r'不按', r'改按', r'重新按', r'不是.+而是',
-              r'按.+统计', r'按.+排序', r'按.+口径', r'按.+维度', r'横轴改成', r'纵轴改成',
-              r'换成.+维度', r'改成.+口径', r'只统计', r'只看(?!前\s*\d)',
-              r'筛选', r'过滤', r'排除', r'条件', r'口径', r'真实口径', r'重新统计',
-              r'不看.+改成', r'改看', r'加上.+信息', r'关联', r'join|JOIN'
-          )
-          NEGATION_PATTERNS = (r'不再按\s*([^，。,.\s]+)', r'不要\s*([^，。,.\s]+)', r'不是\s*([^，。,.\s]+)', r'不看\s*([^，。,.\s]+)')
-
-
-          def _loads(v):
-              if isinstance(v, dict):
-                  return v
-              if isinstance(v, str) and v.strip():
-                  try:
-                      x = json.loads(v)
-                      return x if isinstance(x, dict) else {}
-                  except Exception:
-                      return {}
-              return {}
-
-
-          def _bool(v):
-              if isinstance(v, bool):
-                  return v
-              return str(v or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
-
-
-          def _non_empty(v):
-              if v is None or v is False:
-                  return False
-              if isinstance(v, str):
-                  return bool(v.strip())
-              if isinstance(v, (list, tuple, set, dict)):
-                  return bool(v)
-              return True
-
-
-          def _stages(plan):
-              ep = plan.get('execution_plan') if isinstance(plan, dict) else {}
-              stages = ep.get('stages') if isinstance(ep, dict) else plan.get('stages')
-              return stages if isinstance(stages, list) else []
-
-
-          def _first_stage(plan):
-              stages = _stages(plan)
-              return stages[0] if stages and isinstance(stages[0], dict) else {}
-
-
-          def _as_list(v):
-              if isinstance(v, list):
-                  return v
-              if isinstance(v, tuple):
-                  return list(v)
-              if _non_empty(v):
-                  return [v]
-              return []
-
-
-          def _path_value(obj, path):
-              cur = obj
-              for key in path:
-                  if not isinstance(cur, dict):
-                      return None
-                  cur = cur.get(key)
-              return cur
-
-
-          def _cn_number_to_float(raw):
-              s = str(raw or '').strip()
-              if not s:
-                  return None
-              if re.fullmatch(r'\d+', s):
-                  return float(int(s))
-              if s in CN_NUMBERS:
-                  return float(CN_NUMBERS[s])
-              if s.startswith('十') and len(s) > 1 and s[1:] in CN_NUMBERS:
-                  return float(10 + int(CN_NUMBERS[s[1:]]))
-              if s.endswith('十') and s[:-1] in CN_NUMBERS:
-                  return float(int(CN_NUMBERS[s[:-1]]) * 10)
-              if '十' in s:
-                  left, right = s.split('十', 1)
-                  if (not left or left in CN_NUMBERS) and (not right or right in CN_NUMBERS):
-                      return float((int(CN_NUMBERS.get(left, 1)) * 10) + int(CN_NUMBERS.get(right, 0)))
-              return None
-
-
-          def _parse_relative_time(q):
-              text = str(q or '')
-              prefix = r'(?:过去|最近|近)'
-
-              m = re.search(prefix + r'\s*(半年|一年)', text)
-              if m:
-                  source = m.group(0).replace(' ', '')
-                  days = 180 if m.group(1) == '半年' else 365
-                  return {'mode': 'relative_days', 'relative_days': days, 'source': source}
-
-              m = re.search(prefix + r'\s*([0-9]+|一|二|两|三|四|五|六|七|八|九|十|十一|十二|半)\s*(天|日|周|星期|个月|月|季度|季|年)', text)
-              if not m:
-                  return None
-              n = _cn_number_to_float(m.group(1))
-              if n is None or n <= 0:
-                  return None
-              unit = m.group(2)
-              if unit in ('天', '日'):
-                  days = int(n)
-              elif unit in ('周', '星期'):
-                  days = int(n * 7)
-              elif unit in ('个月', '月'):
-                  days = int(n * 30)
-              elif unit in ('季度', '季'):
-                  days = int(n * 90)
-              elif unit == '年':
-                  days = int(n * 365)
-              else:
-                  return None
-              source = m.group(0).replace(' ', '')
-              return {'mode': 'relative_days', 'relative_days': days, 'source': source}
-
-
-          def _has_non_empty(refine, keys):
-              return [k for k in keys if _non_empty(refine.get(k))]
-
-
-          def _collect_known_fields(plan, compact_context):
-              fields = []
-              for st in _stages(plan):
-                  if not isinstance(st, dict):
-                      continue
-                  fields.extend(_as_list(st.get('group_fields')))
-                  fields.extend(_as_list(st.get('projection_fields')))
-                  for key in ('metric_alias', 'metric_field'):
-                      if _non_empty(st.get(key)):
-                          fields.append(st.get(key))
-                  sort = st.get('sort') if isinstance(st.get('sort'), list) else []
-                  for item in sort:
-                      if isinstance(item, dict) and _non_empty(item.get('field')):
-                          fields.append(item.get('field'))
-              cr = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
-              fields.extend([cr.get('x_field'), cr.get('y_field')])
-              summary = compact_context.get('last_plan_summary') if isinstance(compact_context, dict) and isinstance(compact_context.get('last_plan_summary'), dict) else {}
-              fields.extend(_as_list(summary.get('group_fields')))
-              last_cr = compact_context.get('last_chart_request') if isinstance(compact_context, dict) and isinstance(compact_context.get('last_chart_request'), dict) else {}
-              fields.extend([last_cr.get('x_field'), last_cr.get('y_field')])
-              result = []
-              for f in fields:
-                  s = str(f or '').strip()
-                  if s and s not in result:
-                      result.append(s)
-              return result
-
-
-          def _detect_negated_old_fields(q, refine, old, compact_context):
-              known = _collect_known_fields(old, compact_context)
-              neg = [str(x or '').strip() for x in _as_list(refine.get('negative_fields')) if str(x or '').strip()]
-              text = str(q or '')
-              for pat in NEGATION_PATTERNS:
-                  for m in re.finditer(pat, text):
-                      neg.append(m.group(1).strip())
-              reasons = []
-              if refine.get('negative_fields'):
-                  reasons.append('query_refinement_json.negative_fields')
-              if any(x in text for x in ('不再按', '不要按', '不按', '不是', '不看', '改按')):
-                  if neg:
-                      for n in neg:
-                          for old_field in known:
-                              if n and (n == old_field or n in old_field or old_field in n):
-                                  reasons.append('negated_old_field:%s' % old_field)
-                  else:
-                      reasons.append('ambiguous_negated_old_field')
-              if '不看' in text and any(x in text for x in ('指标', 'metric')):
-                  reasons.append('negated_metric')
-              return _unique_keep_order(reasons)
-
-
-          def _detect_structural_change(q, refine, old=None, compact_context=None):
-              reasons = []
-              for key in _has_non_empty(refine, STRUCTURAL_KEYS):
-                  reasons.append('query_refinement_json.%s' % key)
-              for path in STRUCTURAL_NESTED_PATHS:
-                  if _non_empty(_path_value(refine, path)):
-                      reasons.append('query_refinement_json.%s' % '.'.join(path))
-              for key in UNCHANGED_GUARDS:
-                  if key in refine and not _bool(refine.get(key)):
-                      reasons.append('query_refinement_json.%s=false' % key)
-
-              text = str(q or '')
-              for pattern in STRUCTURAL_PATTERNS:
-                  if re.search(pattern, text):
-                      reasons.append('user_pattern:%s' % pattern)
-              if old:
-                  reasons.extend(_detect_negated_old_fields(q, refine, old, compact_context or {}))
-
-              return {'structural_change': bool(reasons), 'reasons': _unique_keep_order(reasons)}
-
-
-          def _extract_chart_type(q):
-              text = str(q or '')
-              for chart_type, terms in CHART_TYPE_TERMS.items():
-                  if any(term in text for term in terms):
-                      return chart_type
-              return ''
-
-
-          def _is_chart_type_only(q, refine, need_requery, structural_change):
-              if structural_change:
-                  return False
-              if _parse_relative_time(q) or _bool(refine.get('time_range_change')) or _non_empty(refine.get('time_range')):
-                  return False
-              chart_req = refine.get('chart_request') if isinstance(refine.get('chart_request'), dict) else {}
-              if _non_empty(chart_req.get('x_field')) or _non_empty(chart_req.get('y_field')):
-                  return False
-              chart_type = refine.get('chart_type') or refine.get('visualization_type') or chart_req.get('chart_type') or _extract_chart_type(q)
-              return bool(chart_type)
-
-
-          def _can_apply_time_only_patch(refine, parsed_time, structural_change):
-              if structural_change or not parsed_time:
-                  return False
-              explicit_safe = (
-                  _bool(refine.get('time_range_change'))
-                  and _bool(refine.get('group_fields_unchanged'))
-                  and _bool(refine.get('metric_unchanged'))
-                  and _bool(refine.get('filters_unchanged'))
-                  and _bool(refine.get('collection_unchanged'))
-              )
-              has_any_guard = any(k in refine for k in ('time_range_change',) + UNCHANGED_GUARDS)
-              return explicit_safe or not has_any_guard or (_bool(refine.get('time_range_change')) and not _has_non_empty(refine, STRUCTURAL_KEYS))
-
-
-          def _set_all_stage_time(plan, days=None, mode=None):
-              changed = False
-              for st in _stages(plan):
-                  if not isinstance(st, dict):
-                      continue
-                  tr = st.get('time_range') if isinstance(st.get('time_range'), dict) else {}
-                  if days:
-                      tr.update({'mode': 'relative_days', 'relative_days': int(days), 'start': '', 'end': ''})
-                  elif mode:
-                      tr.update({'mode': mode, 'start': '', 'end': ''})
-                  st['time_range'] = tr
-                  changed = True
-              return changed
-
-
-          def _patch_title_time(plan, new_source, debug):
-              cr = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else None
-              if not cr or not isinstance(cr.get('title'), str) or not cr.get('title'):
-                  debug['title_patch'] = 'no_chart_title'
-                  return False
-              title = cr['title']
-              for old_text in OLD_TITLE_TIME_PATTERNS:
-                  if old_text in title:
-                      cr['title'] = title.replace(old_text, new_source, 1)
-                      debug['title_patch'] = {'from': old_text, 'to': new_source}
-                      return cr['title'] != title
-              debug['title_patch'] = 'no_safe_old_time_text_found'
-              return False
-
-
-          def _patch_limit(plan, n):
-              changed = False
-              try:
-                  limit = int(n)
-              except Exception:
-                  return False
-              if limit <= 0:
-                  return False
-              for st in _stages(plan):
-                  if isinstance(st, dict):
-                      st['limit'] = min(limit, 500)
-                      changed = True
-              return changed
 
 
           def _parse_sort_request(q):
@@ -703,7 +404,9 @@
               primary_collection:
                 type: string
               related_collections:
-                type: array[string]
+                type: array
+                items:
+                  type: string
               execution_mode:
                 type: string
               answer_mode:
@@ -711,7 +414,7 @@
               needs_chart:
                 type: boolean
               stages:
-                type: array[object]
+                type: array
                 minItems: 1
                 items:
                   type: object
@@ -726,7 +429,9 @@
               needs_schema_retrieval:
                 type: boolean
               warnings:
-                type: array[string]
+                type: array
+                items:
+                  type: string
               replan_error:
                 type: string
               clarify_suggestion:
@@ -739,11 +444,11 @@
       height: 98
       id: '1776000000020'
       position:
-        x: 8560
-        y: 520
+        x: 5880
+        "y": 2200
       positionAbsolute:
-        x: 8560
-        y: 520
+        x: 5880
+        "y": 2200
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -891,10 +596,305 @@
       id: '1776000000021'
       position:
         x: 9480
-        y: 520
+        y: 2200
       positionAbsolute:
         x: 9480
-        y: 520
+        y: 2200
       selected: false
       sourcePosition: right
       targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: refine_like_requery
+          id: refine_like_requery
+          logical_operator: and
+          conditions:
+          - comparison_operator: is
+            id: query-type-refine-like
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776000000013'
+            - refine_like_requery
+        desc: query 路由内使用 refine-like requery 条件分流：has_last_context=true 且 need_requery=true
+          且 turn_intent 属于 refine_query/fix_result/continue_previous；其他 query 继续走原
+          new_query 链路。
+        selected: false
+        title: 条件分支_query类型判断
+        type: if-else
+      height: 148
+      id: '1776000000022'
+      position:
+        x: 3220
+        y: 0
+      positionAbsolute:
+        x: 3220
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: case_use_patch
+          conditions:
+          - comparison_operator: is
+            id: patch-route-use-patch
+            value: use_patch
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patch_route
+          - comparison_operator: is
+            id: patch-applied-true
+            value: 'true'
+            varType: boolean
+            variable_selector:
+            - '1776000000019'
+            - patch_applied
+          - comparison_operator: is
+            id: patch-requires-full-replan-false
+            value: 'false'
+            varType: boolean
+            variable_selector:
+            - '1776000000019'
+            - requires_full_replan
+          - comparison_operator: not empty
+            id: patched-normalized-plan-present
+            value: ''
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patched_normalized_semantic_plan_json
+          id: case_use_patch
+          logical_operator: and
+        - case_id: case_chart_only
+          conditions:
+          - comparison_operator: is
+            id: patch-route-chart-only
+            value: chart_only
+            varType: string
+            variable_selector:
+            - '1776000000019'
+            - patch_route
+          id: case_chart_only
+          logical_operator: and
+        desc: refine_query patch 结果分流：use_patch 必须同时满足 patch_applied=true、requires_full_replan=false
+          且 patched_normalized_semantic_plan_json 非空，才进入 semantic_plan_normalizer/Mongo
+          输入准备；默认进入 collection selector + schema retrieval + LLM_Refine查询规划。
+        selected: false
+        title: 条件分支_patch结果判断
+        type: if-else
+      height: 198
+      id: '1776000000023'
+      position:
+        x: 4140
+        y: 180
+      positionAbsolute:
+        x: 4140
+        y: 180
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |-
+          import json
+          import re
+
+          # schema metadata C contract helpers
+          import copy
+          import hashlib
+          import json
+          import re
+
+
+          CONTRACT_VERSION = 'schema_metadata_contract'
+          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
+          NON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors', 'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}
+
+
+          def default_query_rules():
+              return {
+                  'require_time_range_for_aggregate': True,
+                  'max_limit': 100,
+                  'allowed_operations': ['find', 'aggregate'],
+                  'aggregate_required_when': [],
+                  'find_allowed_when': [],
+                  'sensitive_field_policy': 'deny_return_group_sort',
+                  'default_limit': 100,
+                  'max_time_range_days': 366,
+              }
+
+
+          def _strip_quotes(v):
+              v = str(v or '').strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                  return v[1:-1]
+              return v
+
+
+          def _split_inline_list(body):
+              # Simple comma split that keeps quoted Chinese/ASCII aliases intact for the schema docs used here.
+              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
+
+
+          def _parse_scalar(v):
+              v = str(v or '').strip()
+              if not v:
+                  return ''
+              if v in {'|', '>', '|-', '>-'}:
+                  return ''
+              if v in {'true', 'True'}:
+                  return True
+              if v in {'false', 'False'}:
+                  return False
+              if v in {'null', 'Null', 'NULL', '~'}:
+                  return None
+              if v.startswith('[') and v.endswith(']'):
+                  return _split_inline_list(v[1:-1].strip())
+              if v.startswith('{') and v.endswith('}'):
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return _strip_quotes(v)
+              if re.match(r'^-?\d+$', v):
+                  try:
+                      return int(v)
+                  except Exception:
+                      pass
+              if re.match(r'^-?\d+\.\d+$', v):
+                  try:
+                      return float(v)
+                  except Exception:
+                      pass
+              return _strip_quotes(v)
+
+
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1
+                      continue
+                  if ':' in s:
+                      k, v = s.split(':', 1)
+                      key = k.strip()
+                      val = v.strip()
+                      if isinstance(parent, dict):
+                          if val:
+                              parent[key] = _parse_scalar(val)
+                              i += 1
+                              continue
+                          j = i + 1
+                          nxt = ''
+                          while j < len(lines):
+                              if lines[j].strip() and not lines[j].lstrip().startswith('#'):
+                                  nxt = lines[j].strip()
+                                  break
+                              j += 1
+                          container = [] if nxt.startswith('- ') else {}
+                          parent[key] = container
+                          stack.append((indent, container))
+                  i += 1
+              return root
+
+
+          def _json_loads_maybe(text):
+              text = str(text or '').strip()
+              if not text:
+                  raise ValueError('empty JSON text')
+              return json.loads(text)
+
+
+          def _parse_metadata_block(block):
+              block = str(block or '').strip()
+              if not block:
+                  return {}
+              if block.startswith('{') or block.startswith('['):
+                  return json.loads(block)
+              return _parse_simple_yaml(block)
+
+
+          def extract_schema_metadata_blocks(text):
+              raw = str(text or '')
+              blocks = []
+              # Prefer explicit Schema Metadata fenced blocks, YAML or JSON.
+              pattern = re.compile(r'(^|\n)##\s*Schema Metadata\s*\n+```(?:yaml|yml|json)?\s*\n(.*?)\n```', re.I | re.S)
+              blocks.extend(m.group(2) for m in pattern.finditer(raw))
+              if blocks:
+                  return blocks
+              # Then accept any fenced YAML/JSON block that declares mongo/schema contract metadata.
+              pattern2 = re.compile(r'```(?:yaml|yml|json)?\s*\n(.*?(?:metadata_type\s*:\s*mongo_schema|"metadata_type"\s*:\s*"mongo_schema"|"contract_version"\s*:\s*"schema_metadata_contract").*?)\n```', re.I | re.S)
+              blocks.extend(m.group(1) for m in pattern2.finditer(raw))
+              return blocks
+
+
+          def _as_list(value):
+              if value is None or value == '':
+                  return []
+              if isinstance(value, list):
+                  return [x for x in value if x is not None and str(x).strip()]
+              return [x for x in _split_inline_list(value) if str(x).strip()]
+
+
+          def _as_str_list(value):
+              return [str(x).strip() for x in _as_list(value) if str(x).strip()]
+
+
+          def _as_dict(value):
+              return value if isinstance(value, dict) else {}

@@ -1,149 +1,3 @@
-              return False
-
-          def _loads_schema_json(v, default):
-              if isinstance(v, (dict, list)):
-                  return v
-              if isinstance(v, str) and v.strip():
-                  try:
-                      return json.loads(v)
-                  except Exception:
-                      return default
-              return default
-
-          def build_alias_index(schema_metadata):
-              meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections' in schema_metadata else extract_schema_metadata(schema_metadata)
-              aliases = {}
-              collection_aliases = {}
-              field_aliases = {}
-              metric_aliases = {}
-              value_aliases = {}
-              warnings = []
-              collections = meta.get('collections') if isinstance(meta, dict) else {}
-              for cname, coll in (collections or {}).items():
-                  if not isinstance(coll, dict):
-                      continue
-                  collection_label = coll.get('collection_label')
-                  _add_alias(collection_aliases, cname, cname, 'collection', cname, collection_label, 'collection.name')
-                  _add_alias(collection_aliases, collection_label, cname, 'collection', cname, collection_label, 'collection.label')
-                  _add_alias(aliases, cname, cname, 'collection', cname, collection_label, 'collection.name')
-                  _add_alias(aliases, collection_label, cname, 'collection', cname, collection_label, 'collection.label')
-                  for a in coll.get('collection_aliases') or []:
-                      _add_alias(collection_aliases, a, cname, 'collection', cname, collection_label, 'collection.aliases')
-                      _add_alias(aliases, a, cname, 'collection', cname, collection_label, 'collection.aliases')
-                  for f in _iter_named_items(coll.get('fields') or {}):
-                      fname = str(f.get('name') or '').strip()
-                      if not fname:
-                          continue
-                      label = f.get('label')
-                      for alias, source in [(fname, 'field.name'), (label, 'field.label')]:
-                          _add_alias(aliases, alias, cname, 'field', fname, label, source)
-                          _add_alias(field_aliases, alias, cname, 'field', fname, label, source)
-                      for a in f.get('aliases') or []:
-                          _add_alias(aliases, a, cname, 'field', fname, label, 'field.aliases')
-                          _add_alias(field_aliases, a, cname, 'field', fname, label, 'field.aliases')
-                      value_alias_map = f.get('value_aliases') or {}
-                      if isinstance(value_alias_map, dict):
-                          for val_alias, canonical_value in value_alias_map.items():
-                              _add_alias(aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
-                              _add_alias(value_aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
-                  for m in _iter_named_items(coll.get('metrics') or {}):
-                      mname = str(m.get('name') or '').strip()
-                      if not mname:
-                          continue
-                      label = m.get('label')
-                      for alias, source in [(mname, 'metric.name'), (label, 'metric.label')]:
-                          _add_alias(aliases, alias, cname, 'metric', mname, label, source)
-                          _add_alias(metric_aliases, alias, cname, 'metric', mname, label, source)
-                      for a in m.get('aliases') or []:
-                          _add_alias(aliases, a, cname, 'metric', mname, label, 'metric.aliases')
-                          _add_alias(metric_aliases, a, cname, 'metric', mname, label, 'metric.aliases')
-                  for _rel in _iter_items(coll.get('relations') or {}):
-                      pass
-              return {'contract_version': ALIAS_INDEX_CONTRACT_VERSION, 'aliases': aliases, 'collection_aliases': collection_aliases, 'field_aliases': field_aliases, 'metric_aliases': metric_aliases, 'value_aliases': value_aliases, 'warnings': warnings}
-
-          def prettify_field_name(field_name):
-              return str(field_name or '').strip().replace('_', ' ')
-
-          def _meta_and_index(schema_metadata_json='', schema_alias_index_json='', schema_runtime_context_json=''):
-              meta = _loads_schema_json(schema_metadata_json, {})
-              idx = _loads_schema_json(schema_alias_index_json, {})
-              runtime = _loads_schema_json(schema_runtime_context_json, {})
-              if not meta and isinstance(runtime, dict):
-                  meta = _loads_schema_json(runtime.get('schema_metadata_json'), {})
-              if not idx and isinstance(runtime, dict):
-                  idx = _loads_schema_json(runtime.get('schema_alias_index_json'), {})
-              if not isinstance(meta, dict) or 'collections' not in meta:
-                  meta = extract_schema_metadata(meta)
-              if not _alias_index_has_content(idx):
-                  idx = build_alias_index(meta)
-              return meta, idx
-
-          def _get_named_meta(items, name):
-              name = str(name or '').strip()
-              for item in _iter_named_items(items):
-                  if str(item.get('name') or '').strip() == name:
-                      return item
-              return None
-
-          def _resolve_from_candidates(raw, candidates, cname, kind, unresolved_warning):
-              if cname:
-                  scoped = [x for x in candidates if x.get('collection') == cname]
-                  if len(scoped) == 1:
-                      x = scoped[0]
-                      return {'input': raw, 'resolved': x['name'], 'kind': kind, 'collection': x['collection'], 'source': x.get('source') or 'schema_alias', 'label': x.get('label') or prettify_field_name(x['name']), 'confidence': 1.0, 'warning': ''}
-                  if len(scoped) > 1:
-                      return {'input': raw, 'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'ambiguous_schema_alias', 'label': raw, 'confidence': 0, 'warning': f'{kind} 别名在当前 collection 内存在多个候选，未自动归一。', 'candidates': scoped}
-              if len(candidates) == 1:
-                  x = candidates[0]
-                  return {'input': raw, 'resolved': x['name'], 'kind': kind, 'collection': x['collection'], 'source': x.get('source') or 'schema_alias_unique', 'label': x.get('label') or prettify_field_name(x['name']), 'confidence': 1.0, 'warning': ''}
-              if len(candidates) > 1:
-                  return {'input': raw, 'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'ambiguous_schema_alias', 'label': raw, 'confidence': 0, 'warning': f'{kind} 别名在多个 collection 中存在，缺少 collection 上下文，未自动归一。', 'candidates': candidates}
-              return {'input': raw, 'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'unresolved', 'label': raw, 'confidence': 0, 'warning': unresolved_warning}
-
-
-          def resolve_field_name(raw_name, schema_metadata, collection_name=None, old_plan_fields=None):
-              raw = str(raw_name or '').strip()
-              old = set(str(x).strip() for x in (old_plan_fields or []) if str(x).strip())
-              meta, idx = _meta_and_index(schema_metadata)
-              colls = meta.get('collections') or {}
-              cname = str(collection_name or '').strip()
-              f = _get_named_meta(colls.get(cname, {}).get('fields') if cname in colls else {}, raw)
-              if f:
-                  return {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source': 'schema_field_name', 'label': f.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
-              field_alias_map = idx.get('field_aliases') if isinstance(idx.get('field_aliases'), dict) else {}
-              alias_map = idx.get('aliases') if isinstance(idx.get('aliases'), dict) else {}
-              candidates = [x for x in (field_alias_map or alias_map).get(raw, []) if isinstance(x, dict) and x.get('kind') == 'field']
-              result = _resolve_from_candidates(raw, candidates, cname, 'field', '字段别名未在 schema metadata 中声明，未自动归一。')
-              if result.get('source') != 'unresolved':
-                  return result
-              if raw in old:
-                  return {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source': 'old_plan_fields', 'label': prettify_field_name(raw), 'confidence': 0.8, 'warning': ''}
-              return result
-
-
-          def resolve_metric_name(raw_name, schema_metadata, collection_name=None):
-              raw = str(raw_name or '').strip()
-              meta, idx = _meta_and_index(schema_metadata)
-              colls = meta.get('collections') or {}
-              cname = str(collection_name or '').strip()
-              m = _get_named_meta(colls.get(cname, {}).get('metrics') if cname in colls else {}, raw)
-              if m:
-                  return {'input': raw, 'resolved': raw, 'kind': 'metric', 'collection': cname, 'source': 'schema_metric_name', 'label': m.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
-              metric_alias_map = idx.get('metric_aliases') if isinstance(idx.get('metric_aliases'), dict) else {}
-              alias_map = idx.get('aliases') if isinstance(idx.get('aliases'), dict) else {}
-              candidates = [x for x in (metric_alias_map or alias_map).get(raw, []) if isinstance(x, dict) and x.get('kind') == 'metric']
-              return _resolve_from_candidates(raw, candidates, cname, 'metric', '指标别名未在 schema metadata 中声明，未自动归一。')
-
-
-          def resolve_value_alias(raw_value, schema_metadata, collection_name=None, field_name=None):
-              raw = str(raw_value or '').strip()
-              meta, idx = _meta_and_index(schema_metadata)
-              cname = str(collection_name or '').strip()
-              fname = str(field_name or '').strip()
-              value_alias_map = idx.get('value_aliases') if isinstance(idx.get('value_aliases'), dict) else {}
-              alias_map = idx.get('aliases') if isinstance(idx.get('aliases'), dict) else {}
-              candidates = [x for x in (value_alias_map or alias_map).get(raw, []) if isinstance(x, dict) and x.get('kind') == 'value']
-              if cname:
                   candidates = [x for x in candidates if x.get('collection') == cname]
               if fname:
                   candidates = [x for x in candidates if x.get('field') == fname]
@@ -159,15 +13,12 @@
               meta, _ = _meta_and_index(schema_metadata)
               fname = str(field_name or '').strip()
               cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}):
-                  f = _get_named_meta(meta['collections'][cname].get('fields') or {}, fname)
-                  if f:
-                      return f.get('label') or prettify_field_name(fname)
+              if cname and cname in meta.get('collections', {}) and fname in meta['collections'][cname].get('fields', {}):
+                  return meta['collections'][cname]['fields'][fname].get('label') or prettify_field_name(fname)
               hits = []
               for cn, c in (meta.get('collections') or {}).items():
-                  f = _get_named_meta(c.get('fields') or {}, fname)
-                  if f:
-                      hits.append(f.get('label') or prettify_field_name(fname))
+                  if fname in c.get('fields', {}):
+                      hits.append(c['fields'][fname].get('label') or prettify_field_name(fname))
               return hits[0] if len(hits) == 1 else prettify_field_name(fname)
 
 
@@ -175,15 +26,12 @@
               meta, _ = _meta_and_index(schema_metadata)
               name = str(metric_name or '').strip()
               cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}):
-                  m = _get_named_meta(meta['collections'][cname].get('metrics') or {}, name)
-                  if m:
-                      return m.get('label') or prettify_field_name(name)
+              if cname and cname in meta.get('collections', {}) and name in meta['collections'][cname].get('metrics', {}):
+                  return meta['collections'][cname]['metrics'][name].get('label') or prettify_field_name(name)
               hits = []
               for cn, c in (meta.get('collections') or {}).items():
-                  m = _get_named_meta(c.get('metrics') or {}, name)
-                  if m:
-                      hits.append(m.get('label') or prettify_field_name(name))
+                  if name in c.get('metrics', {}):
+                      hits.append(c['metrics'][name].get('label') or prettify_field_name(name))
               return hits[0] if len(hits) == 1 else prettify_field_name(name)
 
 
@@ -898,3 +746,155 @@
                   raw_intent_type = _ensure_non_empty_string(raw.get('intent_type'), f'stages[{idx}].intent_type')
                   intent_type = canonicalize_intent_type(raw_intent_type, raw)
                   if intent_type not in allowed_intents:
+                      raise ValueError(f'unsupported intent_type: {raw_intent_type}')
+                  default_limit = 0 if intent_type in {'group_top_entity', 'group_top_record'} else 20
+                  limit = int(raw.get('limit') if raw.get('limit') is not None else default_limit)
+                  if limit < 0:
+                      raise ValueError(f'stages[{idx}].limit must be >= 0')
+                  rank_n = int(raw.get('rank_n') or 0)
+                  if intent_type in {'group_top_entity', 'group_top_record'} and rank_n <= 0:
+                      rank_n = 1
+                  stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
+                  stage = {
+                      'stage_name': stage_name,
+                      'collection': collection,
+                      'depends_on': str(raw.get('depends_on') or '').strip(),
+                      'intent_type': intent_type,
+                      'time_range': stage_time_range,
+                      'group_fields': _ensure_string_list(raw.get('group_fields') or [], f'stages[{idx}].group_fields'),
+                      'entity_field': str(raw.get('entity_field') or '').strip(),
+                      'metric_function': str(raw.get('metric_function') or '').strip(),
+                      'metric_field': str(raw.get('metric_field') or '').strip(),
+                      'metric_alias': str(raw.get('metric_alias') or '').strip(),
+                      'rank_n': rank_n,
+                      'rank_order_field': str(raw.get('rank_order_field') or '').strip(),
+                      'rank_direction': str(raw.get('rank_direction') or '').strip() or 'desc',
+                      'sort': raw.get('sort') or [],
+                      'limit': limit,
+                      'projection_mode': str(raw.get('projection_mode') or 'none').strip() or 'none',
+                      'projection_fields': _ensure_string_list(raw.get('projection_fields') or [], f'stages[{idx}].projection_fields'),
+                      'join_source_field': str(raw.get('join_source_field') or '').strip(),
+                      'apply_global_limit': bool(raw.get('apply_global_limit', False)),
+                  }
+                  stage['filters'] = _sanitize_stage_filters(raw.get('filters') or [], stage['time_range'])
+                  if intent_type == 'enrich_related':
+                      stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
+                      stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
+                  if _is_effectively_empty_stage(stage):
+                      continue
+                  normalized_stages.append(stage)
+
+              final_merge = plan.get('final_merge') or {}
+              if not normalized_stages:
+                  raise ValueError('execution_plan has no effective stages')
+              if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
+                  execution_mode = 'single_stage'
+              if execution_mode == 'single_stage':
+                  normalized_stages = normalized_stages[:1]
+              visualization = _normalize_visualization(plan.get('visualization'))
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              chart_request_title = str(chart_request.get('title') or '').strip()
+              if chart_request_title:
+                  visualization['title'] = chart_request_title
+              # Phase 11: Mongo compiler consumes validator-normalized chart_request
+              # only. Do not infer visualization intent from the user's natural
+              # language in the compile path.
+
+              merge_mode = str(final_merge.get('merge_mode') or 'none').strip() or 'none'
+              if len(normalized_stages) <= 1 or merge_mode == 'none':
+                  execution_mode = 'single_stage'
+                  merge_mode = 'none'
+              return {
+                  'execution_mode': execution_mode,
+                  'primary_collection': primary_collection,
+                  'collections': collections,
+                  'reasoning': str(plan.get('reasoning') or '').strip(),
+                  'visualization': visualization,
+                  'stages': normalized_stages,
+                  'final_merge': {
+                      'merge_mode': merge_mode,
+                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
+                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
+                      'left_field': str(final_merge.get('left_field') or '').strip(),
+                      'right_field': str(final_merge.get('right_field') or '').strip(),
+                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
+                  },
+              }
+
+
+          def _build_stage_match(stage):
+              parts = []
+              time_expr = _apply_time_range(stage.get('time_range'))
+              if time_expr:
+                  parts.append(time_expr)
+              for idx, f in enumerate(stage.get('filters') or []):
+                  if not isinstance(f, dict):
+                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
+                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
+                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
+                  value = f.get('value')
+                  parts.append(_build_match_expr(field, operator, value))
+              return _merge_match(parts)
+
+
+          def _append_projection(pipeline, fields):
+              unique_fields = []
+              seen = set()
+              for field in fields or []:
+                  text = str(field or '').strip()
+                  if text and text not in seen:
+                      seen.add(text)
+                      unique_fields.append(text)
+              if not unique_fields:
+                  return
+              proj = {'_id': 0}
+              for field in unique_fields:
+                  proj[field] = f'${field}'
+              pipeline.append({'$project': proj})
+
+
+          def _compile_detail_query(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              _append_projection(pipeline, stage.get('projection_fields'))
+              sort_stage = {}
+              for s in stage.get('sort') or []:
+                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
+                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
+                  sort_stage[field] = direction
+              if sort_stage:
+                  pipeline.append({'$sort': sort_stage})
+              if int(stage.get('limit') or 0) > 0:
+                  pipeline.append({'$limit': int(stage['limit'])})
+              validated_ast = {
+                  'primary_collection': stage['collection'],
+                  'collections': [stage['collection']],
+                  'expands': [],
+                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
+                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
+                  'aggregations': [],
+                  'group_by': [],
+                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
+                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
+                  'reasoning': stage['intent_type'],
+              }
+              return validated_ast, pipeline
+
+
+          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
+              pipeline = []
+              match_expr = _build_stage_match(stage)
+              if match_expr:
+                  pipeline.append({'$match': match_expr})
+              group_fields = stage.get('group_fields') or []
+              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
+              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
+              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
+              if metric_function == 'count':
+                  agg_expr = {'$sum': 1}
+              else:
+                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
+                  if metric_function not in op_map:
