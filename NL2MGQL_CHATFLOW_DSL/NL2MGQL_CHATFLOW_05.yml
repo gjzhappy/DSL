@@ -730,6 +730,8 @@
           def _result_profile(rows):
               rows = rows if isinstance(rows, list) else []
               fields = []
+              numeric_fields = []
+              dimension_fields = []
               for row in rows:
                   if not isinstance(row, dict):
                       continue
@@ -737,9 +739,17 @@
                       name = str(key)
                       if name not in fields:
                           fields.append(name)
+              for name in fields:
+                  vals = [row.get(name) for row in rows if isinstance(row, dict) and row.get(name) is not None]
+                  if vals and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+                      numeric_fields.append(name)
+                  else:
+                      dimension_fields.append(name)
               return {
                   'row_count': len(rows),
                   'fields': fields,
+                  'numeric_fields': numeric_fields,
+                  'dimension_fields': dimension_fields,
                   'preview_rows': rows[:10],
               }
 
@@ -764,7 +774,43 @@
               return {}, debug
 
 
-          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str, validator_route: str='valid', validator_result_json: str=''):
+          def _schema_from_runtime(schema_runtime_context_json='', schema_metadata_json='', schema_alias_index_json='', fallback_context=''):
+              ctx = _ensure_obj(schema_runtime_context_json, 'schema_runtime_context_json') if schema_runtime_context_json else {}
+              meta = _ensure_obj(ctx.get('schema_metadata_json'), 'runtime.schema_metadata_json') if isinstance(ctx, dict) and ctx.get('schema_metadata_json') else {}
+              alias = _ensure_obj(ctx.get('schema_alias_index_json'), 'runtime.schema_alias_index_json') if isinstance(ctx, dict) and ctx.get('schema_alias_index_json') else {}
+              if not meta and schema_metadata_json:
+                  meta = _ensure_obj(schema_metadata_json, 'schema_metadata_json')
+              if not alias and schema_alias_index_json:
+                  alias = _ensure_obj(schema_alias_index_json, 'schema_alias_index_json')
+              if not meta:
+                  meta = extract_schema_metadata(fallback_context)
+              if not alias:
+                  alias = build_alias_index(meta)
+              return meta, alias
+
+
+          def _sync_limit(validated_ast, pipeline):
+              limit = 0
+              if isinstance(pipeline, list):
+                  for stage in pipeline:
+                      if isinstance(stage, dict) and '$limit' in stage:
+                          try: limit = int(stage.get('$limit') or 0)
+                          except Exception: limit = 0
+              if isinstance(validated_ast, dict) and limit > 0:
+                  validated_ast['limit'] = limit
+              return validated_ast
+
+
+          def _dedupe_equivalent_project(pipeline):
+              out=[]
+              for st in pipeline or []:
+                  if out and isinstance(st,dict) and isinstance(out[-1],dict) and '$project' in st and '$project' in out[-1] and st.get('$project') == out[-1].get('$project'):
+                      continue
+                  out.append(st)
+              return out
+
+
+          def main(semantic_plan, planner, question: str, schema_context: str, query_urls: str, validator_route: str='valid', validator_result_json: str='', schema_runtime_context_json: str='', schema_metadata_json: str='', schema_alias_index_json: str=''):
               if str(validator_route or '').strip() != 'valid':
                   out = _compiler_contract_defaults('validator_route is not valid; compiler execution is blocked')
                   out['question'] = str(question or '').strip()
@@ -806,8 +852,7 @@
                       out['compiler_debug_json'] = _safe_json_dumps(compiler_debug)
                       return out
                   raise
-              schema_metadata = extract_schema_metadata(schema_context)
-              schema_alias_index = build_alias_index(schema_metadata)
+              schema_metadata, schema_alias_index = _schema_from_runtime(schema_runtime_context_json, schema_metadata_json, schema_alias_index_json, schema_context)
               compiler_debug['legacy_compiler_resolution_used'] = False
               compiler_debug['schema_metadata_loaded_for_labels_only'] = bool(schema_metadata.get('collections'))
               normalized_execution_plan['schema_context'] = str(schema_context or '')
@@ -819,7 +864,8 @@
               for stage in normalized_execution_plan.get('stages') or []:
                   stage = _sanitize_stage_for_compile(stage)
                   validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
-                  pipeline = _assert_safe_pipeline(pipeline)
+                  pipeline = _dedupe_equivalent_project(_assert_safe_pipeline(pipeline))
+                  validated_ast = _sync_limit(validated_ast, pipeline)
                   pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
                   selected_url = ''
                   request_id = uuid.uuid4().hex
