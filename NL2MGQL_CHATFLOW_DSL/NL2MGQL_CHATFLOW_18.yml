@@ -1,419 +1,3 @@
-          or '').strip(),\n        'relation_type': str(item.get('relation_type') or 'enrich').strip()
-          or 'enrich',\n        'description': str(item.get('description') or '').strip(),\n
-          \       'join_keys': normalized_join_keys,\n        'allowed_usage': _as_str_list(item.get('allowed_usage')),\n
-          \       'forbidden_usage': _as_str_list(item.get('forbidden_usage')),\n        'cardinality':
-          str(item.get('cardinality') or 'unknown').strip() or 'unknown',\n    }\n    for
-          k, v in item.items():\n        if k not in normalized and k not in NON_SEMANTIC_SCHEMA_KEYS:\n
-          \           normalized[k] = v\n    return normalized\n\n\ndef _normalize_query_rules(value):\n
-          \   rules = default_query_rules()\n    if isinstance(value, dict):\n        rules.update(copy.deepcopy(value))\n
-          \   rules['allowed_operations'] = _as_str_list(rules.get('allowed_operations'))
-          or ['find', 'aggregate']\n    rules['aggregate_required_when'] = _as_list(rules.get('aggregate_required_when'))\n
-          \   rules['find_allowed_when'] = _as_list(rules.get('find_allowed_when'))\n
-          \   return rules\n\n\ndef _looks_like_schema_doc(doc):\n    if not isinstance(doc,
-          dict):\n        return False\n    if doc.get('metadata_type') == 'mongo_schema'
-          or doc.get('contract_version') == CONTRACT_VERSION:\n        return True\n    return
-          bool(doc.get('collection_name') or isinstance(doc.get('collections'), dict))\n\n\ndef
-          _normalize_collection_doc(doc, warnings):\n    if not isinstance(doc, dict):\n
-          \       return None\n    cname = str(doc.get('collection_name') or '').strip()\n
-          \   if not cname:\n        return None\n    primary_key = str(doc.get('primary_key')
-          or '_id').strip() or '_id'\n    fields = _normalize_named_map(doc.get('fields'),
-          'fields', warnings, cname)\n    fields = {field['name']: _normalize_field(field, cname,
-          warnings) for field in fields.values()}\n    metrics = _normalize_named_map(doc.get('metrics'),
-          'metrics', warnings, cname)\n    metrics = {metric['name']: _normalize_metric(metric,
-          primary_key) for metric in metrics.values()}\n    relations = doc.get('relations')
-          if isinstance(doc.get('relations'), list) else []\n    if doc.get('relations')
-          not in (None, '') and not isinstance(doc.get('relations'), list):\n        warnings.append(f'{cname}.relations
-          不是 list，已按空列表处理。')\n    normalized = {\n        'collection_name': cname,\n
-          \       'collection_label': str(doc.get('collection_label') or cname).strip()
-          or cname,\n        'domain': str(doc.get('domain') or '').strip(),\n        'description':
-          str(doc.get('description') or '').strip(),\n        'collection_aliases': _as_str_list(doc.get('collection_aliases')),\n
-          \       'primary_key': primary_key,\n        'default_time_field': str(doc.get('default_time_field')
-          or '').strip(),\n        'fields': fields,\n        'metrics': metrics,\n        'relations':
-          [_normalize_relation(r, cname, warnings) for r in relations if isinstance(r,
-          dict)],\n        'query_rules': _normalize_query_rules(doc.get('query_rules')),\n
-          \       'aggregation_policy': _as_dict(doc.get('aggregation_policy')),\n        'chart_label':
-          _as_dict(doc.get('chart_label')),\n        'default_sort': _as_list(doc.get('default_sort')),\n
-          \       'examples': _as_list(doc.get('examples')),\n        'warnings': _as_str_list(doc.get('warnings')),\n
-          \   }\n    for k, v in doc.items():\n        if k not in normalized and k not
-          in NON_SEMANTIC_SCHEMA_KEYS and k not in {'metadata_type', 'metadata_version'}:\n
-          \           normalized[k] = v\n    return normalized\n\n\ndef _metadata_from_collections_map(schema_context,
-          warnings, parse_errors):\n    collections = {}\n    for cname, coll in (schema_context.get('collections')
-          or {}).items():\n        if not isinstance(coll, dict):\n            warnings.append(f'collections.{cname}
-          不是对象，已忽略。')\n            continue\n        item = copy.deepcopy(coll)\n        item.setdefault('collection_name',
-          cname)\n        norm = _normalize_collection_doc(item, warnings)\n        if
-          norm:\n            collections[norm['collection_name']] = norm\n    return collections\n\n\ndef
-          compute_schema_digest(schema_metadata):\n    meta = copy.deepcopy(schema_metadata
-          if isinstance(schema_metadata, dict) else extract_schema_metadata(schema_metadata))\n
-          \   def strip_non_semantic(obj):\n        if isinstance(obj, dict):\n            return
-          {k: strip_non_semantic(v) for k, v in sorted(obj.items()) if k not in NON_SEMANTIC_SCHEMA_KEYS}\n
-          \       if isinstance(obj, list):\n            return [strip_non_semantic(x)
-          for x in obj]\n        return obj\n    canonical = strip_non_semantic(meta)\n
-          \   canonical['contract_version'] = CONTRACT_VERSION\n    payload = json.dumps(canonical,
-          sort_keys=True, ensure_ascii=False, separators=(',', ':'))\n    return hashlib.sha256(payload.encode('utf-8')).hexdigest()\n\n\ndef
-          extract_schema_metadata(schema_context):\n    warnings = []\n    parse_errors
-          = []\n    collections = {}\n    schema_version = ''\n    try:\n        if isinstance(schema_context,
-          dict):\n            if isinstance(schema_context.get('collections'), dict):\n
-          \               schema_version = str(schema_context.get('schema_version') or
-          schema_context.get('metadata_version') or '').strip()\n                collections
-          = _metadata_from_collections_map(schema_context, warnings, parse_errors)\n            elif
-          _looks_like_schema_doc(schema_context):\n                schema_version = str(schema_context.get('schema_version')
-          or schema_context.get('metadata_version') or '').strip()\n                norm
-          = _normalize_collection_doc(schema_context, warnings)\n                if norm:\n
-          \                   collections[norm['collection_name']] = norm\n            else:\n
-          \               warnings.append('输入对象不是 schema metadata，已返回空 contract。')\n        else:\n
-          \           raw = str(schema_context or '')\n            stripped = raw.strip()\n
-          \           parsed_json = None\n            if stripped.startswith('{') or stripped.startswith('['):\n
-          \               try:\n                    parsed_json = json.loads(stripped)\n
-          \               except Exception as e:\n                    parse_errors.append('Schema
-          Metadata JSON 解析失败: ' + str(e)[:160])\n            if isinstance(parsed_json,
-          dict):\n                return extract_schema_metadata(parsed_json)\n            blocks
-          = extract_schema_metadata_blocks(raw)\n            if not blocks and parsed_json
-          is None and stripped:\n                # Last resort: treat the whole text as
-          a YAML-ish schema doc.\n                blocks = [raw]\n            for block
-          in blocks:\n                try:\n                    doc = _parse_metadata_block(block)\n
-          \                   if not isinstance(doc, dict) or not _looks_like_schema_doc(doc):\n
-          \                       warnings.append('跳过非 schema metadata block。')\n                        continue\n
-          \                   if not schema_version:\n                        schema_version
-          = str(doc.get('schema_version') or doc.get('metadata_version') or '').strip()\n
-          \                   if isinstance(doc.get('collections'), dict):\n                        collections.update(_metadata_from_collections_map(doc,
-          warnings, parse_errors))\n                    else:\n                        norm
-          = _normalize_collection_doc(doc, warnings)\n                        if norm:\n
-          \                           collections[norm['collection_name']] = norm\n                except
-          Exception as e:\n                    parse_errors.append('Schema Metadata block
-          解析失败: ' + str(e)[:160])\n    except Exception as e:\n        parse_errors.append('Schema
-          Metadata 解析失败: ' + str(e)[:160])\n    meta = {\n        'contract_version':
-          CONTRACT_VERSION,\n        'schema_version': schema_version,\n        'schema_digest':
-          '',\n        'collections': collections,\n        'warnings': warnings,\n        'parse_errors':
-          parse_errors,\n    }\n    meta['schema_digest'] = compute_schema_digest(meta)\n
-          \   return meta\n\n\ndef _add_alias(index, alias, collection, kind, name, label,
-          source, field=None):\n    alias = str(alias or '').strip()\n    if not alias:\n
-          \       return\n    item = {\n        'collection': collection,\n        'kind':
-          kind,\n        'name': name,\n        'label': str(label or '').strip(),\n        'confidence':
-          1.0,\n        'source': source,\n    }\n    if field:\n        item['field']
-          = field\n    bucket = index.setdefault(alias, [])\n    if not any(x.get('collection')
-          == collection and x.get('kind') == kind and x.get('name') == name and x.get('field')
-          == field for x in bucket):\n        bucket.append(item)\n\n\ndef build_alias_index(schema_metadata):\n
-          \   meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections'
-          in schema_metadata else extract_schema_metadata(schema_metadata)\n    aliases
-          = {}\n    collection_aliases = {}\n    field_aliases = {}\n    metric_aliases
-          = {}\n    value_aliases = {}\n    warnings = []\n    for cname, coll in (meta.get('collections')
-          or {}).items():\n        _add_alias(collection_aliases, cname, cname, 'collection',
-          cname, coll.get('collection_label'), 'collection.name')\n        _add_alias(collection_aliases,
-          coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'),
-          'collection.label')\n        _add_alias(aliases, cname, cname, 'collection',
-          cname, coll.get('collection_label'), 'collection.name')\n        _add_alias(aliases,
-          coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'),
-          'collection.label')\n        for a in coll.get('collection_aliases') or []:\n
-          \           _add_alias(collection_aliases, a, cname, 'collection', cname, coll.get('collection_label'),
-          'collection.aliases')\n            _add_alias(aliases, a, cname, 'collection',
-          cname, coll.get('collection_label'), 'collection.aliases')\n        for fname,
-          f in (coll.get('fields') or {}).items():\n            for alias, source in [(fname,
-          'field.name'), (f.get('label'), 'field.label')]:\n                _add_alias(aliases,
-          alias, cname, 'field', fname, f.get('label'), source)\n                _add_alias(field_aliases,
-          alias, cname, 'field', fname, f.get('label'), source)\n            for a in
-          f.get('aliases') or []:\n                _add_alias(aliases, a, cname, 'field',
-          fname, f.get('label'), 'field.aliases')\n                _add_alias(field_aliases,
-          a, cname, 'field', fname, f.get('label'), 'field.aliases')\n            for
-          val_alias, canonical_value in (f.get('value_aliases') or {}).items():\n                _add_alias(aliases,
-          val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases',
-          field=fname)\n                _add_alias(value_aliases, val_alias, cname, 'value',
-          canonical_value, val_alias, 'field.value_aliases', field=fname)\n        for
-          mname, m in (coll.get('metrics') or {}).items():\n            for alias, source
-          in [(mname, 'metric.name'), (m.get('label'), 'metric.label')]:\n                _add_alias(aliases,
-          alias, cname, 'metric', mname, m.get('label'), source)\n                _add_alias(metric_aliases,
-          alias, cname, 'metric', mname, m.get('label'), source)\n            for a in
-          m.get('aliases') or []:\n                _add_alias(aliases, a, cname, 'metric',
-          mname, m.get('label'), 'metric.aliases')\n                _add_alias(metric_aliases,
-          a, cname, 'metric', mname, m.get('label'), 'metric.aliases')\n    return {\n
-          \       'contract_version': ALIAS_INDEX_CONTRACT_VERSION,\n        'aliases':
-          aliases,\n        'collection_aliases': collection_aliases,\n        'field_aliases':
-          field_aliases,\n        'metric_aliases': metric_aliases,\n        'value_aliases':
-          value_aliases,\n        'warnings': warnings,\n    }\n\n\ndef prettify_field_name(field_name):\n
-          \   return str(field_name or '').strip().replace('_', ' ')\n\n\ndef _meta_and_index(schema_metadata):\n
-          \   meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections'
-          in schema_metadata else extract_schema_metadata(schema_metadata)\n    return
-          meta, build_alias_index(meta)\n\n\ndef _resolve_from_candidates(raw, candidates,
-          cname, kind, unresolved_warning):\n    if cname:\n        scoped = [x for x
-          in candidates if x.get('collection') == cname]\n        if len(scoped) == 1:\n
-          \           x = scoped[0]\n            return {'input': raw, 'resolved': x['name'],
-          'kind': kind, 'collection': x['collection'], 'source': x.get('source') or 'schema_alias',
-          'label': x.get('label') or prettify_field_name(x['name']), 'confidence': 1.0,
-          'warning': ''}\n        if len(scoped) > 1:\n            return {'input': raw,
-          'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'ambiguous_schema_alias',
-          'label': raw, 'confidence': 0, 'warning': f'{kind} 别名在当前 collection 内存在多个候选，未自动归一。',
-          'candidates': scoped}\n    if len(candidates) == 1:\n        x = candidates[0]\n
-          \       return {'input': raw, 'resolved': x['name'], 'kind': kind, 'collection':
-          x['collection'], 'source': x.get('source') or 'schema_alias_unique', 'label':
-          x.get('label') or prettify_field_name(x['name']), 'confidence': 1.0, 'warning':
-          ''}\n    if len(candidates) > 1:\n        return {'input': raw, 'resolved':
-          raw, 'kind': 'unknown', 'collection': cname, 'source': 'ambiguous_schema_alias',
-          'label': raw, 'confidence': 0, 'warning': f'{kind} 别名在多个 collection 中存在，缺少 collection
-          上下文，未自动归一。', 'candidates': candidates}\n    return {'input': raw, 'resolved':
-          raw, 'kind': 'unknown', 'collection': cname, 'source': 'unresolved', 'label':
-          raw, 'confidence': 0, 'warning': unresolved_warning}\n\n\ndef resolve_field_name(raw_name,
-          schema_metadata, collection_name=None, old_plan_fields=None):\n    raw = str(raw_name
-          or '').strip()\n    old = set(str(x).strip() for x in (old_plan_fields or [])
-          if str(x).strip())\n    meta, idx = _meta_and_index(schema_metadata)\n    colls
-          = meta.get('collections') or {}\n    cname = str(collection_name or '').strip()\n
-          \   if cname in colls and raw in (colls[cname].get('fields') or {}):\n        f
-          = colls[cname]['fields'][raw]\n        return {'input': raw, 'resolved': raw,
-          'kind': 'field', 'collection': cname, 'source': 'schema_field_name', 'label':
-          f.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}\n
-          \   candidates = [x for x in (idx.get('field_aliases') or idx.get('aliases')
-          or {}).get(raw, []) if x.get('kind') == 'field']\n    result = _resolve_from_candidates(raw,
-          candidates, cname, 'field', '字段别名未在 schema metadata 中声明，未自动归一。')\n    if result.get('source')
-          != 'unresolved':\n        return result\n    if raw in old:\n        return
-          {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source':
-          'old_plan_fields', 'label': prettify_field_name(raw), 'confidence': 0.8, 'warning':
-          ''}\n    return result\n\n\ndef resolve_metric_name(raw_name, schema_metadata,
-          collection_name=None):\n    raw = str(raw_name or '').strip()\n    meta, idx
-          = _meta_and_index(schema_metadata)\n    colls = meta.get('collections') or {}\n
-          \   cname = str(collection_name or '').strip()\n    if cname in colls and raw
-          in (colls[cname].get('metrics') or {}):\n        m = colls[cname]['metrics'][raw]\n
-          \       return {'input': raw, 'resolved': raw, 'kind': 'metric', 'collection':
-          cname, 'source': 'schema_metric_name', 'label': m.get('label') or prettify_field_name(raw),
-          'confidence': 1.0, 'warning': ''}\n    candidates = [x for x in (idx.get('metric_aliases')
-          or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'metric']\n    return
-          _resolve_from_candidates(raw, candidates, cname, 'metric', '指标别名未在 schema metadata
-          中声明，未自动归一。')\n\n\ndef resolve_value_alias(raw_value, schema_metadata, collection_name=None,
-          field_name=None):\n    raw = str(raw_value or '').strip()\n    meta, idx = _meta_and_index(schema_metadata)\n
-          \   cname = str(collection_name or '').strip()\n    fname = str(field_name or
-          '').strip()\n    candidates = [x for x in (idx.get('value_aliases') or idx.get('aliases')
-          or {}).get(raw, []) if x.get('kind') == 'value']\n    if cname:\n        candidates
-          = [x for x in candidates if x.get('collection') == cname]\n    if fname:\n        candidates
-          = [x for x in candidates if x.get('field') == fname]\n    warning = ''\n    if
-          not candidates:\n        warning = '值别名未在 schema metadata 中声明，未自动归一。'\n    elif
-          len(candidates) > 1:\n        warning = '值别名存在多个候选，返回 candidates，未自动选择。'\n    return
-          {'input': raw, 'kind': 'value', 'collection': cname, 'field': fname, 'candidates':
-          candidates, 'resolved': candidates[0].get('name') if len(candidates) == 1 else
-          raw, 'warning': warning}\n\n\ndef resolve_field_label(field_name, schema_metadata,
-          collection_name=None):\n    meta, _ = _meta_and_index(schema_metadata)\n    fname
-          = str(field_name or '').strip()\n    cname = str(collection_name or '').strip()\n
-          \   if cname and cname in meta.get('collections', {}) and fname in meta['collections'][cname].get('fields',
-          {}):\n        return meta['collections'][cname]['fields'][fname].get('label')
-          or prettify_field_name(fname)\n    hits = []\n    for cn, c in (meta.get('collections')
-          or {}).items():\n        if fname in c.get('fields', {}):\n            hits.append(c['fields'][fname].get('label')
-          or prettify_field_name(fname))\n    return hits[0] if len(hits) == 1 else prettify_field_name(fname)\n\n\ndef
-          resolve_metric_label(metric_name, schema_metadata, collection_name=None):\n
-          \   meta, _ = _meta_and_index(schema_metadata)\n    name = str(metric_name or
-          '').strip()\n    cname = str(collection_name or '').strip()\n    if cname and
-          cname in meta.get('collections', {}) and name in meta['collections'][cname].get('metrics',
-          {}):\n        return meta['collections'][cname]['metrics'][name].get('label')
-          or prettify_field_name(name)\n    hits = []\n    for cn, c in (meta.get('collections')
-          or {}).items():\n        if name in c.get('metrics', {}):\n            hits.append(c['metrics'][name].get('label')
-          or prettify_field_name(name))\n    return hits[0] if len(hits) == 1 else prettify_field_name(name)\n\n\ndef
-          build_chart_title(group_field, metric_name, schema_metadata, collection_name=None,
-          user_title=''):\n    if str(user_title or '').strip():\n        return str(user_title).strip(),
-          'chart_request'\n    x = resolve_field_label(group_field, schema_metadata, collection_name)\n
-          \   y = resolve_metric_label(metric_name, schema_metadata, collection_name)\n
-          \   return ('按' + x + '统计' + y if x and y else (x + ' 与 ' + y + ' 对比')).strip(),
-          'schema_label'\n# end schema metadata C-MVP helpers\n\nSEMANTIC_SCHEMA = {'type':
-          'object', 'required': ['contract_version', 'primary_collection', 'related_collections',
-          'execution_mode', 'answer_mode', 'needs_chart', 'stages', 'final_merge', 'chart_request',
-          'requires_clarification', 'clarification_question', 'needs_schema_retrieval',
-          'warnings'], 'properties': {'contract_version': {'const': 'semantic_plan_contract'},
-          'primary_collection': {'type': 'string'}, 'related_collections': {'type': 'array',
-          'items': {'type': 'string'}}, 'execution_mode': {'type': 'string'}, 'answer_mode':
-          {'type': 'string'}, 'needs_chart': {'type': 'boolean'}, 'stages': {'type': 'array',
-          'minItems': 1, 'items': {'type': 'object'}}, 'final_merge': {'type': 'object'},
-          'chart_request': {'type': 'object'}, 'requires_clarification': {'type': 'boolean'},
-          'clarification_question': {'type': 'string'}, 'needs_schema_retrieval': {'type':
-          'boolean'}, 'warnings': {'type': 'array', 'items': {'type': 'string'}}}, 'additionalProperties':
-          True}\nMAX_REPLAN_PROMPT_CHARS = 16000\nMAX_SCHEMA_CONTEXT_CHARS = 8000\nMAX_RESULT_PREVIEW_ROWS
-          = 5\ndef _loads(v, default):\n    if isinstance(v, (dict, list)):\n        return
-          v\n    if isinstance(v, str) and v.strip():\n        try:\n            return
-          json.loads(v)\n        except Exception:\n            return default\n    return
-          default\n\n\ndef _dumps(v):\n    return json.dumps(v, ensure_ascii=False, separators=(',',
-          ':'))\n\n\ndef _compact_text(v, limit):\n    s = v if isinstance(v, str) else
-          _dumps(v)\n    s = re.sub(r'\\n{3,}', '\\n\\n', str(s or '').strip())\n    return
-          s if len(s) <= limit else s[:limit].rstrip() + '\\n...[truncated]'\n\n\ndef
-          _bool(v):\n    if isinstance(v, bool):\n        return v\n    if isinstance(v,
-          str):\n        x = v.strip().lower()\n        if x in {'true', '1', 'yes', 'y'}:\n
-          \           return True\n        if x in {'false', '0', 'no', 'n'}:\n            return
-          False\n    return bool(v)\n\n\ndef _normalize_old_plan(raw):\n    plan = _loads(raw,
-          {})\n    if not isinstance(plan, dict):\n        plan = {}\n    plan['needs_chart']
-          = _bool(plan.get('needs_chart', False))\n    if not isinstance(plan.get('chart_request'),
-          dict):\n        plan['chart_request'] = {}\n    if not plan.get('answer_mode'):\n
-          \       plan['answer_mode'] = 'data'\n    ep = plan.get('execution_plan')\n
-          \   if not isinstance(ep, dict):\n        ep = {}\n    stages = ep.get('stages')\n
-          \   if isinstance(stages, dict):\n        stages = [stages]\n    elif not isinstance(stages,
-          list):\n        stages = []\n    ep['stages'] = stages\n    plan['execution_plan']
-          = ep\n    return plan\n\n\ndef _schema_alias_map(schema_context):\n    schema_metadata
-          = extract_schema_metadata(schema_context)\n    schema_alias_index = build_alias_index(schema_metadata)\n
-          \   alias_map = {}\n    real_fields = set()\n    for alias, candidates in (schema_alias_index.get('aliases')
-          or {}).items():\n        for item in candidates:\n            if item.get('kind')
-          == 'field':\n                alias_map.setdefault(alias, []).append(item)\n
-          \               real_fields.add(str(item.get('name') or ''))\n    return alias_map,
-          real_fields, schema_metadata, schema_alias_index\n\n\ndef _old_plan_collection(old_plan):\n
-          \   if not isinstance(old_plan, dict):\n        return ''\n    stages = ((old_plan.get('execution_plan')
-          or {}).get('stages') or old_plan.get('stages') or [])\n    stage0 = stages[0]
-          if isinstance(stages, list) and stages and isinstance(stages[0], dict) else
-          {}\n    return str(old_plan.get('primary_collection') or stage0.get('primary_collection')
-          or stage0.get('collection') or '').strip()\n\n\ndef _collect_plan_fields(obj,
-          out):\n    if isinstance(obj, dict):\n        for k, v in obj.items():\n            lk
-          = str(k).lower()\n            if isinstance(v, str) and any(x in lk for x in
-          ('field', 'group', 'metric', 'x_', 'y_', 'sort')):\n                out.add(v)\n
-          \           elif isinstance(v, list) and any(x in lk for x in ('field', 'group',
-          'metric', 'sort')):\n                for item in v:\n                    if
-          isinstance(item, str):\n                        out.add(item)\n            _collect_plan_fields(v,
-          out)\n    elif isinstance(obj, list):\n        for item in obj:\n            _collect_plan_fields(item,
-          out)\n\n\ndef _normalize_field_value(value, alias_map, real_fields, old_plan_fields,
-          warnings, schema_metadata=None, collection_name='', metric=False):\n    if not
-          isinstance(value, str):\n        return value\n    raw = value.strip()\n    if
-          metric:\n        resolved = resolve_metric_name(raw, schema_metadata or {'collections':
-          {}}, collection_name)\n    else:\n        resolved = resolve_field_name(raw,
-          schema_metadata or {'collections': {}}, collection_name, old_plan_fields)\n
-          \   warning = str(resolved.get('warning') or '').strip()\n    if warning:\n
-          \       warnings.append(warning + ': ' + raw)\n    return resolved.get('resolved')
-          or raw\n\n\ndef _normalize_refinement(obj, alias_map, real_fields, old_plan_fields,
-          warnings, schema_metadata=None, collection_name=\"\"):\n    if isinstance(obj,
-          dict):\n        out = {}\n        for k, v in obj.items():\n            lk =
-          str(k).lower()\n            if isinstance(v, str) and any(x in lk for x in ('field',
-          'group', 'x_', 'y_', 'metric')):\n                out[k] = _normalize_field_value(v,
-          alias_map, real_fields, old_plan_fields, warnings, schema_metadata, collection_name,
-          metric=('metric' in lk or 'y_' in lk))\n            elif isinstance(v, list)
-          and any(x in lk for x in ('field', 'group', 'sort')):\n                out[k]
-          = [_normalize_field_value(x, alias_map, real_fields, old_plan_fields, warnings,
-          schema_metadata, collection_name, metric=('metric' in lk)) for x in v]\n            else:\n
-          \               out[k] = _normalize_refinement(v, alias_map, real_fields, old_plan_fields,
-          warnings, schema_metadata, collection_name)\n        return out\n    if isinstance(obj,
-          list):\n        return [_normalize_refinement(x, alias_map, real_fields, old_plan_fields,
-          warnings, schema_metadata, collection_name) for x in obj]\n    return obj\n\n\ndef
-          _summarize_turn_intent(raw):\n    obj = _loads(raw, {})\n    if not isinstance(obj,
-          dict):\n        return _compact_text(raw, 1200)\n    keys = ['turn_intent',
-          'need_requery', 'need_rechart', 'query_refinement', 'chart_modification', 'reason',
-          'analysis_focus']\n    return _dumps({k: obj.get(k) for k in keys if k in obj})\n\n\ndef
-          _summarize_refine_planning(raw):\n    obj = _loads(raw, {})\n    if not isinstance(obj,
-          dict):\n        return _compact_text(raw, 1200)\n    keys = ['primary_collection_hint',
-          'collection_hints', 'field_hints', 'business_terms', 'old_plan_fields', 'possible_new_concepts',
-          'retrieval_tasks', 'planning_reason']\n    slim = {k: obj.get(k) for k in keys
-          if k in obj}\n    if isinstance(slim.get('planning_reason'), str):\n        slim['planning_reason']
-          = _compact_text(slim['planning_reason'], 500)\n    return _compact_text(_dumps(slim),
-          1800)\n\n\ndef _preview_result(raw):\n    obj = _loads(raw, None)\n    if obj
-          is None:\n        return _compact_text(raw, 1500)\n    rows = None\n    if isinstance(obj,
-          list):\n        rows = obj\n    elif isinstance(obj, dict):\n        for key
-          in ('rows', 'data', 'result', 'records', 'preview'):\n            if isinstance(obj.get(key),
-          list):\n                rows = obj.get(key)\n                break\n    if rows
-          is not None:\n        fields = []\n        if rows and isinstance(rows[0], dict):\n
-          \           fields = list(rows[0].keys())\n        return _dumps({'fields':
-          fields, 'preview_rows': rows[:MAX_RESULT_PREVIEW_ROWS]})\n    return _compact_text(_dumps(obj),
-          1500)\n\n\ndef main(question: str, old_normalized_semantic_plan_json: str, query_refinement_json:
-          str, patch_reason: str, changed_fields_json: str, refine_planning_json: str,
-          refine_schema_context: str, refine_schema_warning: str, last_chart_request_json:
-          str, last_query_result_json: str, normalized_turn_intent_json: str, collection_selection_json:
-          str='', compact_context_json: str='', schema_context_ref_json: str='', replan_input_valid=True,
-          replan_input_error: str='', **kwargs):\n    schema_warning_parts = [str(refine_schema_warning
-          or '').strip()] if str(refine_schema_warning or '').strip() else []\n    schema_context
-          = _compact_text(refine_schema_context, MAX_SCHEMA_CONTEXT_CHARS)\n    schema_truncated
-          = len(str(refine_schema_context or '')) > len(schema_context)\n    if schema_truncated:\n
-          \       schema_warning_parts.append('schema_context 超过长度阈值，已截断。')\n\n    alias_map,
-          real_fields, schema_metadata, schema_alias_index = _schema_alias_map(schema_context)\n
-          \   norm_warnings = []\n    old_plan = _normalize_old_plan(old_normalized_semantic_plan_json)\n
-          \   old_plan_fields = set()\n    _collect_plan_fields(old_plan, old_plan_fields)\n
-          \   qref_obj = _loads(query_refinement_json, {})\n    if not isinstance(qref_obj,
-          dict):\n        qref_obj = {}\n    collection_name = _old_plan_collection(old_plan)\n
-          \   normalized_qref = _normalize_refinement(qref_obj, alias_map, real_fields,
-          old_plan_fields, norm_warnings, schema_metadata, collection_name)\n    schema_warning_parts.extend(norm_warnings)\n\n
-          \   system = '你是 Phase 7 的 LLM_Refine查询规划 full replan 语义计划重规划器。只输出完整 semantic_plan_contract
-          JSON 对象；不得输出 markdown、解释文字、代码块、Mongo pipeline、MQL、MGQL pipeline、AST 或 patch
-          diff。必须基于 current question + compact_context_json + patch_result + query_refinement_json
-          + collection_selection_json + fresh schema_context 重新生成完整新计划。'\n    hard_rules
-          = '\\n'.join([\n        '1. 输出必须是完整 semantic_plan_contract，顶层 contract_version=semantic_plan_contract，stages
-          非空；不得输出 patch diff。',\n        '2. primary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections
-          只能填写本次查询实际需要读取、过滤、分组、投影、排序、merge/enrich 的集合；selected_related_collections 是可选候选，不是强制使用；如果
-          primary_collection 已经覆盖用户问题所需字段/指标/维度，则 related_collections 必须为空；final_merge.merge_mode=none
-          且所有 stage 都在 primary_collection 时，related_collections 应为空；related_collections
-          必须来自 selected_related_collections 或 schema relations。',\n        '3. 只能使用 schema_context/schema_metadata
-          中存在的 canonical collection、field、metric、relation、query_rules；别名必须经 schema_alias_index/schema
-          aliases 解析。',\n        '4. 如果用户词无法映射到 schema 字段/指标/value_alias，不要编造字段；设置 requires_clarification=true
-          或 needs_schema_retrieval=true。',\n        '5. compact_context_json 只能作为上一轮摘要，不能覆盖当前用户明确意图；用户否定旧字段时不能继承该字段。',\n
-          \       '6. 如果用户要求改变 group_fields，必须输出新的 group_fields，不能保留旧 group_fields。',\n
-          \       '7. 如果用户说“不再按 X”，旧 plan 中对应 X 的字段必须删除；如果用户说“改按 Y/按 Y 统计”，group_fields
-          必须替换为 Y 的 schema canonical field。',\n        '8. 如果用户改变 metric，必须替换 metric_function
-          / metric_field / metric_alias，并同步 chart_request.y_field。',\n        '9. 如果用户新增
-          filter，必须输出 filters；如果用户改变时间范围，必须更新时间范围。',\n        '10. 如果当前用户问题包含图表需求，needs_chart=true
-          且 chart_request.enabled=true，chart_request.x_field/y_field 必须与新 group_fields/metric_alias
-          对齐。',\n        '11. 不输出 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字或代码块。',
-        '12. intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related；不得使用 aggregate_group_by / aggregate / aggregation / group_by / group_by_metric / group_by_dimension / group_by_metric_with_time_filter / group_by_dimension_with_time_range_and_aggregation 这类泛化或别名值；按维度分组统计、按字段分组统计、group by 聚合统计统一使用 aggregate_summary，明细查询使用 detail_query；不要输出 aggregate_group_by 这类非 canonical intent_type。'
-          \n    ])\n    parts = [\n        '当前用户问题：\\n' + str(question or ''),\n        'normalized
-          old_plan（仅作上一轮摘要；当前用户否定/修改的字段不得继承）：\\n' + _dumps(old_plan),\n        'normalized
-          query_refinement_json（仅使用 schema_context 显式 aliases 或 old_plan 既有字段归一）：\\n'
-          + _dumps(normalized_qref),\n        'normalized_turn_intent_json 关键字段：\\n' +
-          _summarize_turn_intent(normalized_turn_intent_json),\n        'patch_result_json（Phase
-          6 deterministic patch route 结果/失败原因，仅作输入，不由 LLM 负责 patch）：\\n' + _dumps({'patch_reason':
-          patch_reason, 'changed_fields_json': changed_fields_json}),\n        'collection_selection_json（primary_collection/related_collections
-          的唯一来源）：\\n' + _compact_text(collection_selection_json, 1400),\n        'compact_context_json（弱上下文，不覆盖当前用户明确意图）：\\n'
-          + _compact_text(compact_context_json, 1800),\n        'LLM_Refine查询规划的检索意图摘要：\\n'
-          + _summarize_refine_planning(refine_planning_json),\n        '上一轮 chart_request
-          简短信息：\\n' + _compact_text(last_chart_request_json, 800),\n        '上一轮查询结果字段/最多5行预览：\\n'
-          + _preview_result(last_query_result_json),\n        'schema_metadata_contract
-          裁剪摘要（字段/指标/relation/query_rules 必须以 canonical name 为准）：\\n' + _compact_text(json.dumps(schema_metadata,
-          ensure_ascii=False), 3000),\n        'schema_alias_index_contract 裁剪摘要（字段/指标/value_alias
-          必须解析为 canonical name/value）：\\n' + _compact_text(json.dumps(schema_alias_index,
-          ensure_ascii=False), 2500),\n        '压缩后的 schema_context_for_replan：\\n' +
-          schema_context,\n        'schema warning：\\n' + '; '.join(x for x in schema_warning_parts
-          if x),\n        '硬性保留规则：\\n' + hard_rules,\n        '输出 schema 要求：\\n' + _dumps(SEMANTIC_SCHEMA),\n
-          \   ]\n    user = '\\n\\n'.join(parts)\n    valid = str(replan_input_valid).lower()
-          not in {'false', '0', 'no'} and bool(old_plan.get('execution_plan'))\n    if
-          not valid:\n        user += '\\n\\n注意：replan_input_valid=false，错误：' + str(replan_input_error
-          or '') + '。请输出结构化错误，不要编造计划。'\n\n    prompt_truncated = False\n    replan_prompt
-          = system + '\\n\\n' + user\n    if len(replan_prompt) > MAX_REPLAN_PROMPT_CHARS:\n
-          \       prompt_truncated = True\n        overflow = len(replan_prompt) - MAX_REPLAN_PROMPT_CHARS\n
-          \       keep_schema = max(1200, len(schema_context) - overflow - 200)\n        schema_context
-          = _compact_text(schema_context, keep_schema)\n        for idx, part in enumerate(parts):\n
-          \           if part.startswith('压缩后的 schema_context_for_replan：'):\n                parts[idx]
-          = '压缩后的 schema_context_for_replan：\\n' + schema_context\n            if part.startswith('schema
-          warning：'):\n                parts[idx] = 'schema warning：\\n' + '; '.join(x
-          for x in schema_warning_parts if x)\n        schema_warning_parts.append('replan_prompt
-          超过长度阈值，已二次压缩 schema_context。')\n        user = '\\n\\n'.join(parts)\n        replan_prompt
-          = system + '\\n\\n' + user\n        if len(replan_prompt) > MAX_REPLAN_PROMPT_CHARS:\n
-          \           replan_prompt = replan_prompt[:MAX_REPLAN_PROMPT_CHARS].rstrip()
-          + '\\n...[replan_prompt truncated]'\n            user = replan_prompt[len(system)
-          + 2:]\n            schema_warning_parts.append('replan_prompt 仍超长，已最终截断。')\n\n
-          \   debug = {\n        'schema_dedup_count': 0,\n        'schema_compressed':
-          True,\n        'field_alias_map': alias_map,\n        'schema_metadata_used':
-          bool(schema_metadata.get('collections')),\n        'schema_metadata_json': json.dumps(schema_metadata,
-          ensure_ascii=False),\n        'schema_alias_index_json': json.dumps(schema_alias_index,
-          ensure_ascii=False),\n        'normalized_query_refinement_json': _dumps(normalized_qref),\n
-          \       'old_plan_normalized': True,\n        'prompt_chars': len(replan_prompt),\n
-          \       'schema_context_chars': len(schema_context),\n        'prompt_truncated':
-          prompt_truncated,\n        'schema_warning': '; '.join(x for x in schema_warning_parts
-          if x),\n    }\n    return {\n        'replan_system_prompt': system,\n        'replan_user_prompt':
-          user,\n        'replan_prompt': replan_prompt,\n        'old_normalized_semantic_plan_json':
-          _dumps(old_plan),\n        'query_refinement_json': _dumps(normalized_qref),\n
-          \       'patch_reason': patch_reason,\n        'changed_fields_json': changed_fields_json,\n
-          \       'schema_context_for_replan': schema_context,\n        'replan_json_schema':
-          json.dumps(SEMANTIC_SCHEMA, ensure_ascii=False),\n        'replan_input_valid':
-          valid,\n        'replan_input_error': str(replan_input_error or ''),\n        'replan_prompt_debug_json':
-          json.dumps(debug, ensure_ascii=False),\n        'schema_metadata_json': json.dumps(schema_metadata,
-          ensure_ascii=False),\n        'schema_alias_index_json': json.dumps(schema_alias_index,
-          ensure_ascii=False),\n        'schema_warning': '; '.join(x for x in schema_warning_parts
-          if x),\n        'schema_context_ref_json': schema_context_ref_json\n    }"
-        code_language: python3
-        desc: 合并 refine schema 上下文并生成单一 replan prompt，供 LLM 节点引用。
-        outputs:
-          replan_system_prompt:
-            children:
-            type: string
-          replan_user_prompt:
-            children:
-            type: string
-          replan_prompt:
-            children:
-            type: string
-          old_normalized_semantic_plan_json:
-            children:
-            type: string
-          query_refinement_json:
-            children:
-            type: string
-          schema_context_for_replan:
-            children:
-            type: string
-          replan_json_schema:
-            children:
-            type: string
-          replan_input_valid:
             children:
             type: boolean
           replan_input_error:
@@ -527,11 +111,11 @@
       height: 80
       id: '1776000000027'
       position:
-        x: 8100
-        y: 520
+        x: 5520
+        "y": 2200
       positionAbsolute:
-        x: 8100
-        y: 520
+        x: 5520
+        "y": 2200
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -787,11 +371,11 @@
       height: 80
       id: '1776000000028'
       position:
-        x: 9020
-        y: 520
+        x: 6240
+        "y": 2200
       positionAbsolute:
-        x: 9020
-        y: 520
+        x: 6240
+        "y": 2200
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -898,3 +482,419 @@
                           'confidence': 0.85,
                           'requires_clarification': False,
                           'clarification_question': '',
+                          'needs_schema_retrieval': True,
+                          'needs_schema_hydration': True,
+                          'schema_hydration_collections': [base],
+                          'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog',
+                          'warnings': ['inherited_primary_collection_missing_from_candidate_catalog'],
+                      })
+                      return {
+                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                          'selected_primary_collection': base,
+                          'selected_related_collections': [],
+                          'selection_confidence': float(selection.get('confidence') or 0),
+                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                          'schema_hydration_collections': selection.get('schema_hydration_collections') or ([base] if base else []),
+                          'requires_clarification': False,
+                          'clarification_question': '',
+                      }
+                  selection.update({
+                      'confidence': 0,
+                      'low_confidence': True,
+                      'requires_clarification': True,
+                      'clarification_question': '缺少 collection catalog 或 schema metadata，无法确定要查询的业务集合。',
+                      'warnings': ['collection catalog unavailable'],
+                  })
+                  return {
+                      'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                      'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                      'selected_primary_collection': '',
+                      'selected_related_collections': [],
+                      'selection_confidence': 0,
+                      'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                      'requires_clarification': True,
+                      'clarification_question': selection.get('clarification_question') or '',
+                  }
+              planner = _loads(planner)
+              intent = str(turn.get('turn_intent') or '').strip()
+              schema_ref = ctx.get('schema_context_ref') if isinstance(ctx.get('schema_context_ref'), dict) else {}
+              last_primary = str(ctx.get('last_primary_collection') or '').strip()
+              last_related = _list(ctx.get('last_related_collections'))
+              schema_ref_collections = _list(schema_ref.get('collections'))
+              context_prior_collections = _uniq([last_primary] + last_related + schema_ref_collections, 12)
+              warnings, candidates = [], []
+              catalog_names = [str(c.get('collection_name') or '').strip() for c in catalog.get('collections') or []]
+              if inherit:
+                  if base in catalog_names:
+                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'selection_reason': 'inherited_from_previous_primary_collection'})
+                      selection['primary_candidates'] = [{'collection': base, 'score': 0.85, 'reason': 'inherited_from_previous_primary_collection', 'matched_aliases': []}]
+                      selection['warnings'] = warnings
+                      return {
+                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                          'selected_primary_collection': base,
+                          'selected_related_collections': [],
+                          'selection_confidence': float(selection.get('confidence') or 0),
+                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                          'requires_clarification': False,
+                          'clarification_question': '',
+                      }
+                  else:
+                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog'})
+                      warnings.append('inherited_primary_collection_missing_from_candidate_catalog')
+                      selection['schema_hydration_collections'] = [base]
+                      selection['warnings'] = warnings
+                      return {
+                          'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                          'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                          'selected_primary_collection': base,
+                          'selected_related_collections': [],
+                          'selection_confidence': float(selection.get('confidence') or 0),
+                          'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                          'requires_clarification': False,
+                          'clarification_question': '',
+                      }
+              for coll in catalog.get('collections') or []:
+                  cname = str(coll.get('collection_name') or '').strip()
+                  if not cname:
+                      continue
+                  score, matched, reasons = 0.0, [], []
+                  for term in _uniq(_list(coll.get('aliases')) + [coll.get('collection_label'), cname], 48):
+                      if term and term in q:
+                          score += 0.55; matched.append(term)
+                  for term in _uniq(_list(coll.get('primary_metrics')), 48):
+                      if term and term in q:
+                          score += 0.22; matched.append(term)
+                  for term in _uniq(_list(coll.get('primary_dimensions')), 64):
+                      if term and term in q:
+                          score += 0.14; matched.append(term)
+                  if intent in _list(coll.get('supported_intents')):
+                      score += 0.05
+                  if intent in ['refine_query', 'fix_result', 'continue_previous']:
+                      if last_primary and cname == last_primary:
+                          score += 0.35 if not matched else 0.12
+                          reasons.append('使用 compact_context.last_primary_collection prior')
+                      elif cname in context_prior_collections:
+                          score += 0.18 if not matched else 0.08
+                          reasons.append('使用 compact_context.schema_context_ref.collections prior')
+                  score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
+                  if matched:
+                      reasons.append('命中 ' + '、'.join(_uniq(matched, 8)))
+                  candidates.append({'collection': cname, 'score': round(min(score, 1.0), 4), 'reason': '；'.join(reasons), 'matched_aliases': _uniq(matched, 12)})
+              candidates.sort(key=lambda x: (-x['score'], x['collection']))
+              selection['primary_candidates'] = [x for x in candidates if x['score'] > 0][:3]
+              top = selection['primary_candidates'][0] if selection['primary_candidates'] else None
+              second = selection['primary_candidates'][1] if len(selection['primary_candidates']) > 1 else None
+              if top and top['score'] >= 0.5:
+                  selection['selected_primary_collection'] = top['collection']
+                  selection['confidence'] = top['score']
+              elif top:
+                  selection['confidence'] = top['score']
+                  selection['low_confidence'] = True
+                  selection['requires_clarification'] = True
+                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
+                  warnings.append('collection selector low confidence')
+              else:
+                  selection['low_confidence'] = True
+                  selection['requires_clarification'] = True
+                  selection['clarification_question'] = '请明确要查询的业务对象或 collection。'
+                  warnings.append('没有命中 collection catalog 候选')
+              if top and second and top['score'] - second['score'] < 0.12:
+                  warnings.append('primary collection 候选分数接近，存在歧义')
+              cmap = {c.get('collection_name'): c for c in catalog.get('collections') or []}
+              selected = selection['selected_primary_collection']
+              related = []
+              if selected:
+                  primary_coll = cmap.get(selected, {})
+                  primary_terms = _uniq(_list(primary_coll.get('aliases')) + [primary_coll.get('collection_label'), selected] + _list(primary_coll.get('primary_metrics')) + _list(primary_coll.get('primary_dimensions')), 120)
+                  primary_matched = set(_term_matches(q, primary_terms))
+                  for rname in primary_coll.get('related_collections') or []:
+                      rc = cmap.get(rname) or {}
+                      explicit = _explicit_collection_matches(q, dict(rc, collection_name=rname))
+                      coverage = _coverage_matches(q, rc)
+                      matched = _uniq(explicit + coverage, 12)
+                      in_refine_context = intent in ['refine_query', 'fix_result', 'continue_previous'] and rname in context_prior_collections
+                      if not matched and not in_refine_context:
+                          continue
+                      necessary, reason = False, ''
+                      if explicit:
+                          necessary = True; reason = '用户问题明确命中 related collection name/label/alias：' + '、'.join(explicit[:6])
+                      elif _has_cross_collection_intent(q) and matched:
+                          necessary = True; reason = '用户问题包含跨集合意图词且命中 related 字段/指标/维度：' + '、'.join(matched[:6])
+                      elif coverage and not all(t in primary_matched for t in coverage):
+                          necessary = True; reason = 'related collection 覆盖 primary 未覆盖的字段/指标/维度：' + '、'.join([t for t in coverage if t not in primary_matched][:6])
+                      elif in_refine_context and not _negates_related(q, rname):
+                          necessary = True; reason = 'refine/continue compact context 已包含该 related collection 且当前问题未否定'
+                      elif matched:
+                          reason = 'related collection also matched terms, but primary collection already covers them; not selected'
+                      else:
+                          reason = 'low confidence related candidate; not selected'
+                      selection['related_candidates'].append({'collection': rname, 'score': 0.72 if necessary else 0.36, 'reason': reason, 'matched_aliases': matched[:8]})
+                      if necessary:
+                          related.append(rname)
+              selection['selected_related_collections'] = related[:3]
+              if not selection['selected_primary_collection']:
+                  legacy = str(planner.get('primary_collection') or '').strip()
+                  if legacy and legacy != 'unknown':
+                      selection['primary_candidates'].append({'collection': legacy, 'score': 0.45, 'reason': '兼容 fallback：旧 planner primary_collection', 'matched_aliases': []})
+                      warnings.append('selector 未高置信命中，保留旧 planner collection 候选')
+              selection['warnings'] = warnings
+              return {
+                  'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                  'collection_selection_json': json.dumps(selection, ensure_ascii=False),
+                  'selected_primary_collection': selection['selected_primary_collection'],
+                  'selected_related_collections': selection['selected_related_collections'],
+                  'selection_confidence': float(selection.get('confidence') or 0),
+                  'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
+                  'requires_clarification': bool(selection.get('requires_clarification')),
+                  'clarification_question': selection.get('clarification_question') or '',
+              }
+        code_language: python3
+        desc: 基于 refine CandidateSchemas 派生 catalog 选择候选 collection；当前 refine 明确改变字段/指标/collection
+          时以当前问题为准。
+        outputs:
+          collection_catalog_json:
+            children:
+            type: string
+          collection_selection_json:
+            children:
+            type: string
+          selected_primary_collection:
+            children:
+            type: string
+          selected_related_collections:
+            children:
+            type: array[string]
+          selection_confidence:
+            children:
+            type: number
+          selector_warnings_json:
+            children:
+            type: string
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_CollectionCatalog候选选择_Refine
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: turn_intent_json
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1776000000026'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+        - value_selector:
+          - '1776000000026'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1776000000004'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1776000000025'
+          - context_binding_json
+          value_type: string
+          variable: context_binding_json
+      height: 80
+      id: '1777000000002'
+      position:
+        x: 4080
+        "y": 2200
+      positionAbsolute:
+        x: 4080
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: has_primary
+          conditions:
+          - comparison_operator: not empty
+            id: collection-selection-primary-not-empty
+            value: ''
+            varType: string
+            variable_selector:
+            - '1777000000002'
+            - selected_primary_collection
+          - comparison_operator: is
+            id: collection-selection-not-clarification
+            value: 'false'
+            varType: boolean
+            variable_selector:
+            - '1777000000002'
+            - requires_clarification
+          id: has_primary
+          logical_operator: and
+        desc: refine selector 必须选出 primary collection 且不需要澄清；否则 safe stop。
+        selected: false
+        title: 条件分支_CollectionSelection结果判断_Refine
+        type: if-else
+      height: 148
+      id: '1777100000101'
+      position:
+        x: 4440
+        "y": 2200
+      positionAbsolute:
+        x: 4440
+        "y": 2200
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+
+
+          def _loads(value, default):
+              if isinstance(value, (dict, list)):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return default
+              return default
+
+
+          def _list(value):
+              if isinstance(value, list):
+                  return [str(x).strip() for x in value if str(x).strip()]
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      if isinstance(parsed, list):
+                          return [str(x).strip() for x in parsed if str(x).strip()]
+                  except Exception:
+                      pass
+                  return [value.strip()]
+              return []
+
+
+          def _digest(obj, key):
+              tmp = json.loads(json.dumps(obj or {}, ensure_ascii=False))
+              if isinstance(tmp, dict):
+                  tmp.pop(key, None)
+              return hashlib.sha256(json.dumps(tmp, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+          def _filter_alias(alias, keep):
+              if not isinstance(alias, dict):
+                  return {}
+              result = {}
+              for k, v in alias.items():
+                  if k in {'aliases', 'collection_aliases', 'field_aliases', 'metric_aliases', 'value_aliases'} and isinstance(v, dict):
+                      kept = {}
+                      for a, entries in v.items():
+                          filtered = [e for e in (entries or []) if isinstance(e, dict) and str(e.get('collection') or '').strip() in keep]
+                          if filtered:
+                              kept[a] = filtered
+                      result[k] = kept
+                  elif k in {'fields', 'metrics'} and isinstance(v, dict):
+                      result[k] = {c: m for c, m in v.items() if c in keep}
+                  elif k == 'collections' and isinstance(v, dict):
+                      result[k] = {a: c for a, c in v.items() if c in keep}
+                  else:
+                      result[k] = v
+              return result
+
+
+          def _schema_context(meta):
+              sections = []
+              for cname, coll in (meta.get('collections') or {}).items():
+                  sections.append('## collection=' + cname + '\n```json\n' + json.dumps(coll, ensure_ascii=False, indent=2) + '\n```')
+              return '\n\n'.join(sections)
+
+
+          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}'):
+              warnings = []
+              meta = _loads(schema_metadata_json, {}) or {}
+              alias = _loads(schema_alias_index_json, {}) or {}
+              ref = _loads(schema_context_ref_json, {}) or {}
+              collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
+              primary = str(selected_primary_collection or '').strip()
+              if not primary:
+                  warnings.append('selected primary collection is empty')
+              if primary and primary not in collections:
+                  warnings.append('selected primary collection not found in candidate schemas')
+              if warnings:
+                  empty_meta = {'metadata_type': 'schema_metadata_contract', 'contract_version': 'schema_metadata_contract', 'schema_version': str(meta.get('schema_version') or ''), 'schema_digest': '', 'collections': {}, 'warnings': warnings, 'parse_errors': []}
+                  hydration_needed = bool(primary and primary not in collections)
+                  hydration_collections = [primary] if hydration_needed else []
+                  hydration_reason = 'selected_primary_collection_missing_from_candidate_schemas' if hydration_needed else ''
+                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              keep = []
+              for name in [primary] + _list(selected_related_collections):
+                  if name in collections and name not in keep:
+                      keep.append(name)
+                  elif name and name not in collections:
+                      warnings.append('selected related collection not found in candidate schemas: ' + name)
+              selected = dict(meta)
+              selected['collections'] = {name: collections[name] for name in keep}
+              selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
+              selected_alias = _filter_alias(alias, set(keep))
+              selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
+              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'schema_hydration_needed': False, 'schema_hydration_reason': '', 'schema_hydration_collections': [], 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+        code_language: python3
+        desc: 按 refine selector 结果裁剪 CandidateSchemas，只保留 selected primary 与必要 related
+          collections。
+        outputs:
+          schema_context:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          selected_schema_ready:
+            children:
+            type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections:
+            children:
+            type: array[string]
+          selected_schema_warnings_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_裁剪SelectedSchema上下文_Refine
+        type: code
+        variables:
+        - value_selector:

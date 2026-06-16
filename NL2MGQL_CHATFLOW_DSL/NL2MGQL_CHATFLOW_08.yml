@@ -1,204 +1,3 @@
-                  - filters
-                  - group_fields
-                  - metric_function
-                  - metric_field
-                  - metric_alias
-                  - sort
-                  - limit
-                  - projection_fields
-                  properties:
-                    stage_name:
-                      type: string
-                    stage_type:
-                      type: string
-                    collection:
-                      type: string
-                    intent_type:
-                      type: string
-                    time_range:
-                      type: object
-                    filters:
-                      type: array[object]
-                    group_fields:
-                      type: array[string]
-                    metric_function:
-                      type: string
-                    metric_field:
-                      type: string
-                    metric_alias:
-                      type: string
-                    sort:
-                      type: array[object]
-                    limit:
-                      type: integer
-                    projection_fields:
-                      type: array[string]
-              final_merge:
-                type: object
-              chart_request:
-                type: object
-              requires_clarification:
-                type: boolean
-              clarification_question:
-                type: string
-              needs_schema_retrieval:
-                type: boolean
-              warnings:
-                type: array[string]
-        structured_output_enabled: true
-        title: LLM_本地兜底生成语义计划
-        type: llm
-        vision:
-          enabled: false
-      height: 132
-      id: '1775000000018'
-      position:
-        x: 9020
-        y: -320
-      positionAbsolute:
-        x: 9020
-        y: -320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-
-
-          def main(text: str):
-              raw = str(text or '').strip()
-              if not raw:
-                  raise ValueError('本地LLM返�为空')
-              body = {
-                  'choices': [
-                      {
-                          'message': {
-                              'content': raw,
-                          }
-                      }
-                  ]
-              }
-              return {
-                  'status_code': 200,
-                  'body': json.dumps(body, ensure_ascii=False),
-              }
-        code_language: python3
-        desc: 将本地LLM语义计划输出包装成与满血LLM一致的解析输入
-        outputs:
-          body:
-            children:
-            type: string
-          status_code:
-            children:
-            type: number
-        selected: false
-        title: 代码执行_包装本地LLM响应
-        type: code
-        variables:
-        - value_selector:
-          - '1775000000018'
-          - text
-          value_type: string
-          variable: text
-      height: 96
-      id: '1775000000019'
-      position:
-        x: 9480
-        y: -320
-      positionAbsolute:
-        x: 9480
-        y: -320
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |
-          import json
-          from datetime import datetime, timezone
-          import re
-
-          # schema metadata C contract helpers
-          import copy
-          import hashlib
-          import json
-          import re
-
-
-          CONTRACT_VERSION = 'schema_metadata_contract'
-          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
-          NON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors', 'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}
-
-
-          def default_query_rules():
-              return {
-                  'require_time_range_for_aggregate': True,
-                  'max_limit': 100,
-                  'allowed_operations': ['find', 'aggregate'],
-                  'aggregate_required_when': [],
-                  'find_allowed_when': [],
-                  'sensitive_field_policy': 'deny_return_group_sort',
-                  'default_limit': 100,
-                  'max_time_range_days': 366,
-              }
-
-
-          def _strip_quotes(v):
-              v = str(v or '').strip()
-              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
-                  return v[1:-1]
-              return v
-
-
-          def _split_inline_list(body):
-              # Simple comma split that keeps quoted Chinese/ASCII aliases intact for the schema docs used here.
-              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
-
-
-          def _parse_scalar(v):
-              v = str(v or '').strip()
-              if not v:
-                  return ''
-              if v in {'|', '>', '|-', '>-'}:
-                  return ''
-              if v in {'true', 'True'}:
-                  return True
-              if v in {'false', 'False'}:
-                  return False
-              if v in {'null', 'Null', 'NULL', '~'}:
-                  return None
-              if v.startswith('[') and v.endswith(']'):
-                  return _split_inline_list(v[1:-1].strip())
-              if v.startswith('{') and v.endswith('}'):
-                  try:
-                      return json.loads(v)
-                  except Exception:
-                      return _strip_quotes(v)
-              if re.match(r'^-?\d+$', v):
-                  try:
-                      return int(v)
-                  except Exception:
-                      pass
-              if re.match(r'^-?\d+\.\d+$', v):
-                  try:
-                      return float(v)
-                  except Exception:
-                      pass
-              return _strip_quotes(v)
-
-
-          def _parse_simple_yaml(text):
-              root = {}
-              stack = [(-1, root)]
-              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
-              i = 0
-              while i < len(lines):
-                  raw = lines[i]
-                  if not raw.strip() or raw.lstrip().startswith('#'):
                       i += 1
                       continue
                   indent = len(raw) - len(raw.lstrip(' '))
@@ -898,3 +697,204 @@
                   return chart_x
               if rows:
                   for key in row_keys:
+                      if not isinstance(rows[0].get(key), (int, float)) or isinstance(rows[0].get(key), bool):
+                          return key
+              return row_keys[0] if row_keys else ''
+
+
+          def _pick_metric_field(rows, group_field, normalized_plan=None):
+              normalized_plan = normalized_plan or {}
+              row_keys = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+              row_key_set = set(row_keys)
+              for stage in _execution_stages(normalized_plan):
+                  metric_alias = str((stage or {}).get('metric_alias') or '').strip() if isinstance(stage, dict) else ''
+                  if metric_alias and (not row_keys or metric_alias in row_key_set):
+                      return metric_alias
+              ast_metric = _field_from_ast_metric(_validated_ast(normalized_plan))
+              if ast_metric and (not row_keys or ast_metric in row_key_set):
+                  return ast_metric
+              chart_y = str(_chart_request(normalized_plan).get('y_field') or _chart_request(normalized_plan).get('y_axis') or '').strip()
+              if chart_y and (not row_keys or chart_y in row_key_set):
+                  return chart_y
+              if rows:
+                  for key in row_keys:
+                      value = rows[0].get(key)
+                      if key != group_field and isinstance(value, (int, float)) and not isinstance(value, bool):
+                          return key
+              for key in row_keys:
+                  if key != group_field:
+                      return key
+              return ''
+
+
+          def _prettify(field):
+              text = str(field or '').strip()
+              if not text:
+                  return '字段'
+              return text.replace('_', ' ')
+
+
+          def _schema_metadata_from_plan(plan):
+              if not isinstance(plan, dict):
+                  return {'collections': {}, 'warnings': []}
+              meta = plan.get('schema_metadata') or plan.get('schema_metadata_json')
+              if isinstance(meta, str) and meta.strip():
+                  try:
+                      meta = json.loads(meta)
+                  except Exception:
+                      meta = None
+              if isinstance(meta, dict) and isinstance(meta.get('collections'), dict):
+                  return meta
+              schema = plan.get('schema_context')
+              if isinstance(schema, str) and schema.strip():
+                  return extract_schema_metadata(schema)
+              return {'collections': {}, 'warnings': []}
+
+
+          def _collection_from_plan(plan):
+              stages = _execution_stages(plan)
+              stage0 = stages[0] if stages and isinstance(stages[0], dict) else {}
+              return str(plan.get('primary_collection') or stage0.get('primary_collection') or stage0.get('collection') or '').strip() if isinstance(plan, dict) else ''
+
+
+          def _schema_label_map(plan):
+              labels = {}
+              meta = _schema_metadata_from_plan(plan)
+              collection_name = _collection_from_plan(plan)
+              for cname, coll in (meta.get('collections') or {}).items():
+                  if collection_name and cname != collection_name:
+                      continue
+                  for fname, field in (coll.get('fields') or {}).items():
+                      label = str(field.get('label') or '').strip()
+                      if label:
+                          labels[fname] = label
+                  for mname, metric in (coll.get('metrics') or {}).items():
+                      label = str(metric.get('label') or '').strip()
+                      if label:
+                          labels[mname] = label
+              return labels
+
+
+          def _ast_alias_map(plan):
+              aliases = {}
+              ast = _validated_ast(plan)
+              for item in (ast.get('group_by') or []) if isinstance(ast, dict) else []:
+                  if isinstance(item, dict):
+                      field = str(item.get('field') or '').strip()
+                      alias = str(item.get('alias') or '').strip()
+                      if field and alias:
+                          aliases[field] = alias
+              for item in (ast.get('aggregations') or []) if isinstance(ast, dict) else []:
+                  if isinstance(item, dict):
+                      field = str(item.get('field') or item.get('alias') or '').strip()
+                      alias = str(item.get('alias') or '').strip()
+                      if field and alias:
+                          aliases[field] = alias
+              return aliases
+
+
+          def _field_label(field, normalized_plan=None, role=''):
+              field = str(field or '').strip()
+              if not field:
+                  return '字段'
+              meta = _schema_metadata_from_plan(normalized_plan or {})
+              collection_name = _collection_from_plan(normalized_plan or {})
+              if role == 'metric':
+                  metric_label = resolve_metric_label(field, meta, collection_name)
+                  if metric_label and metric_label != _prettify(field):
+                      return metric_label
+              else:
+                  field_label = resolve_field_label(field, meta, collection_name)
+                  if field_label and field_label != _prettify(field):
+                      return field_label
+              labels = _schema_label_map(normalized_plan or {})
+              if field in labels:
+                  return labels[field]
+              aliases = _ast_alias_map(normalized_plan or {})
+              if field in aliases:
+                  return aliases[field]
+              chart = _chart_request(normalized_plan or {})
+              axis_key = 'x_label' if role == 'group' else 'y_label'
+              axis_label = str(chart.get(axis_key) or chart.get(role + '_label') or '').strip()
+              if axis_label:
+                  return axis_label
+              return _prettify(field)
+
+
+          def _fmt(value):
+              if isinstance(value, float):
+                  if value.is_integer():
+                      return str(int(value))
+                  return ('%.2f' % value).rstrip('0').rstrip('.')
+              return str(value)
+
+
+          def _summary(question, rows, normalized_plan=None):
+              row_count = len(rows)
+              group_field = _pick_group_field(rows, normalized_plan)
+              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
+              group_label = _field_label(group_field, normalized_plan, 'group')
+              metric_label = _field_label(metric_field, normalized_plan, 'metric')
+              title = '结果摘要'
+              if not rows:
+                  return title + '：\n- 当前筛选条件下未查询到符合条件的数据记录。'
+
+              bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
+              if group_field and metric_field:
+                  sorted_rows = sorted(rows, key=lambda row: row.get(metric_field) if isinstance(row.get(metric_field), (int, float)) else 0, reverse=True)
+                  top = sorted_rows[0]
+                  top_name = top.get(group_field, '未知')
+                  top_value = top.get(metric_field, '')
+                  bullets.append(f'- 按 {group_label} 分组后，{top_name} 的 {metric_label} 最高，为 {_fmt(top_value)}。')
+                  if row_count > 1:
+                      tail = sorted_rows[-1]
+                      bullets.append(f'- 排名靠后的分组是 {tail.get(group_field, "未知")}，{metric_label} 为 {_fmt(tail.get(metric_field, ""))}。')
+                  preview = '、'.join([f'{row.get(group_field, "未知")}({_fmt(row.get(metric_field, ""))})' for row in sorted_rows[:5]])
+                  if preview:
+                      bullets.append(f'- 主要分组数据：{preview}。')
+              return title + '：\n' + '\n'.join(bullets)
+
+
+          def _analysis(rows, normalized_plan=None, chart_available=False):
+              if not rows:
+                  return '简单分析：\n- 当前筛选条件下没有可用于对比的数据记录，建议放宽时间范围或检查筛选条件。'
+              group_field = _pick_group_field(rows, normalized_plan)
+              metric_field = _pick_metric_field(rows, group_field, normalized_plan)
+              group_label = _field_label(group_field, normalized_plan, 'group')
+              metric_label = _field_label(metric_field, normalized_plan, 'metric')
+              if not group_field or not metric_field:
+                  return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合统计结果查看整体分布。'
+              numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float)) and not isinstance(row.get(metric_field), bool)]
+              if len(numeric) < 2:
+                  return '简单分析：\n- 分组数量较少，暂不适合做明显的横向对比。'
+              sorted_rows = sorted(numeric, key=lambda row: row.get(metric_field), reverse=True)
+              top, second = sorted_rows[0], sorted_rows[1]
+              gap = top.get(metric_field) - second.get(metric_field)
+              prefix = '从图表看' if chart_available else '从统计结果看'
+              return (
+                  '简单分析：\n'
+                  f'- {prefix}，{top.get(group_field, "未知")} 的 {metric_label} 最高，比第二名 '
+                  f'{second.get(group_field, "未知")} 高 {_fmt(gap)}。\n'
+                  f'- 可优先关注排名靠前的分组（{top.get(group_field, "未知")}、{second.get(group_field, "未知")}）以及排名靠后的分组，继续分析不同 {group_label} 的差异情况。'
+              )
+
+
+          def _result_fields_json(rows):
+              seen = []
+              for row in rows[:10]:
+                  for key in row.keys():
+                      if key not in seen:
+                          seen.append(key)
+              return json.dumps(seen, ensure_ascii=False)
+
+
+          def _plan_needs_chart(normalized_plan, semantic_plan, question):
+              viz = normalized_plan.get('visualization') if isinstance(normalized_plan.get('visualization'), dict) else {}
+              chart_request = normalized_plan.get('chart_request') if isinstance(normalized_plan.get('chart_request'), dict) else {}
+              text = str(question or '')
+              asked = any(k in text for k in ['图', '柱状图', '折线图', '饼图', '图表', '做图', '可视化'])
+              return bool(normalized_plan.get('needs_chart') or semantic_plan.get('needs_chart') or viz.get('enabled') or chart_request.get('enabled') or asked)
+
+
+          def _first_stage_for_context(plan):
+              stages = _execution_stages(plan if isinstance(plan, dict) else {})

@@ -1,73 +1,3 @@
-    - data:
-        answer: "{{#1777100000002.answer_payload_markdown#}}"
-        outputs: []
-        selected: false
-        title: Answer_CollectionSelectionSafeStop
-        type: answer
-      height: 180
-      id: '1777100000003'
-      position:
-        x: 5310
-        "y": -300
-      positionAbsolute:
-        x: 5310
-        "y": -300
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        code: |-
-          import base64
-          import json
-          import uuid
-
-          SEMANTIC_PLAN_SYSTEM_PROMPT = '【角色约束】\n你不是聊天助手。你是 schema-driven + collection-selection-aware 的 semantic_plan_contract JSON 生成器。输出会被程序直接 JSON.parse 后交给 Phase 5 semantic_plan_normalizer 归一化。\n\n【唯一输出协议】\n只输出一个 semantic_plan_contract JSON 对象，顶层 contract_version 必须是 "semantic_plan_contract"。不得输出 markdown、解释文字、代码块、schema 原文、debug 大字段、rows、ECharts option，也不得输出 Mongo pipeline / MQL / MGQL pipeline / AST / patch diff。\n\n【必须输出的顶层结构】\n{\n  "contract_version":"semantic_plan_contract",\n  "primary_collection":"",\n  "related_collections":[],\n  "execution_mode":"single_stage",\n  "answer_mode":"data",\n  "needs_chart":false,\n  "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],\n  "final_merge":{"merge_mode":"none"},\n  "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},\n  "requires_clarification":false,\n  "clarification_question":"",\n  "needs_schema_retrieval":false,\n  "warnings":[]\n}\n\n【collection-selection 约束】\nprimary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。collection_selection_json 低置信或缺失时，不要猜 collection，设置 requires_clarification=true 或 needs_schema_retrieval=true。\n\n【schema 约束】\n只能使用 schema_context / schema_metadata 摘要中存在的 collection、field、metric、relation、query_rules。字段别名必须解析成 schema canonical field name；指标别名必须解析成 schema canonical metric name；relation 必须来自 schema relations。不得发明 collection / field / metric / relation。遇到未知字段、未知指标、敏感/PII 字段或 value_alias 不明确时，优先 requires_clarification=true，并在 clarification_question 或 warnings 中说明。\n\n【compact context 约束】\ncompact_context_json 只是弱上下文。当前用户问题和 collection_selection_json 优先级更高。不要从 compact_context_json 继承用户已否定的旧字段。\n\n【refine 约束】\n如果当前问题改变 group_fields，必须输出新的 group_fields，不能保留旧 group_fields；如果用户说“不再按 X”，必须删除旧字段 X；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 canonical field；metric、filter、time_range、chart_request 也必须与当前意图同步更新。输出完整新 semantic_plan_contract，不输出 patch diff。\n\n【图表约束】\n用户要求图表时 needs_chart=true 且 chart_request.enabled=true；chart_request.x_field 必须对齐 group_fields[0] 或时间字段；chart_request.y_field 必须对齐 metric_alias。\n\n【时间约束】\n相对时间使用 time_range.mode="relative_days" 与 relative_days；不要输出 {"$date":"..."}。current_date 仅用于理解相对时间，不要因此输出 Mongo 表达式。\n\n【最终输出再强调】\n只能输出 JSON 对象；禁止 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字、代码块。'
-          SEMANTIC_PLAN_CONTRACT_SCHEMA_JSON = r'''{"type":"object","additionalProperties":true,"required":["contract_version","primary_collection","related_collections","execution_mode","answer_mode","needs_chart","stages","final_merge","chart_request","requires_clarification","clarification_question","needs_schema_retrieval","warnings"],"properties":{"contract_version":{"const":"semantic_plan_contract"},"primary_collection":{"type":"string"},"related_collections":{"type":"array","items":{"type":"string"}},"execution_mode":{"type":"string"},"answer_mode":{"type":"string"},"needs_chart":{"type":"boolean"},"stages":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":true,"required":["stage_name","stage_type","collection","intent_type","time_range","filters","group_fields","metric_function","metric_field","metric_alias","sort","limit","projection_fields"],"properties":{"stage_name":{"type":"string"},"stage_type":{"type":"string"},"collection":{"type":"string"},"intent_type":{"type":"string"},"time_range":{"type":"object"},"filters":{"type":"array","items":{"type":"object"}},"group_fields":{"type":"array","items":{"type":"string"}},"metric_function":{"type":"string"},"metric_field":{"type":"string"},"metric_alias":{"type":"string"},"sort":{"type":"array","items":{"type":"object"}},"limit":{"type":"integer"},"projection_fields":{"type":"array","items":{"type":"string"}}}}},"final_merge":{"type":"object"},"chart_request":{"type":"object"},"requires_clarification":{"type":"boolean"},"clarification_question":{"type":"string"},"needs_schema_retrieval":{"type":"boolean"},"warnings":{"type":"array","items":{"type":"string"}}}}'''
-
-
-          def _to_bool(value):
-              if isinstance(value, bool):
-                  return value
-              text = str(value or "").strip().lower()
-              return text in {"1", "true", "yes", "y", "on"}
-
-
-          def _to_int(value, default):
-              try:
-                  return int(value)
-              except Exception:
-                  return int(default)
-
-
-          def main(
-              arg1: str = '',
-              arg2: str = '',
-              arg3: str = '',
-              schema_context: str = '',
-              collection_selection_json: str = '',
-              question: str = '',
-              schema_metadata_summary_json: str = '',
-              schema_alias_index_summary_json: str = '',
-              schema_context_ref_json: str = '',
-              compact_context_json: str = '',
-              normalized_turn_intent_json: str = '',
-              query_refinement_json: str = '',
-              llm_token_url: str = '',
-              llm_chat_url: str = '',
-              llm_app_id: str = '',
-              llm_static_token: str = '',
-              llm_model: str = '',
-              llm_user: str = '',
-              llm_basic_auth: str = '',
-              llm_timeout_ms=600000,
-              llm_temperature=0,
-              llm_top_p=1,
-              llm_max_completion_tokens=12288,
-              llm_stream='',
-              last_context_json: str = '',
-              turn_intent: str = '',
               current_date: str = '',
               **kwargs
           ):
@@ -338,11 +268,11 @@
       height: 96
       id: '1775000000005'
       position:
-        x: 6720
-        y: -620
+        x: 5710
+        "y": -620
       positionAbsolute:
-        x: 6720
-        y: -620
+        x: 5710
+        "y": -620
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -862,39 +792,109 @@
                   bucket.append(item)
 
 
-          def _iter_named_items(v):
-              """Support both dict[name -> meta] and list[{"name": ..., ...}]."""
-              if isinstance(v, dict):
-                  for name, meta in v.items():
-                      if isinstance(meta, dict):
-                          item = dict(meta)
-                          item.setdefault('name', name)
-                          yield item
-                      else:
-                          yield {'name': str(name), 'value': meta}
-              elif isinstance(v, list):
-                  for item in v:
-                      if isinstance(item, dict):
-                          yield item
+          def build_alias_index(schema_metadata):
+              meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections' in schema_metadata else extract_schema_metadata(schema_metadata)
+              aliases = {}
+              collection_aliases = {}
+              field_aliases = {}
+              metric_aliases = {}
+              value_aliases = {}
+              warnings = []
+              for cname, coll in (meta.get('collections') or {}).items():
+                  _add_alias(collection_aliases, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
+                  _add_alias(collection_aliases, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
+                  _add_alias(aliases, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
+                  _add_alias(aliases, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
+                  for a in coll.get('collection_aliases') or []:
+                      _add_alias(collection_aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                      _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
+                  for fname, f in (coll.get('fields') or {}).items():
+                      for alias, source in [(fname, 'field.name'), (f.get('label'), 'field.label')]:
+                          _add_alias(aliases, alias, cname, 'field', fname, f.get('label'), source)
+                          _add_alias(field_aliases, alias, cname, 'field', fname, f.get('label'), source)
+                      for a in f.get('aliases') or []:
+                          _add_alias(aliases, a, cname, 'field', fname, f.get('label'), 'field.aliases')
+                          _add_alias(field_aliases, a, cname, 'field', fname, f.get('label'), 'field.aliases')
+                      for val_alias, canonical_value in (f.get('value_aliases') or {}).items():
+                          _add_alias(aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                          _add_alias(value_aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                  for mname, m in (coll.get('metrics') or {}).items():
+                      for alias, source in [(mname, 'metric.name'), (m.get('label'), 'metric.label')]:
+                          _add_alias(aliases, alias, cname, 'metric', mname, m.get('label'), source)
+                          _add_alias(metric_aliases, alias, cname, 'metric', mname, m.get('label'), source)
+                      for a in m.get('aliases') or []:
+                          _add_alias(aliases, a, cname, 'metric', mname, m.get('label'), 'metric.aliases')
+                          _add_alias(metric_aliases, a, cname, 'metric', mname, m.get('label'), 'metric.aliases')
+              return {
+                  'contract_version': ALIAS_INDEX_CONTRACT_VERSION,
+                  'aliases': aliases,
+                  'collection_aliases': collection_aliases,
+                  'field_aliases': field_aliases,
+                  'metric_aliases': metric_aliases,
+                  'value_aliases': value_aliases,
+                  'warnings': warnings,
+              }
 
-          def _iter_items(v):
-              if isinstance(v, dict):
-                  for name, meta in v.items():
-                      if isinstance(meta, dict):
-                          item = dict(meta)
-                          item.setdefault('name', name)
-                          yield item
-                      else:
-                          yield {'name': str(name), 'value': meta}
-              elif isinstance(v, list):
-                  for item in v:
-                      if isinstance(item, dict):
-                          yield item
 
-          def _alias_index_has_content(idx):
-              if not isinstance(idx, dict):
-                  return False
-              for k in ('aliases', 'field_aliases', 'metric_aliases', 'collection_aliases'):
-                  v = idx.get(k)
-                  if isinstance(v, dict) and v:
-                      return True
+          def prettify_field_name(field_name):
+              return str(field_name or '').strip().replace('_', ' ')
+
+
+          def _meta_and_index(schema_metadata):
+              meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections' in schema_metadata else extract_schema_metadata(schema_metadata)
+              return meta, build_alias_index(meta)
+
+
+          def _resolve_from_candidates(raw, candidates, cname, kind, unresolved_warning):
+              if cname:
+                  scoped = [x for x in candidates if x.get('collection') == cname]
+                  if len(scoped) == 1:
+                      x = scoped[0]
+                      return {'input': raw, 'resolved': x['name'], 'kind': kind, 'collection': x['collection'], 'source': x.get('source') or 'schema_alias', 'label': x.get('label') or prettify_field_name(x['name']), 'confidence': 1.0, 'warning': ''}
+                  if len(scoped) > 1:
+                      return {'input': raw, 'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'ambiguous_schema_alias', 'label': raw, 'confidence': 0, 'warning': f'{kind} 别名在当前 collection 内存在多个候选，未自动归一。', 'candidates': scoped}
+              if len(candidates) == 1:
+                  x = candidates[0]
+                  return {'input': raw, 'resolved': x['name'], 'kind': kind, 'collection': x['collection'], 'source': x.get('source') or 'schema_alias_unique', 'label': x.get('label') or prettify_field_name(x['name']), 'confidence': 1.0, 'warning': ''}
+              if len(candidates) > 1:
+                  return {'input': raw, 'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'ambiguous_schema_alias', 'label': raw, 'confidence': 0, 'warning': f'{kind} 别名在多个 collection 中存在，缺少 collection 上下文，未自动归一。', 'candidates': candidates}
+              return {'input': raw, 'resolved': raw, 'kind': 'unknown', 'collection': cname, 'source': 'unresolved', 'label': raw, 'confidence': 0, 'warning': unresolved_warning}
+
+
+          def resolve_field_name(raw_name, schema_metadata, collection_name=None, old_plan_fields=None):
+              raw = str(raw_name or '').strip()
+              old = set(str(x).strip() for x in (old_plan_fields or []) if str(x).strip())
+              meta, idx = _meta_and_index(schema_metadata)
+              colls = meta.get('collections') or {}
+              cname = str(collection_name or '').strip()
+              if cname in colls and raw in (colls[cname].get('fields') or {}):
+                  f = colls[cname]['fields'][raw]
+                  return {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source': 'schema_field_name', 'label': f.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
+              candidates = [x for x in (idx.get('field_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'field']
+              result = _resolve_from_candidates(raw, candidates, cname, 'field', '字段别名未在 schema metadata 中声明，未自动归一。')
+              if result.get('source') != 'unresolved':
+                  return result
+              if raw in old:
+                  return {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source': 'old_plan_fields', 'label': prettify_field_name(raw), 'confidence': 0.8, 'warning': ''}
+              return result
+
+
+          def resolve_metric_name(raw_name, schema_metadata, collection_name=None):
+              raw = str(raw_name or '').strip()
+              meta, idx = _meta_and_index(schema_metadata)
+              colls = meta.get('collections') or {}
+              cname = str(collection_name or '').strip()
+              if cname in colls and raw in (colls[cname].get('metrics') or {}):
+                  m = colls[cname]['metrics'][raw]
+                  return {'input': raw, 'resolved': raw, 'kind': 'metric', 'collection': cname, 'source': 'schema_metric_name', 'label': m.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
+              candidates = [x for x in (idx.get('metric_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'metric']
+              return _resolve_from_candidates(raw, candidates, cname, 'metric', '指标别名未在 schema metadata 中声明，未自动归一。')
+
+
+          def resolve_value_alias(raw_value, schema_metadata, collection_name=None, field_name=None):
+              raw = str(raw_value or '').strip()
+              meta, idx = _meta_and_index(schema_metadata)
+              cname = str(collection_name or '').strip()
+              fname = str(field_name or '').strip()
+              candidates = [x for x in (idx.get('value_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'value']
+              if cname:
