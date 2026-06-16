@@ -154,8 +154,17 @@
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
-          def _compile_enrich_related(stage, schema_context, stage_outputs):
-              depends_on = _ensure_non_empty_string(stage.get('depends_on'), f"{stage['stage_name']}.depends_on")
+          def _compile_enrich_related(stage, schema_context, stage_outputs, prior_stages=None, warnings=None):
+              warnings = warnings if isinstance(warnings, list) else []
+              depends_on = str(stage.get('depends_on') or '').strip()
+              if not depends_on:
+                  primary_candidates = [s for s in (prior_stages or []) if isinstance(s, dict) and str(s.get('stage_type') or '').strip() == 'primary_query']
+                  if len(primary_candidates) == 1 and str(primary_candidates[0].get('stage_name') or '').strip():
+                      depends_on = str(primary_candidates[0].get('stage_name') or '').strip()
+                      stage['depends_on'] = depends_on
+                      warnings.append({'type': 'compiler_autofix_enrich_depends_on', 'stage_name': stage.get('stage_name'), 'depends_on': depends_on})
+                  else:
+                      depends_on = _ensure_non_empty_string(depends_on, f"{stage['stage_name']}.depends_on")
               prev = stage_outputs.get(depends_on) or {}
               prev_rows = prev.get('rows') or []
               join_source_field = _ensure_non_empty_string(stage.get('join_source_field'), f"{stage['stage_name']}.join_source_field")
@@ -204,7 +213,7 @@
               if int(stage.get('limit') or 0) > 0:
                   pipeline.append({'$limit': int(stage['limit'])})
               return validated_ast, pipeline, False
-          def _compile_stage(stage, schema_context, stage_outputs):
+          def _compile_stage(stage, schema_context, stage_outputs, prior_stages=None, warnings=None):
               stage = _sanitize_stage_for_compile(stage)
               intent = canonicalize_intent_type(stage.get('intent_type'), stage)
               stage['intent_type'] = intent
@@ -221,7 +230,7 @@
                   validated_ast, pipeline = _compile_group_top_record(stage, schema_context, stage_outputs)
                   return validated_ast, pipeline, False
               if intent == 'enrich_related':
-                  return _compile_enrich_related(stage, schema_context, stage_outputs)
+                  return _compile_enrich_related(stage, schema_context, stage_outputs, prior_stages, warnings)
               raise ValueError(f'unsupported intent_type: {intent}')
           def _post_json(url, payload_obj, timeout_seconds=DEFAULT_TIMEOUT_SECONDS):
               body = json.dumps(payload_obj, ensure_ascii=False).encode('utf-8')
@@ -860,10 +869,12 @@
               normalized_execution_plan['schema_alias_index'] = schema_alias_index
               stage_outputs = {}
               stage_execution_trace = []
+              compiler_autofix_warnings = []
+              prior_stages = []
 
               for stage in normalized_execution_plan.get('stages') or []:
                   stage = _sanitize_stage_for_compile(stage)
-                  validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs)
+                  validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs, prior_stages, compiler_autofix_warnings)
                   pipeline = _dedupe_equivalent_project(_assert_safe_pipeline(pipeline))
                   validated_ast = _sync_limit(validated_ast, pipeline)
                   pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
@@ -918,7 +929,10 @@
                   }
                   stage_execution_trace.append(trace_item)
                   stage_outputs[stage['stage_name']] = trace_item
+                  prior_stages.append(stage)
 
+              if compiler_autofix_warnings:
+                  compiler_debug['compiler_autofixes'] = compiler_autofix_warnings
               execution_mode = normalized_execution_plan.get('execution_mode')
               final_merge = normalized_execution_plan.get('final_merge') or {}
               if execution_mode == 'multi_stage' and final_merge.get('left_stage') and final_merge.get('right_stage'):

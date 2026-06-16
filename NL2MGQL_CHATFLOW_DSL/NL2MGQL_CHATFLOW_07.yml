@@ -220,6 +220,35 @@
                   final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
                   final_merge.setdefault('merge_mode', 'none')
                   normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
+                  primary_stages = [s for s in stages if isinstance(s, dict) and str(s.get('stage_type') or '').strip() == 'primary_query']
+                  if not primary_stages and primary_collection:
+                      primary_stages = [s for s in stages if isinstance(s, dict) and str(s.get('stage_name') or '').strip() == 'stage1' and str(s.get('collection') or '').strip() == primary_collection]
+                  enrich_stages = [s for s in stages if isinstance(s, dict) and str(s.get('stage_type') or '').strip() == 'enrich_related']
+                  if str(plan.get('execution_mode') or 'single_stage').strip() != 'single_stage' and enrich_stages:
+                      for enrich_stage in enrich_stages:
+                          if not str(enrich_stage.get('depends_on') or '').strip():
+                              prior_primary = [s for s in primary_stages if stages.index(s) < stages.index(enrich_stage)]
+                              if len(prior_primary) == 1 and str(prior_primary[0].get('stage_name') or '').strip():
+                                  enrich_stage['depends_on'] = str(prior_primary[0].get('stage_name') or '').strip()
+                                  normalizer_warnings.append({'type': 'enrich_related_depends_on_fill', 'stage_name': enrich_stage.get('stage_name'), 'depends_on': enrich_stage.get('depends_on')})
+                              elif str(final_merge.get('left_stage') or '').strip():
+                                  enrich_stage['depends_on'] = str(final_merge.get('left_stage') or '').strip()
+                                  normalizer_warnings.append({'type': 'enrich_related_depends_on_fill_from_final_merge', 'stage_name': enrich_stage.get('stage_name'), 'depends_on': enrich_stage.get('depends_on')})
+                      if str(final_merge.get('merge_mode') or '').strip() == 'enrich':
+                          enrich_stage = enrich_stages[0]
+                          changed = False
+                          if not str(final_merge.get('right_stage') or '').strip():
+                              final_merge['right_stage'] = str(final_merge.get('merge_stage_name') or enrich_stage.get('stage_name') or '').strip(); changed = True
+                          if not str(final_merge.get('left_stage') or '').strip() and str(enrich_stage.get('depends_on') or '').strip():
+                              final_merge['left_stage'] = str(enrich_stage.get('depends_on') or '').strip(); changed = True
+                          if not str(final_merge.get('left_field') or '').strip():
+                              final_merge['left_field'] = str(enrich_stage.get('join_source_field') or final_merge.get('merge_key') or '').strip(); changed = True
+                          if not str(final_merge.get('right_field') or '').strip():
+                              final_merge['right_field'] = str(enrich_stage.get('join_target_field') or final_merge.get('merge_key') or '').strip(); changed = True
+                          if not str(final_merge.get('attach_as') or '').strip():
+                              final_merge['attach_as'] = str(enrich_stage.get('attach_as') or 'product_info').strip(); changed = True
+                          if changed:
+                              normalizer_warnings.append({'type': 'final_merge_enrich_fields_fill', 'right_stage': final_merge.get('right_stage'), 'left_stage': final_merge.get('left_stage')})
                   contract = {
                       'contract_version': 'semantic_plan_contract',
                       'primary_collection': primary_collection,

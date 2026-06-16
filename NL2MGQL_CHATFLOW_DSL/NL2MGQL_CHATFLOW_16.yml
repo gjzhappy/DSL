@@ -242,6 +242,68 @@
                           sorts.append({"field": stage.get("metric_alias"), "direction": _str(m.get("default_sort"))}); autofixes.append({"type": "metric_default_sort", "metric": stage.get("metric_alias"), "direction": m.get("default_sort")})
                   stage["sort"] = sorts
 
+
+              stage_list = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+              stage_positions = {_str(st.get("stage_name")): idx for idx, st in enumerate(stage_list) if isinstance(st, dict) and _str(st.get("stage_name"))}
+              primary_stages = [st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_type")) == "primary_query"]
+              enrich_stages = [st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_type")) == "enrich_related"]
+              final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
+              for enrich_stage in enrich_stages:
+                  stage_name = _str(enrich_stage.get("stage_name"))
+                  depends_on = _str(enrich_stage.get("depends_on"))
+                  if not depends_on:
+                      prior_primary = [st for st in primary_stages if stage_positions.get(_str(st.get("stage_name")), 10**9) < stage_positions.get(stage_name, -1)]
+                      if len(prior_primary) == 1 and _str(prior_primary[0].get("stage_name")):
+                          depends_on = _str(prior_primary[0].get("stage_name"))
+                          enrich_stage["depends_on"] = depends_on
+                          autofixes.append({"type": "enrich_related_depends_on_fill", "stage_name": stage_name, "depends_on": depends_on})
+                      elif _str(final_merge.get("left_stage")):
+                          depends_on = _str(final_merge.get("left_stage"))
+                          enrich_stage["depends_on"] = depends_on
+                          autofixes.append({"type": "enrich_related_depends_on_fill_from_final_merge", "stage_name": stage_name, "depends_on": depends_on})
+                      else:
+                          errors.append(f"enrich_related_depends_on_required: {stage_name}.depends_on 必须指向前序 primary_query stage。")
+                          continue
+                  if depends_on == stage_name or depends_on not in stage_positions or stage_positions.get(depends_on, 10**9) >= stage_positions.get(stage_name, -1):
+                      errors.append(f"enrich_related_depends_on_invalid: {stage_name}.depends_on={depends_on} 必须指向当前 enrich stage 之前存在的 stage。")
+                  join_source = _str(enrich_stage.get("join_source_field"))
+                  join_target = _str(enrich_stage.get("join_target_field"))
+                  if not join_source:
+                      errors.append(f"{stage_name}.join_source_field 必须非空。")
+                  if not join_target:
+                      errors.append(f"{stage_name}.join_target_field 必须非空。")
+                  projections = _list(enrich_stage.get("projection_fields"))
+                  if join_target and join_target not in [_str(x) for x in projections]:
+                      enrich_stage["projection_fields"] = [join_target] + projections
+                      autofixes.append({"type": "enrich_projection_join_target_fill", "stage_name": stage_name, "field": join_target})
+
+              if _str(final_merge.get("merge_mode")) == "enrich" and enrich_stages:
+                  enrich_stage = next((st for st in enrich_stages if _str(st.get("stage_name")) == _str(final_merge.get("right_stage") or final_merge.get("merge_stage_name"))), enrich_stages[0])
+                  changed = False
+                  if not _str(final_merge.get("right_stage")):
+                      final_merge["right_stage"] = _str(final_merge.get("merge_stage_name") or enrich_stage.get("stage_name")); changed = True
+                  if not _str(final_merge.get("left_stage")):
+                      final_merge["left_stage"] = _str(enrich_stage.get("depends_on")); changed = True
+                  if not _str(final_merge.get("left_field")):
+                      final_merge["left_field"] = _str(enrich_stage.get("join_source_field") or final_merge.get("merge_key")); changed = True
+                  if not _str(final_merge.get("right_field")):
+                      final_merge["right_field"] = _str(enrich_stage.get("join_target_field") or final_merge.get("merge_key")); changed = True
+                  if not _str(final_merge.get("attach_as")):
+                      final_merge["attach_as"] = _str(enrich_stage.get("attach_as") or "product_info"); changed = True
+                  if changed:
+                      autofixes.append({"type": "final_merge_enrich_fields_fill", "right_stage": final_merge.get("right_stage"), "left_stage": final_merge.get("left_stage")})
+                  if not all(_str(final_merge.get(k)) for k in ("left_stage", "right_stage", "left_field", "right_field")):
+                      errors.append("final_merge_enrich_fields_required: enrich merge 必须包含 left_stage/right_stage/left_field/right_field。")
+                  if _str(final_merge.get("right_stage")) != _str(enrich_stage.get("stage_name")):
+                      errors.append("final_merge_enrich_right_stage_invalid: right_stage 必须指向 enrich_related stage。")
+                  if _str(final_merge.get("left_stage")) != _str(enrich_stage.get("depends_on")):
+                      errors.append("final_merge_enrich_left_stage_invalid: left_stage 必须等于 enrich_related.depends_on。")
+                  if _str(final_merge.get("left_field")) != _str(enrich_stage.get("join_source_field")):
+                      errors.append("final_merge_enrich_left_field_invalid: left_field 必须等于 enrich_related.join_source_field。")
+                  if _str(final_merge.get("right_field")) != _str(enrich_stage.get("join_target_field")):
+                      errors.append("final_merge_enrich_right_field_invalid: right_field 必须等于 enrich_related.join_target_field。")
+                  plan["final_merge"] = final_merge
+
               # relations
               for rc in related:
                   rels = [r for r in _iter_named_items((collections.get(primary) or {}).get("relations") or []) if _str(r.get("target_collection")) == rc]
