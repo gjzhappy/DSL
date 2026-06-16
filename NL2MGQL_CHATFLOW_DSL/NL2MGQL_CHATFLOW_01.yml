@@ -1,3 +1,53 @@
+        isInIteration: false
+        sourceType: if-else
+        targetType: code
+      id: 1780000000001-false-1780000000009-target
+      source: '1780000000001'
+      sourceHandle: 'false'
+      target: '1780000000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: iteration
+      id: 1780000000002-source-1780000000003-target
+      source: '1780000000002'
+      sourceHandle: source
+      target: '1780000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1777100000001-has_primary-1777100000005-target
+      source: '1777100000001'
+      sourceHandle: has_primary
+      target: '1777100000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1777100000005-source-1777100000004-target
+      source: '1777100000005'
+      sourceHandle: source
+      target: '1777100000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1777100000004-schema_ready-1775000000005-target
+      source: '1777100000004'
+      sourceHandle: schema_ready
       target: '1775000000005'
       targetHandle: target
       type: custom
@@ -386,3 +436,465 @@
         sourceType: code
         targetType: answer
     nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables: []
+      height: 109
+      id: '1773909192919'
+      position:
+        x: 0
+        y: 0
+      positionAbsolute:
+        x: 0
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        model:
+          completion_params:
+            num_ctx: 16384
+            num_predict: 8192
+            temperature: 0
+            think: false
+          mode: chat
+          name: qwen3.5:35b
+          provider: langgenius/ollama/ollama
+        prompt_template:
+        - id: planner-system
+          role: system
+          text: |
+            你是 Phase 7 的 LLM_查询规划节点：只生成 semantic_plan_contract JSON，不再承担 collection 初判职责。
+
+            输入包含用户问题、collection_selection_json、compact_context_json 以及已裁剪的 selected schema context / schema metadata / alias index。
+
+            硬性规则：
+            - 只输出 JSON；不要输出 markdown、解释、代码块。
+            - 顶层 contract_version 必须为 semantic_plan_contract。
+            - primary_collection 必须来自 collection_selection_json.selected_primary_collection。
+            - related_collections 只能填写本次查询实际需要读取、过滤、分组、投影、排序、merge/enrich 的集合。
+            - selected_related_collections 是可选候选，不是强制使用；如果 primary_collection 已经覆盖用户问题所需字段/指标/维度，则 related_collections 必须为空。
+            - final_merge.merge_mode="none" 且所有 stage 都在 primary_collection 时，related_collections 应为空。
+            - related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。
+            - 只能使用 schema_context / schema_metadata 中存在的 collection、field、metric、relation；别名必须解析为 canonical name。
+            - 不确定 collection/field/metric/relation 时，不要猜，输出 requires_clarification=true 或 needs_schema_retrieval=true。
+            - compact_context_json 只能作为弱上下文，不得继承当前用户已否定的旧字段。
+            - 不输出 Mongo pipeline、MQL、MGQL pipeline、AST、patch diff，也不要输出 $match、$group、$project、$lookup 等 Mongo stage。
+            - intent_type 只能使用 compiler canonical 枚举：detail_query / aggregate_summary / group_top_entity / group_top_record / enrich_related。
+            - intent_type 不得使用 aggregate_group_by / aggregate / aggregation / group_by / group_by_metric / group_by_dimension / group_by_metric_with_time_filter / group_by_dimension_with_time_range_and_aggregation 这类泛化或别名值；按维度分组统计、按字段分组统计、group by 聚合统计必须统一使用 aggregate_summary，明细查询必须使用 detail_query；不要输出 aggregate_group_by 这类非 canonical intent_type。
+
+            必须输出完整 semantic_plan_contract：
+            {
+              "contract_version":"semantic_plan_contract",
+              "primary_collection":"",
+              "related_collections":[],
+              "execution_mode":"single_stage",
+              "answer_mode":"data",
+              "needs_chart":false,
+              "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],
+              "final_merge":{"merge_mode":"none"},
+              "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},
+              "requires_clarification":false,
+              "clarification_question":"",
+              "needs_schema_retrieval":false,
+              "warnings":[]
+            }
+        - id: planner-user
+          role: user
+          text: |
+            question:
+            {{#sys.query#}}
+
+            collection_selection_json:
+            {{#1777000000001.collection_selection_json#}}
+
+            compact_context_json（弱上下文，不继承用户已否定字段）:
+            {{#1776000000001.last_context_json#}}
+
+            schema_context（已按 selected collections 裁剪）:
+            {{#1777100000005.schema_context#}}
+
+            schema_metadata_json（仅使用 canonical field/metric/relation/query_rules）:
+            {{#1777100000005.schema_metadata_json#}}
+
+            schema_alias_index_json（用于别名到 canonical name 映射）:
+            {{#1777100000005.schema_alias_index_json#}}
+        selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: true
+            required:
+            - contract_version
+            - primary_collection
+            - related_collections
+            - execution_mode
+            - answer_mode
+            - needs_chart
+            - stages
+            - final_merge
+            - chart_request
+            - requires_clarification
+            - clarification_question
+            - needs_schema_retrieval
+            - warnings
+            properties:
+              contract_version:
+                const: semantic_plan_contract
+              primary_collection:
+                type: string
+              related_collections:
+                type: array[string]
+              execution_mode:
+                type: string
+              answer_mode:
+                type: string
+              needs_chart:
+                type: boolean
+              stages:
+                type: array[object]
+                minItems: 1
+                items:
+                  type: object
+                  additionalProperties: true
+                  required:
+                  - stage_name
+                  - stage_type
+                  - collection
+                  - intent_type
+                  - time_range
+                  - filters
+                  - group_fields
+                  - metric_function
+                  - metric_field
+                  - metric_alias
+                  - sort
+                  - limit
+                  - projection_fields
+                  properties:
+                    stage_name:
+                      type: string
+                    stage_type:
+                      type: string
+                    collection:
+                      type: string
+                    intent_type:
+                      type: string
+                    time_range:
+                      type: object
+                    filters:
+                      type: array[object]
+                    group_fields:
+                      type: array[string]
+                    metric_function:
+                      type: string
+                    metric_field:
+                      type: string
+                    metric_alias:
+                      type: string
+                    sort:
+                      type: array[object]
+                    limit:
+                      type: integer
+                    projection_fields:
+                      type: array[string]
+              final_merge:
+                type: object
+              chart_request:
+                type: object
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              needs_schema_retrieval:
+                type: boolean
+              warnings:
+                type: array[string]
+        structured_output_enabled: true
+        title: LLM_查询规划
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: '1773975766025'
+      position:
+        x: 4140
+        y: -620
+      positionAbsolute:
+        x: 4140
+        y: -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v):
+              if isinstance(v, dict): return v
+              try: return json.loads(v) if str(v or '').strip() else {}
+              except Exception: return {}
+          def _list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              return [] if v in (None, '', {}, []) else [str(v).strip()]
+          def _hit(q, v, w):
+              t = str(v or '').strip().lower()
+              return w if t and t in q.lower() else 0
+          def _match(q, reg):
+              scores = []
+              for item in reg.get('collections') or []:
+                  if not isinstance(item, dict): continue
+                  name = str(item.get('collection_name') or '').strip()
+                  if not name: continue
+                  score, reasons = 0, []
+                  for key, weight in [('collection_name',100), ('collection_label',90)]:
+                      if _hit(q, item.get(key), weight): score += weight; reasons.append(key)
+                  for key, weight in [('aliases',80), ('primary_terms',60), ('fields',45), ('metrics',45)]:
+                      hits = sum(1 for value in _list(item.get(key)) if _hit(q, value, weight))
+                      if hits: score += hits * weight; reasons.append(key)
+                  desc = str(item.get('description') or '').replace('，', ' ').replace('。', ' ').split()
+                  weak = sum(1 for token in desc if len(token) >= 2 and token in q)
+                  if weak: score += min(weak, 3) * 10; reasons.append('description')
+                  if score: scores.append({'collection_name': name, 'score': score, 'matched_fields': reasons})
+              scores.sort(key=lambda x: x.get('score', 0), reverse=True)
+              if not scores: return [], scores
+              top = scores[0].get('score', 0)
+              winners = [x.get('collection_name') for x in scores if x.get('score', 0) == top and x.get('collection_name')]
+              return (winners if len(winners) == 1 else []), scores
+          def main(question: str, collection_registry_json: str = ''):
+              q = str(question or '').strip(); names, scores = _match(q, _loads(collection_registry_json))
+              primary = names[0] if names else ''; ready = bool(primary)
+              query = '\n'.join(['用户问题：' + q, 'metadata_type: mongo_schema', 'collection_name: ' + primary, '只检索 candidate_collection_names 中 collection 对应的完整 schema metadata。'])
+              return {'query_text': query, 'candidate_collection_names': names, 'candidate_collection_name': primary, 'candidate_collection_ready': ready, 'candidate_collection_strategy': 'registry_match' if ready else 'registry_no_match', 'candidate_collection_scores_json': json.dumps(scores, ensure_ascii=False), 'candidate_collection_reason': 'matched by registry fields' if ready else 'no unique registry match', 'requires_clarification': not ready, 'clarification_question': '' if ready else '请明确要查询的业务对象或 collection。'}
+        code_language: python3
+        desc: 为一次性 CandidateSchemas schema retrieval 构造查询，不依赖独立 collection catalog 文档。
+        outputs:
+          query_text:
+            children:
+            type: string
+          candidate_collection_names:
+            type: array[string]
+          candidate_collection_name:
+            children:
+            type: string
+          candidate_collection_ready:
+            children:
+            type: boolean
+          candidate_collection_strategy:
+            children:
+            type: string
+          candidate_collection_scores_json:
+            children:
+            type: string
+          candidate_collection_reason:
+            children:
+            type: string
+          requires_clarification:
+            children:
+            type: boolean
+          clarification_question:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_构建CandidateSchemas检索查询
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - env
+          - COLLECTION_REGISTRY_JSON
+          value_type: string
+          variable: collection_registry_json
+      height: 80
+      id: '1777099999998'
+      position:
+        x: 2910
+        "y": -620
+      positionAbsolute:
+        x: 2910
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        dataset_ids:
+        - 5922ed30-d8cf-4164-9658-7e4f7fb80514
+        metadata_filtering_conditions:
+          conditions:
+          - comparison_operator: is
+            id: candidate-schemas-metadata-type-filter
+            metadata_id: metadata_type
+            name: metadata_type
+            value: mongo_schema
+          - comparison_operator: is
+            id: candidate-schemas-collection-filter
+            metadata_id: 34d022dc-aecc-49cb-b900-0fe9244f3377
+            name: collection_name
+            value: "{{#1777099999998.candidate_collection_name#}}"
+          logical_operator: and
+        metadata_filtering_mode: manual
+        multiple_retrieval_config:
+          reranking_enable: false
+          reranking_mode: weighted_score
+          top_k: 6
+          weights:
+            keyword_setting:
+              keyword_weight: 0.4
+            vector_setting:
+              embedding_model_name: nomic-embed-text:v1.5
+              embedding_provider_name: langgenius/ollama/ollama
+              vector_weight: 0.6
+            weight_type: customized
+        query_attachment_selector: []
+        query_variable_selector:
+        - '1777099999998'
+        - query_text
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索_CandidateSchemas
+        type: knowledge-retrieval
+      height: 90
+      id: '1777099999999'
+      position:
+        x: 3310
+        "y": -620
+      positionAbsolute:
+        x: 3310
+        "y": -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          import hashlib
+          import re
+
+          SCHEMA_CONTRACT_VERSION = 'schema_metadata_contract'
+          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
+          CATALOG_VERSION = 'collection_catalog_contract'
+
+
+          def _strip_quotes(v):
+              v = str(v or '').strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                  return v[1:-1]
+              return v
+
+
+          def _split_inline_list(body):
+              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
+
+
+          def _parse_scalar(v):
+              v = str(v or '').strip()
+              if not v:
+                  return ''
+              if v in {'|', '>', '|-', '>-'}:
+                  return ''
+              if v in {'true', 'True'}:
+                  return True
+              if v in {'false', 'False'}:
+                  return False
+              if v in {'null', 'Null', 'NULL', '~'}:
+                  return None
+              if v.startswith('[') and v.endswith(']'):
+                  return _split_inline_list(v[1:-1].strip())
+              if v.startswith('{') and v.endswith('}'):
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return _strip_quotes(v)
+              if re.match(r'^-?\d+$', v):
+                  try:
+                      return int(v)
+                  except Exception:
+                      pass
+              if re.match(r'^-?\d+\.\d+$', v):
+                  try:
+                      return float(v)
+                  except Exception:
+                      pass
+              return _strip_quotes(v)
+
+
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
+                      i += 1
+                      continue
+                  indent = len(raw) - len(raw.lstrip(' '))
+                  s = raw.strip()
+                  mblock = re.match(r'^([A-Za-z_][\w\-]*)\s*:\s*([>|][\-+]?)\s*$', s)
+                  if mblock:
+                      key = mblock.group(1)
+                      parts = []
+                      base = None
+                      j = i + 1
+                      while j < len(lines):
+                          nr = lines[j]
+                          if nr.strip():
+                              ni = len(nr) - len(nr.lstrip(' '))
+                              if ni <= indent:
+                                  break
+                              if base is None:
+                                  base = ni
+                              parts.append(nr[base:] if len(nr) >= base else nr.strip())
+                          else:
+                              parts.append('')
+                          j += 1
+                      while stack and indent <= stack[-1][0]:
+                          stack.pop()
+                      parent = stack[-1][1]
+                      if isinstance(parent, dict):
+                          parent[key] = '\n'.join(parts).strip()
+                      i = j
+                      continue
+                  while stack and indent <= stack[-1][0]:
+                      stack.pop()
+                  parent = stack[-1][1]
+                  if s.startswith('- '):
+                      item = s[2:].strip()
+                      if not isinstance(parent, list):
+                          i += 1
+                          continue
+                      if ':' in item and re.match(r'^[A-Za-z_][\w\-]*\s*:', item):
+                          k, v = item.split(':', 1)
+                          obj = {k.strip(): _parse_scalar(v)} if v.strip() else {k.strip(): {}}
+                          parent.append(obj)
+                          stack.append((indent, obj))
+                          if not v.strip():
+                              stack.append((indent + 2, obj[k.strip()]))
+                      else:
+                          parent.append(_parse_scalar(item))
+                      i += 1
+                      continue
+                  if ':' in s:
+                      k, v = s.split(':', 1)
+                      key = k.strip()
+                      val = v.strip()
+                      if isinstance(parent, dict):
+                          if val:
+                              parent[key] = _parse_scalar(val)
+                              i += 1
