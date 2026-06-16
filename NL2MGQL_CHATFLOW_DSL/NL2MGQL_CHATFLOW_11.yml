@@ -392,7 +392,8 @@
               compact_json=_dumps(ctx)
               context_update={'contract_version':'context_update_contract','should_save_context':bool(ctx.get('has_last_context')),'compact_context':ctx,'last_context_json':compact_json,'warnings':ctx.get('context_warnings') or [],'clear_fields':[]}
               answer_payload={'contract_version':'answer_payload_contract','answer_type':answer_type,'answer_text':answer_text,'chart_echarts_markdown':md,'result_summary':note,'message':'' if md else note,'chart_payload':clean_payload,'query_result_profile':data_profile or {'row_count':0,'fields':[],'preview_rows':[]},'state_update':{'should_save_context':bool(ctx.get('has_last_context')),'context_summary':ctx}}
-              return {'final_answer_markdown': final,'answer_payload_markdown': final,'answer_text': answer_text,'result_summary': note,'chart_request': req if isinstance(req,dict) else {},'chart_request_for_context': clean_req,'chart_payload_json': _dumps(clean_payload),'answer_payload_json': _dumps(answer_payload),'context_update_json': _dumps(context_update),'compact_context_json': compact_json,'chart_echarts_markdown': md,'final_answer_summary': note,'updated_at': datetime.now(timezone.utc).isoformat()}
+              chart_request_for_context_json = _dumps(clean_req)
+              return {'final_answer_markdown': final,'answer_payload_markdown': final,'answer_text': answer_text,'result_summary': note,'chart_request': req if isinstance(req,dict) else {},'chart_request_for_context': clean_req,'chart_request_for_context_json': chart_request_for_context_json,'chart_payload_json': _dumps(clean_payload),'answer_payload_json': _dumps(answer_payload),'context_update_json': _dumps(context_update),'compact_context_json': compact_json,'chart_echarts_markdown': md,'final_answer_summary': note,'updated_at': datetime.now(timezone.utc).isoformat()}
         code_language: python3
         desc: Phase 12：chart-only answer adapter；只读取 ChartPayloadBuilder 输出，不查 Mongo。
         outputs:
@@ -405,6 +406,9 @@
           chart_request_for_context:
             children:
             type: object
+          chart_request_for_context_json:
+            children:
+            type: string
           chart_payload_json:
             children:
             type: string
@@ -531,6 +535,96 @@
       positionAbsolute:
         x: 3220
         y: 1840
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        assigned_variable_selector:
+        - conversation
+        - last_context_json
+        desc: modify_chart 分支在 Answer 前保存改图后的多轮上下文。
+        input_variable_selector:
+        - '1776000000006'
+        - compact_context_json
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - compact_context_json
+          variable_selector:
+          - conversation
+          - last_context_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - answer_payload_json
+          variable_selector:
+          - conversation
+          - last_answer_payload_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - context_update_json
+          variable_selector:
+          - conversation
+          - last_context_update_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - chart_echarts_markdown
+          variable_selector:
+          - conversation
+          - last_chart_echarts_markdown
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - final_answer_summary
+          variable_selector:
+          - conversation
+          - last_result_summary
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - chart_request_for_context_json
+          variable_selector:
+          - conversation
+          - last_chart_request_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000006'
+          - chart_request_for_context_json
+          variable_selector:
+          - conversation
+          - last_chart
+          write_mode: over-write
+        selected: false
+        title: 变量赋值_保存改图上下文
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1776000000025'
+      position:
+        x: 4830
+        y: 1120
+      positionAbsolute:
+        x: 4830
+        y: 1120
       selected: false
       sourcePosition: right
       targetPosition: left
