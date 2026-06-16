@@ -1,3 +1,88 @@
+    - data:
+        code: |
+          import json
+          import re
+
+
+          def _truncate_text(text, limit=2000):
+              text = '' if text is None else str(text)
+              return text if len(text) <= limit else text[:limit] + '...'
+
+
+          def _read_json_text(text):
+              if text is None:
+                  return None
+              if isinstance(text, (dict, list)):
+                  return text
+              raw = str(text).strip()
+              if not raw:
+                  return None
+              return json.loads(raw)
+
+
+          def _content_to_text(content):
+              if isinstance(content, str):
+                  return content.strip()
+              if isinstance(content, list):
+                  parts = []
+                  for item in content:
+                      if isinstance(item, str) and item.strip():
+                          parts.append(item.strip())
+                      elif isinstance(item, dict):
+                          text = str(item.get('text') or item.get('content') or '').strip()
+                          if text:
+                              parts.append(text)
+                  return '\n'.join(parts).strip()
+              return ''
+
+
+          def _extract_chat_text(resp_json):
+              if not isinstance(resp_json, dict):
+                  return ''
+              choices = resp_json.get('choices')
+              if isinstance(choices, list) and choices:
+                  first = choices[0] or {}
+                  if isinstance(first, dict):
+                      msg = first.get('message') or {}
+                      if isinstance(msg, dict):
+                          text = _content_to_text(msg.get('content'))
+                          if text:
+                              return text
+                      text = _content_to_text(first.get('text'))
+                      if text:
+                          return text
+              output = resp_json.get('output')
+              text = _content_to_text(output)
+              if text:
+                  return text
+              if isinstance(output, list):
+                  for item in output:
+                      if isinstance(item, dict):
+                          text = _content_to_text(item.get('content'))
+                          if text:
+                              return text
+              for key in ('result', 'text', 'content', 'answer'):
+                  text = _content_to_text(resp_json.get(key))
+                  if text:
+                      return text
+              data = resp_json.get('data')
+              if isinstance(data, dict):
+                  for key in ('result', 'text', 'content', 'answer'):
+                      text = _content_to_text(data.get(key))
+                      if text:
+                          return text
+              return ''
+
+
+          def _strip_code_fence(text):
+              raw = str(text or '').strip()
+              full_match = re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.IGNORECASE | re.DOTALL)
+              if full_match:
+                  return full_match.group(1).strip()
+              return raw
+
+
+          def _remove_think_blocks(text):
               raw = str(text or '')
               raw = re.sub(r'<think>.*?</think>', ' ', raw, flags=re.IGNORECASE | re.DOTALL)
               return raw.strip()
@@ -815,86 +900,3 @@
       targetPosition: left
       type: custom
       width: 242
-    - data:
-        code: |
-          import json
-          from datetime import datetime, timezone
-          import re
-
-          # schema metadata C contract helpers
-          import copy
-          import hashlib
-          import json
-          import re
-
-
-          CONTRACT_VERSION = 'schema_metadata_contract'
-          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
-          NON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors', 'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}
-
-
-          def default_query_rules():
-              return {
-                  'require_time_range_for_aggregate': True,
-                  'max_limit': 100,
-                  'allowed_operations': ['find', 'aggregate'],
-                  'aggregate_required_when': [],
-                  'find_allowed_when': [],
-                  'sensitive_field_policy': 'deny_return_group_sort',
-                  'default_limit': 100,
-                  'max_time_range_days': 366,
-              }
-
-
-          def _strip_quotes(v):
-              v = str(v or '').strip()
-              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
-                  return v[1:-1]
-              return v
-
-
-          def _split_inline_list(body):
-              # Simple comma split that keeps quoted Chinese/ASCII aliases intact for the schema docs used here.
-              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
-
-
-          def _parse_scalar(v):
-              v = str(v or '').strip()
-              if not v:
-                  return ''
-              if v in {'|', '>', '|-', '>-'}:
-                  return ''
-              if v in {'true', 'True'}:
-                  return True
-              if v in {'false', 'False'}:
-                  return False
-              if v in {'null', 'Null', 'NULL', '~'}:
-                  return None
-              if v.startswith('[') and v.endswith(']'):
-                  return _split_inline_list(v[1:-1].strip())
-              if v.startswith('{') and v.endswith('}'):
-                  try:
-                      return json.loads(v)
-                  except Exception:
-                      return _strip_quotes(v)
-              if re.match(r'^-?\d+$', v):
-                  try:
-                      return int(v)
-                  except Exception:
-                      pass
-              if re.match(r'^-?\d+\.\d+$', v):
-                  try:
-                      return float(v)
-                  except Exception:
-                      pass
-              return _strip_quotes(v)
-
-
-          def _parse_simple_yaml(text):
-              root = {}
-              stack = [(-1, root)]
-              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
-              i = 0
-              while i < len(lines):
-                  raw = lines[i]
-                  if not raw.strip() or raw.lstrip().startswith('#'):

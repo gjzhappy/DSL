@@ -1,900 +1,331 @@
-                  candidates = [x for x in candidates if x.get('collection') == cname]
-              if fname:
-                  candidates = [x for x in candidates if x.get('field') == fname]
-              warning = ''
-              if not candidates:
-                  warning = '值别名未在 schema metadata 中声明，未自动归一。'
-              elif len(candidates) > 1:
-                  warning = '值别名存在多个候选，返回 candidates，未自动选择。'
-              return {'input': raw, 'kind': 'value', 'collection': cname, 'field': fname, 'candidates': candidates, 'resolved': candidates[0].get('name') if len(candidates) == 1 else raw, 'warning': warning}
+    - data:
+        code: |-
+          import base64
+          import json
+          import uuid
+
+          SEMANTIC_PLAN_SYSTEM_PROMPT = '【角色约束】\n你不是聊天助手。你是 schema-driven + collection-selection-aware 的 semantic_plan_contract JSON 生成器。输出会被程序直接 JSON.parse 后交给 Phase 5 semantic_plan_normalizer 归一化。\n\n【唯一输出协议】\n只输出一个 semantic_plan_contract JSON 对象，顶层 contract_version 必须是 "semantic_plan_contract"。不得输出 markdown、解释文字、代码块、schema 原文、debug 大字段、rows、ECharts option，也不得输出 Mongo pipeline / MQL / MGQL pipeline / AST / patch diff。\n\n【必须输出的顶层结构】\n{\n  "contract_version":"semantic_plan_contract",\n  "primary_collection":"",\n  "related_collections":[],\n  "execution_mode":"single_stage",\n  "answer_mode":"data",\n  "needs_chart":false,\n  "stages":[{"stage_name":"stage1","stage_type":"primary_query","collection":"","intent_type":"","time_range":{"field":"","mode":"","relative_days":0,"start":"","end":""},"filters":[],"group_fields":[],"metric_function":"","metric_field":"","metric_alias":"","sort":[],"limit":100,"projection_fields":[]}],\n  "final_merge":{"merge_mode":"none"},\n  "chart_request":{"enabled":false,"chart_type":"","x_field":"","y_field":"","series_name":"","title":""},\n  "requires_clarification":false,\n  "clarification_question":"",\n  "needs_schema_retrieval":false,\n  "warnings":[]\n}\n\n【collection-selection 约束】\nprimary_collection 必须来自 collection_selection_json.selected_primary_collection；related_collections 必须来自 collection_selection_json.selected_related_collections 或 schema relations。collection_selection_json 低置信或缺失时，不要猜 collection，设置 requires_clarification=true 或 needs_schema_retrieval=true。\n\n【schema 约束】\n只能使用 schema_context / schema_metadata 摘要中存在的 collection、field、metric、relation、query_rules。字段别名必须解析成 schema canonical field name；指标别名必须解析成 schema canonical metric name；relation 必须来自 schema relations。不得发明 collection / field / metric / relation。遇到未知字段、未知指标、敏感/PII 字段或 value_alias 不明确时，优先 requires_clarification=true，并在 clarification_question 或 warnings 中说明。\n\n【compact context 约束】\ncompact_context_json 只是弱上下文。当前用户问题和 collection_selection_json 优先级更高。不要从 compact_context_json 继承用户已否定的旧字段。\n\n【refine 约束】\n如果当前问题改变 group_fields，必须输出新的 group_fields，不能保留旧 group_fields；如果用户说“不再按 X”，必须删除旧字段 X；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 canonical field；metric、filter、time_range、chart_request 也必须与当前意图同步更新。输出完整新 semantic_plan_contract，不输出 patch diff。\n\n【图表约束】\n用户要求图表时 needs_chart=true 且 chart_request.enabled=true；chart_request.x_field 必须对齐 group_fields[0] 或时间字段；chart_request.y_field 必须对齐 metric_alias。\n\n【时间约束】\n相对时间使用 time_range.mode="relative_days" 与 relative_days；不要输出 {"$date":"..."}。current_date 仅用于理解相对时间，不要因此输出 Mongo 表达式。\n\n【最终输出再强调】\n只能输出 JSON 对象；禁止 Mongo pipeline、$match、$group、$project、$lookup、markdown、解释文字、代码块。'
+          SEMANTIC_PLAN_CONTRACT_SCHEMA_JSON = r'''{"type":"object","additionalProperties":true,"required":["contract_version","primary_collection","related_collections","execution_mode","answer_mode","needs_chart","stages","final_merge","chart_request","requires_clarification","clarification_question","needs_schema_retrieval","warnings"],"properties":{"contract_version":{"const":"semantic_plan_contract"},"primary_collection":{"type":"string"},"related_collections":{"type":"array","items":{"type":"string"}},"execution_mode":{"type":"string"},"answer_mode":{"type":"string"},"needs_chart":{"type":"boolean"},"stages":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":true,"required":["stage_name","stage_type","collection","intent_type","time_range","filters","group_fields","metric_function","metric_field","metric_alias","sort","limit","projection_fields"],"properties":{"stage_name":{"type":"string"},"stage_type":{"type":"string"},"collection":{"type":"string"},"intent_type":{"type":"string"},"time_range":{"type":"object"},"filters":{"type":"array","items":{"type":"object"}},"group_fields":{"type":"array","items":{"type":"string"}},"metric_function":{"type":"string"},"metric_field":{"type":"string"},"metric_alias":{"type":"string"},"sort":{"type":"array","items":{"type":"object"}},"limit":{"type":"integer"},"projection_fields":{"type":"array","items":{"type":"string"}}}}},"final_merge":{"type":"object"},"chart_request":{"type":"object"},"requires_clarification":{"type":"boolean"},"clarification_question":{"type":"string"},"needs_schema_retrieval":{"type":"boolean"},"warnings":{"type":"array","items":{"type":"string"}}}}'''
 
 
-          def resolve_field_label(field_name, schema_metadata, collection_name=None):
-              meta, _ = _meta_and_index(schema_metadata)
-              fname = str(field_name or '').strip()
-              cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}) and fname in meta['collections'][cname].get('fields', {}):
-                  return meta['collections'][cname]['fields'][fname].get('label') or prettify_field_name(fname)
-              hits = []
-              for cn, c in (meta.get('collections') or {}).items():
-                  if fname in c.get('fields', {}):
-                      hits.append(c['fields'][fname].get('label') or prettify_field_name(fname))
-              return hits[0] if len(hits) == 1 else prettify_field_name(fname)
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              text = str(value or "").strip().lower()
+              return text in {"1", "true", "yes", "y", "on"}
 
 
-          def resolve_metric_label(metric_name, schema_metadata, collection_name=None):
-              meta, _ = _meta_and_index(schema_metadata)
-              name = str(metric_name or '').strip()
-              cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}) and name in meta['collections'][cname].get('metrics', {}):
-                  return meta['collections'][cname]['metrics'][name].get('label') or prettify_field_name(name)
-              hits = []
-              for cn, c in (meta.get('collections') or {}).items():
-                  if name in c.get('metrics', {}):
-                      hits.append(c['metrics'][name].get('label') or prettify_field_name(name))
-              return hits[0] if len(hits) == 1 else prettify_field_name(name)
-
-
-          def build_chart_title(group_field, metric_name, schema_metadata, collection_name=None, user_title=''):
-              if str(user_title or '').strip():
-                  return str(user_title).strip(), 'chart_request'
-              x = resolve_field_label(group_field, schema_metadata, collection_name)
-              y = resolve_metric_label(metric_name, schema_metadata, collection_name)
-              return ('按' + x + '统计' + y if x and y else (x + ' 与 ' + y + ' 对比')).strip(), 'schema_label'
-          # end schema metadata C-MVP helpers
-
-          SGT = timezone(timedelta(hours=8))
-          DEFAULT_TIMEOUT_SECONDS = 60
-
-          FORBIDDEN_MONGO_TOKENS = {'$out','$merge','$function','$where','drop','delete','update','insert'}
-          MAX_RETURN_ROWS = 200
-          MAX_RESULT_JSON_CHARS = 200000
-
-
-          def _safe_json_dumps(value, max_chars=75000):
+          def _to_int(value, default):
               try:
-                  text = json.dumps(value, ensure_ascii=False)
-              except Exception as e:
-                  text = json.dumps({'error': str(e)}, ensure_ascii=False)
-              if len(text) > max_chars:
-                  return text[:max_chars] + '...TRUNCATED'
-              return text
-
-
-          def _read_json_text(value):
-              if value is None:
-                  return None
-              if isinstance(value, (dict, list)):
-                  return value
-              raw = str(value).strip()
-              if not raw:
-                  return None
-              return json.loads(raw)
-
-
-          def _ensure_obj(value, name):
-              obj = _read_json_text(value)
-              if obj is None:
-                  return {}
-              if not isinstance(obj, dict):
-                  raise ValueError(f'{name} must be a JSON object')
-              return obj
-
-
-          def _ensure_non_empty_string(value, name):
-              text = str(value or '').strip()
-              if not text:
-                  raise ValueError(f'{name} is required')
-              return text
-
-
-          def _ensure_string_list(value, name):
-              if value is None:
-                  return []
-              if not isinstance(value, list):
-                  raise ValueError(f'{name} must be an array')
-              result = []
-              for idx, item in enumerate(value):
-                  text = str(item or '').strip()
-                  if not text:
-                      raise ValueError(f'{name}[{idx}] must be a non-empty string')
-                  result.append(text)
-              return result
-
-
-          def _parse_scalar(value):
-              if value is None:
-                  return None
-              if isinstance(value, (int, float, bool, list)):
-                  return value
-              text = str(value).strip()
-              if text.lower() == 'true':
-                  return True
-              if text.lower() == 'false':
-                  return False
-              if re.fullmatch(r'-?\d+', text):
-                  return int(text)
-              if re.fullmatch(r'-?\d+\.\d+', text):
-                  return float(text)
-              return text
-
-
-          def _parse_query_urls(raw_value):
-              text = str(raw_value or '').strip()
-              if not text:
-                  return []
-              parts = []
-              for chunk in text.replace('\r', '\n').split('\n'):
-                  for item in chunk.split(','):
-                      url = str(item or '').strip()
-                      if url:
-                          parts.append(url)
-              return parts
-
-
-          def _build_match_expr(path, operator, value):
-              parsed = _parse_scalar(value)
-              if operator == 'eq':
-                  return {path: parsed}
-              if operator == 'in':
-                  values = parsed if isinstance(parsed, list) else [parsed]
-                  return {path: {'$in': values}}
-              mongo_op = {'gt': '$gt', 'gte': '$gte', 'lt': '$lt', 'lte': '$lte', 'regex': '$regex'}.get(operator)
-              if not mongo_op:
-                  raise ValueError(f'unsupported operator: {operator}')
-              return {path: {mongo_op: parsed}}
-
-
-          def _merge_match(parts):
-              parts = [p for p in parts if p]
-              if not parts:
-                  return None
-              if len(parts) == 1:
-                  return parts[0]
-              return {'$and': parts}
-
-
-          def _extract_returnable_fields(schema_context, collection_name):
-              text = str(schema_context or '')
-              pattern = rf'## collection={re.escape(collection_name)}\n.*?(?=(\n## collection=|\Z))'
-              m = re.search(pattern, text, flags=re.DOTALL)
-              section = m.group(0) if m else ''
-              if not section:
-                  return []
-              lines = section.splitlines()
-              fields = []
-              i = 0
-              name_re = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
-              while i < len(lines):
-                  line = lines[i].strip()
-                  next_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
-                  if name_re.fullmatch(line) and next_line.startswith('- type:'):
-                      field_name = line
-                      block = []
-                      j = i + 1
-                      while j < len(lines):
-                          cur = lines[j].strip()
-                          nxt = lines[j + 1].strip() if j + 1 < len(lines) else ''
-                          if j > i + 1 and cur and name_re.fullmatch(cur) and nxt.startswith('- type:'):
-                              break
-                          if cur.startswith('## collection='):
-                              break
-                          block.append(cur)
-                          j += 1
-                      block_text = '\n'.join(block)
-                      if 'returnable: true' in block_text and 'sensitive: true' not in block_text:
-                          fields.append(field_name)
-                      i = j
-                      continue
-                  i += 1
-              return fields
-
-
-          def _normalize_time_range(value, collection_name, default_field=''):
-              if not isinstance(value, dict):
-                  return {
-                      'collection': collection_name,
-                      'field': default_field,
-                      'mode': 'none',
-                      'relative_days': 0,
-                      'start': '',
-                      'end': '',
-                  }
-              mode = str(value.get('mode') or 'none').strip() or 'none'
-              if mode not in {'none', 'relative_days', 'absolute'}:
-                  mode = 'none'
-              field = str(value.get('field') or default_field).strip()
-              if mode != 'none' and not field:
-                  raise ValueError('validator-normalized time_range.field is required when time_range.mode is not none')
-              relative_days = max(int(value.get('relative_days') or 0), 0)
-              start = str(value.get('start') or '').strip()
-              end = str(value.get('end') or '').strip()
-              if mode != 'absolute':
-                  start = ''
-                  end = ''
-              if mode == 'absolute' and not start and not end:
-                  mode = 'none'
-              return {
-                  'collection': collection_name,
-                  'field': field,
-                  'mode': mode,
-                  'relative_days': relative_days,
-                  'start': start,
-                  'end': end,
-              }
-
-
-          def _force_relative_month_time_range(question_text, time_range, collection_name, default_field='created_at'):
-              text = str(question_text or '').strip()
-              if not text:
-                  return time_range
-              month_tokens = ['过去一个月', '近一个月', '最近一个月', '近30天', '最近30天']
-              if not any(token in text for token in month_tokens):
-                  return time_range
-              fixed = dict(time_range or {})
-              fixed['collection'] = collection_name
-              fixed['field'] = str(fixed.get('field') or default_field).strip() or default_field
-              fixed['mode'] = 'relative_days'
-              fixed['relative_days'] = 30
-              fixed['start'] = ''
-              fixed['end'] = ''
-              return fixed
-
-
-          def _sanitize_stage_filters(filters, time_range):
-              if not isinstance(filters, list):
-                  return []
-              normalized = []
-              dedup = set()
-              time_mode = str((time_range or {}).get('mode') or 'none').strip()
-              time_field = str((time_range or {}).get('field') or '').strip()
-              for item in filters:
-                  if not isinstance(item, dict):
-                      continue
-                  field = str(item.get('field') or '').strip()
-                  operator = str(item.get('operator') or '').strip()
-                  if not field or not operator:
-                      continue
-                  if time_mode != 'none' and field == time_field:
-                      continue
-                  value = item.get('value')
-                  key = (field, operator, json.dumps(value, ensure_ascii=False, sort_keys=True))
-                  if key in dedup:
-                      continue
-                  dedup.add(key)
-                  normalized.append({'field': field, 'operator': operator, 'value': value})
-              return normalized
-
-
-          def _normalize_stage_field_ref(text):
-              raw = str(text or '').strip()
-              if not raw:
-                  return ''
-              raw = raw.lstrip('$')
-              if '.' in raw:
-                  return raw.split('.')[-1].strip()
-              return raw
-
-
-          def _sanitize_stage_for_compile(stage):
-              if not isinstance(stage, dict):
-                  return {}
-              cleaned = dict(stage)
-              time_range = _normalize_time_range(cleaned.get('time_range'), str(cleaned.get('collection') or '').strip() or 'unknown')
-              cleaned['time_range'] = time_range
-              raw_filters = cleaned.get('filters') or []
-              cleaned['filters'] = _sanitize_stage_filters(raw_filters, time_range)
-              dropped_stage_ref_filters = 0
-              if str(cleaned.get('intent_type') or '').strip() == 'enrich_related':
-                  cleaned['join_source_field'] = _normalize_stage_field_ref(cleaned.get('join_source_field'))
-                  kept_filters = []
-                  for f in cleaned.get('filters') or []:
-                      value = (f or {}).get('value')
-                      if isinstance(value, str) and value.strip().startswith('$stage'):
-                          dropped_stage_ref_filters += 1
-                          continue
-                      kept_filters.append(f)
-                  cleaned['filters'] = kept_filters
-              cleaned['sanitize_report'] = {
-                  'original_filter_count': len(raw_filters) if isinstance(raw_filters, list) else 0,
-                  'effective_filter_count': len(cleaned['filters']),
-                  'time_mode': time_range.get('mode'),
-                  'dropped_stage_ref_filters': dropped_stage_ref_filters,
-              }
-              return cleaned
-
-
-          def _apply_time_range(time_range):
-              mode = str((time_range or {}).get('mode') or 'none').strip()
-              if mode == 'none':
-                  return None
-              field = str((time_range or {}).get('field') or '').strip()
-              if not field:
-                  raise ValueError('validator-normalized time_range.field is required')
-              if mode == 'relative_days':
-                  days = int((time_range or {}).get('relative_days') or 0)
-                  start_dt = datetime.now(SGT) - timedelta(days=days)
-                  return {field: {'$gte': start_dt.isoformat()}}
-              if mode == 'absolute':
-                  cond = {}
-                  start = str((time_range or {}).get('start') or '').strip()
-                  end = str((time_range or {}).get('end') or '').strip()
-                  if start:
-                      cond['$gte'] = start
-                  if end:
-                      cond['$lte'] = end
-                  return {field: cond} if cond else None
-              raise ValueError(f'unsupported time_range.mode: {mode}')
-
-
-          def _collect_expected_row_fields(stage=None, validated_ast=None, normalized_plan=None):
-              fields = set()
-
-              def add(value):
-                  if isinstance(value, str) and value.strip():
-                      fields.add(value.strip())
-
-              def add_many(values):
-                  if isinstance(values, list):
-                      for value in values:
-                          if isinstance(value, dict):
-                              add(value.get('alias') or value.get('field'))
-                          else:
-                              add(value)
-
-              for src in [stage or {}]:
-                  if not isinstance(src, dict):
-                      continue
-                  add_many(src.get('group_fields'))
-                  add(src.get('metric_alias'))
-                  add(src.get('metric_field'))
-                  add(src.get('x_field'))
-                  add(src.get('y_field'))
-
-              ast = validated_ast if isinstance(validated_ast, dict) else {}
-              add_many(ast.get('group_by'))
-              add_many(ast.get('aggregations'))
-
-              plan = normalized_plan if isinstance(normalized_plan, dict) else {}
-              visualization = plan.get('visualization') if isinstance(plan.get('visualization'), dict) else {}
-              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
-              for src in (visualization, chart_request):
-                  add(src.get('x_field') or src.get('x_axis'))
-                  add(src.get('y_field') or src.get('y_axis'))
-
-              return fields
-
-
-          def _is_scalar_value(value):
-              return value is None or isinstance(value, (str, int, float, bool))
-
-
-          def _find_best_rows(obj, expected_fields=None):
-              expected_fields = set(expected_fields or [])
-              preferred_path_keys = {'rows', 'merged_rows', 'records', 'items', 'list', 'docs'}
-              container_path_keys = {'data', 'result', 'payload'}
-              metadata_path_keys = {'debug', 'headers', 'raw_response', 'trace', 'pipeline', 'request', 'metadata'}
-              best = []
-              best_score = -1
-
-              def score_rows(rows, path):
-                  if not isinstance(rows, list) or not rows:
-                      return -1
-                  sample = rows[:20]
-                  dict_items = [item for item in sample if isinstance(item, dict)]
-                  if not dict_items:
-                      return -1
-
-                  score = min(len(rows), 100)
-                  dict_ratio = len(dict_items) / float(len(sample))
-                  if dict_ratio < 0.8:
-                      score -= 30
-                  score += int(dict_ratio * 20)
-
-                  field_counts = {}
-                  numeric_fields = set()
-                  dimension_fields = set()
-                  for item in dict_items:
-                      for key, value in item.items():
-                          field = str(key or '').strip()
-                          if not field:
-                              continue
-                          field_counts[field] = field_counts.get(field, 0) + 1
-                          if isinstance(value, (int, float)) and not isinstance(value, bool):
-                              numeric_fields.add(field)
-                          elif _is_scalar_value(value):
-                              dimension_fields.add(field)
-
-                  if not field_counts:
-                      return -1
-
-                  stable_threshold = max(1, int(len(dict_items) * 0.6))
-                  stable_fields = {field for field, count in field_counts.items() if count >= stable_threshold}
-                  score += min(len(stable_fields), 20) * 2
-
-                  avg_field_count = sum(len(item.keys()) for item in dict_items) / float(len(dict_items))
-                  if 1 <= avg_field_count <= 50:
-                      score += 10
-                  elif avg_field_count > 80:
-                      score -= 20
-
-                  expected_hits = stable_fields & expected_fields
-                  score += len(expected_hits) * 8
-                  if dimension_fields:
-                      score += 12
-                  if numeric_fields:
-                      score += 12
-                  if dimension_fields and numeric_fields:
-                      score += 10
-
-                  path_keys = {str(part or '').lower() for part in path}
-                  if path_keys & preferred_path_keys:
-                      score += 30
-                  if path_keys & container_path_keys:
-                      score += 8
-                  if path_keys & metadata_path_keys:
-                      score -= 40
-
-                  return score
-
-              def visit(node, path=()):
-                  nonlocal best, best_score
-                  if isinstance(node, list):
-                      s = score_rows(node, path)
-                      if s > best_score:
-                          best, best_score = node, s
-                      for idx, item in enumerate(node[:20]):
-                          visit(item, path + (str(idx),))
-                  elif isinstance(node, dict):
-                      ordered_keys = ('rows', 'merged_rows', 'records', 'items', 'list', 'docs', 'data', 'result', 'payload')
-                      visited = set()
-                      for key in ordered_keys:
-                          if key in node:
-                              visited.add(key)
-                              visit(node.get(key), path + (key,))
-                      for key, value in node.items():
-                          if key not in visited:
-                              visit(value, path + (str(key),))
-
-              visit(obj)
-              return best
-
-
-          def _unique_values(rows, field):
-              values = []
-              seen = set()
-              for row in rows or []:
-                  if not isinstance(row, dict):
-                      continue
-                  value = row.get(field)
-                  if isinstance(value, list):
-                      for item in value:
-                          text = str(item or '').strip()
-                          if text and text not in seen:
-                              seen.add(text)
-                              values.append(text)
-                  else:
-                      text = str(value or '').strip()
-                      if text and text not in seen:
-                          seen.add(text)
-                          values.append(text)
-              return values
-
-
-          def _detect_visualization_intent(query_text):
-              text = str(query_text or '').strip()
-
-              if not text:
-                  return {'enabled': False, 'chart_type': ''}
-              has_generic = any(k in text for k in ['图表', '可视化'])
-              has_bar = any(k in text for k in ['柱状图', '条形图', '对比图'])
-              has_line = any(k in text for k in ['折线图', '趋势图'])
-              has_pie = '饼图' in text
-              enabled = has_generic or has_bar or has_line or has_pie
-              chart_type = ''
-              if has_bar:
-                  chart_type = 'bar'
-              elif has_line:
-                  chart_type = 'line'
-              elif has_pie:
-                  chart_type = 'pie'
-              elif has_generic:
-                  chart_type = 'bar'
-              return {'enabled': enabled, 'chart_type': chart_type}
-
-
-
-          COMPILER_SUPPORTED_INTENT_TYPES = {'detail_query', 'aggregate_summary', 'group_top_entity', 'group_top_record', 'enrich_related'}
-          INTENT_TYPE_ALIASES = {
-              'aggregate': 'aggregate_summary',
-              'aggregation': 'aggregate_summary',
-              'summary': 'aggregate_summary',
-              'aggregate_summary': 'aggregate_summary',
-              'group_by': 'aggregate_summary',
-              'group': 'aggregate_summary',
-              'grouping': 'aggregate_summary',
-              'group_count': 'aggregate_summary',
-              'group_stat': 'aggregate_summary',
-              'group_statistics': 'aggregate_summary',
-              'count_by_group': 'aggregate_summary',
-              'grouped_count': 'aggregate_summary',
-              'group_by_metric': 'aggregate_summary',
-              'group_and_metric': 'aggregate_summary',
-              'aggregation_by_group': 'aggregate_summary',
-              'group_summary': 'aggregate_summary',
-              'metric_by_group': 'aggregate_summary',
-              'chart_aggregate': 'aggregate_summary',
-              'group_by_dimension': 'aggregate_summary',
-              'group_by_dimension_with_time_range_and_aggregation': 'aggregate_summary',
-              'group_by_metric_with_time_filter': 'aggregate_summary',
-              'aggregate_group_by': 'aggregate_summary',
-              'aggregate_group': 'aggregate_summary',
-              'aggregation_group': 'aggregate_summary',
-              'aggregate_grouped': 'aggregate_summary',
-              'aggregation_grouped': 'aggregate_summary',
-              'group_metric': 'aggregate_summary',
-              'group_metric_summary': 'aggregate_summary',
-              'group_metric_aggregate': 'aggregate_summary',
-              'group_metric_aggregation': 'aggregate_summary',
-              'group_aggregate': 'aggregate_summary',
-              'grouped_aggregate': 'aggregate_summary',
-              'grouped_aggregation': 'aggregate_summary',
-              'aggregation_grouped': 'aggregate_summary',
-              'grouped_metric_aggregation': 'aggregate_summary',
-              'aggregate_by_group': 'aggregate_summary',
-              'aggregate_by_dimension': 'aggregate_summary',
-              'dimension_aggregate': 'aggregate_summary',
-              'summary_by_group': 'aggregate_summary',
-              'summary_by_dimension': 'aggregate_summary',
-              'detail': 'detail_query',
-              'detail_query': 'detail_query',
-              'find': 'detail_query',
-              'find_query': 'detail_query',
-              'query': 'detail_query',
-              'group_top_entity': 'group_top_entity',
-              'top_entity': 'group_top_entity',
-              'group_top_record': 'group_top_record',
-              'top_record': 'group_top_record',
-              'enrich_related': 'enrich_related',
-              'join': 'enrich_related',
-          }
-
-
-          def _looks_like_grouped_aggregate(stage=None):
-              stage = stage if isinstance(stage, dict) else {}
-              group_fields = stage.get('group_fields') or stage.get('group_by') or []
-              metrics = stage.get('metrics') or []
-              return bool(group_fields) and (
-                  bool(stage.get('metric_function'))
-                  or bool(stage.get('metric_field'))
-                  or bool(stage.get('metric_alias'))
-                  or bool(metrics)
-              )
-
-
-          def canonicalize_intent_type(intent_type, stage=None):
-              raw = str(intent_type or '').strip().lower()
-              stage = stage if isinstance(stage, dict) else {}
-              if raw in {'aggregate', 'aggregation'}:
-                  if stage.get('group_fields') and (stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field')):
-                      return 'aggregate_summary'
-                  if stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field'):
-                      return 'aggregate_summary'
-                  if stage.get('filters') or stage.get('projection_fields'):
-                      return 'detail_query'
-              if raw in INTENT_TYPE_ALIASES:
-                  return INTENT_TYPE_ALIASES[raw]
-              normalized_tokens = {token for token in raw.replace('-', '_').split('_') if token}
-              has_aggregate_token = bool(normalized_tokens & {'aggregate', 'aggregation'})
-              has_group_token = bool(normalized_tokens & {'group', 'grouped'})
-              if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and has_aggregate_token and has_group_token:
-                  return 'aggregate_summary'
-              if raw and raw not in COMPILER_SUPPORTED_INTENT_TYPES and _looks_like_grouped_aggregate(stage):
-                  return 'aggregate_summary'
-              if not raw:
-                  has_group = bool(stage.get('group_by') or stage.get('group_fields'))
-                  has_metric = bool(stage.get('metrics') or stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field'))
-                  return 'aggregate_summary' if (has_group or has_metric) else 'detail_query'
-              return raw
-
-          def _is_effectively_empty_stage(stage):
-              if not isinstance(stage, dict):
-                  return True
-              intent = str(stage.get('intent_type') or '').strip()
-              filters = stage.get('filters') or []
-              group_fields = stage.get('group_fields') or []
-              projection_fields = stage.get('projection_fields') or []
-              metric_function = str(stage.get('metric_function') or '').strip()
-              join_source_field = str(stage.get('join_source_field') or '').strip()
-              join_target_field = str(stage.get('join_target_field') or '').strip()
-              limit = int(stage.get('limit') or 0)
-              tr_mode = str(((stage.get('time_range') or {}).get('mode')) or 'none').strip() or 'none'
-              return (
-                  intent in {'', 'detail_query'}
-                  and not filters
-                  and not group_fields
-                  and not projection_fields
-                  and not metric_function
-                  and not join_source_field
-                  and not join_target_field
-                  and tr_mode == 'none'
-                  and limit == 0
-              )
-
-
-          def _coerce_semantic_execution_plan(plan):
-              if not isinstance(plan, dict):
-                  return {}
-              root = plan
-              execution_plan = root.get('execution_plan')
-              if isinstance(execution_plan, dict):
-                  coerced = dict(execution_plan)
-                  for key in ('needs_chart', 'chart_request', 'answer_mode', 'visualization'):
-                      if key in root and key not in coerced:
-                          coerced[key] = root.get(key)
+                  return int(value)
+              except Exception:
+                  return int(default)
+
+
+          def main(
+              arg1: str = '',
+              arg2: str = '',
+              arg3: str = '',
+              schema_context: str = '',
+              collection_selection_json: str = '',
+              question: str = '',
+              schema_metadata_summary_json: str = '',
+              schema_alias_index_summary_json: str = '',
+              schema_context_ref_json: str = '',
+              compact_context_json: str = '',
+              normalized_turn_intent_json: str = '',
+              query_refinement_json: str = '',
+              llm_token_url: str = '',
+              llm_chat_url: str = '',
+              llm_app_id: str = '',
+              llm_static_token: str = '',
+              llm_model: str = '',
+              llm_user: str = '',
+              llm_basic_auth: str = '',
+              llm_timeout_ms=600000,
+              llm_temperature=0,
+              llm_top_p=1,
+              llm_max_completion_tokens=12288,
+              llm_stream='',
+              last_context_json: str = '',
+              turn_intent: str = '',
+              current_date: str = '',
+              **kwargs
+          ):
+              schema_context = schema_context or arg1
+              collection_selection_json = collection_selection_json or arg2
+              question = question or arg3
+              planner = json.loads(collection_selection_json) if isinstance(collection_selection_json, str) and collection_selection_json.strip() else (collection_selection_json or {})
+              schema_context_ref = {}
+              schema_context_ref_warning = ''
+              if schema_context_ref_json:
+                  try:
+                      schema_context_ref = json.loads(schema_context_ref_json) if isinstance(schema_context_ref_json, str) else (schema_context_ref_json or {})
+                  except Exception:
+                      schema_context_ref = {}
+                      schema_context_ref_warning = 'schema_context_ref_json parse failed'
+              if isinstance(schema_context, str):
+                  fresh_schema_context = schema_context
               else:
-                  coerced = dict(root)
-              stages = coerced.get('stages') if isinstance(coerced.get('stages'), list) else []
-              normalized_stages = []
-              for idx, raw in enumerate(stages):
-                  if not isinstance(raw, dict):
-                      normalized_stages.append(raw)
-                      continue
-                  stage = dict(raw)
-                  stage['stage_name'] = str(stage.get('stage_name') or stage.get('stage_id') or f'stage{idx + 1}').strip()
-                  stage['collection'] = str(stage.get('collection') or stage.get('primary_collection') or coerced.get('primary_collection') or '').strip()
-                  intent_type = str(stage.get('intent_type') or '').strip()
-                  intent = str(stage.get('intent') or '').strip().lower()
-                  if intent_type:
-                      intent_type = canonicalize_intent_type(intent_type, stage)
-                      stage['intent_type'] = intent_type
-                  if not intent_type:
-                      if intent in {'find', 'detail', 'detail_query'}:
-                          intent_type = 'detail_query'
-                      elif intent in {'aggregate', 'aggregation', 'summary', 'aggregate_summary'}:
-                          intent_type = 'aggregate_summary'
-                      elif intent in {'group_top_entity', 'top_entity'}:
-                          intent_type = 'group_top_entity'
-                      elif intent in {'group_top_record', 'top_record'}:
-                          intent_type = 'group_top_record'
-                      elif intent in {'enrich_related', 'join'}:
-                          intent_type = 'enrich_related'
-                      else:
-                          has_group = bool(stage.get('group_by') or stage.get('group_fields'))
-                          has_metric = bool(stage.get('metrics') or stage.get('metric_function'))
-                          intent_type = 'aggregate_summary' if (has_group or has_metric) else 'detail_query'
-                      stage['intent_type'] = intent_type
-                  if not stage.get('group_fields') and isinstance(stage.get('group_by'), list):
-                      group_fields = []
-                      for item in stage.get('group_by') or []:
-                          if isinstance(item, str):
-                              group_fields.append(item)
-                          elif isinstance(item, dict):
-                              group_fields.append(str(item.get('field') or item.get('name') or item.get('alias') or '').strip())
-                      stage['group_fields'] = [field for field in group_fields if field]
-                  metrics = stage.get('metrics') if isinstance(stage.get('metrics'), list) else []
-                  if metrics and not stage.get('metric_function'):
-                      metric = metrics[0] if isinstance(metrics[0], dict) else {'function': str(metrics[0])}
-                      stage['metric_function'] = str(metric.get('function') or metric.get('op') or metric.get('name') or 'count').strip()
-                      stage['metric_field'] = str(metric.get('field') or '').strip()
-                      stage['metric_alias'] = str(metric.get('alias') or metric.get('name') or stage['metric_function']).strip()
-                  if not stage.get('projection_fields') and isinstance(stage.get('projection'), list):
-                      stage['projection_fields'] = [str(item.get('field') if isinstance(item, dict) else item).strip() for item in stage.get('projection') or [] if str(item.get('field') if isinstance(item, dict) else item).strip()]
-                  normalized_stages.append(stage)
-              coerced['stages'] = normalized_stages
-              if not str(coerced.get('primary_collection') or '').strip() and normalized_stages:
-                  first = normalized_stages[0] if isinstance(normalized_stages[0], dict) else {}
-                  coerced['primary_collection'] = str(first.get('collection') or first.get('primary_collection') or '').strip()
-              if 'collections' not in coerced:
-                  collections = []
-                  for stage in normalized_stages:
-                      if isinstance(stage, dict) and str(stage.get('collection') or '').strip():
-                          collections.append(str(stage.get('collection')).strip())
-                  coerced['collections'] = list(dict.fromkeys(collections))
-              chart_request = coerced.get('chart_request') if isinstance(coerced.get('chart_request'), dict) else {}
-              if coerced.get('needs_chart') and chart_request and not isinstance(coerced.get('visualization'), dict):
-                  coerced['visualization'] = {
-                      'enabled': True,
-                      'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or '').strip(),
-                      'x_field': str(chart_request.get('x_field') or chart_request.get('x_axis') or '').strip(),
-                      'y_field': str(chart_request.get('y_field') or chart_request.get('y_axis') or '').strip(),
-                      'title': str(chart_request.get('title') or '').strip(),
-                  }
-              return coerced
+                  sections = []
+                  for raw in (schema_context or []):
+                      item = json.loads(raw) if isinstance(raw, str) else (raw or {})
+                      collection_name = str(item.get("collection_name") or "").strip()
+                      role = str(item.get("role") or "").strip()
+                      context_text = str(item.get("context_text") or "").strip()
+                      sections.append(
+                          f"## collection={collection_name}\n"
+                          f"role={role}\n"
+                          f"{context_text}"
+                      )
+                  fresh_schema_context = "\n\n".join(sections)
+              planner_json = json.dumps(planner, ensure_ascii=False, indent=2)
+              collection_selection_text = str(collection_selection_json or '{}')
+              compact_context_text = str(compact_context_json or '{}')
+              schema_metadata_summary_text = str(schema_metadata_summary_json or '{}')
+              schema_alias_index_summary_text = str(schema_alias_index_summary_json or '{}')
+              schema_context = (
+                  f"### 用户问题\n{question}\n\n"
+                  f"### current_date\n{current_date or ''}\n\n"
+                  f"### collection_selection_json（primary_collection 必须来自 selected_primary_collection）\n{collection_selection_text}\n\n"
+                  f"### LLM_查询规划 bootstrap 输出（弱参考，不可覆盖 collection_selection/schema）\n{planner_json}\n\n"
+                  f"### schema_metadata 裁剪摘要（字段/指标/relation/query_rules 使用 canonical name）\n{schema_metadata_summary_text}\n\n"
+                  f"### schema_alias_index 裁剪摘要（别名只能映射到 canonical name）\n{schema_alias_index_summary_text}\n\n"
+                  f"### compact_context_json（弱上下文；不得继承用户已否定字段）\n{compact_context_text}\n\n"
+                  f"### schema_context_ref_json（validator/runtime schema ref；必须与裁剪 metadata collections 对齐）\n{json.dumps(schema_context_ref, ensure_ascii=False) if schema_context_ref else str(schema_context_ref_json or '{}')}\n"
+                  f"{(schema_context_ref_warning + chr(10)) if schema_context_ref_warning else ''}\n"
+                  f"### fresh schema_context（禁止使用未出现在此处或 schema_metadata 中的字段/指标/relation）\n{fresh_schema_context}"
+              )
+              refine_context = ''
+              if str(turn_intent or '').strip() == 'refine_query':
+                  refine_context = (
+                      "\n\n### 多轮 refine_query 要求\n"
+                      "本轮必须重新生成完整 semantic_plan_contract，不输出 patch diff。compact context 只作弱上下文；当前用户明确修改/否定的字段优先，不能继承被否定的旧字段。\n"
+                      "如果用户要求改变 group_fields，必须输出新的 group_fields；如果用户说“不再按 X”，旧 plan 中对应 X 字段必须删除；如果用户说“改按 Y/按 Y 统计”，group_fields 必须替换为 Y 的 schema canonical field。metric/filter/time_range/chart_request 必须同步更新。\n"
+                      f"上一轮上下文JSON:\n{last_context_json}\n\n"
+                      f"本轮意图JSON:\n{normalized_turn_intent_json}\n\n"
+                      f"query_refinement_json:\n{query_refinement_json}\n"
+                  )
+              semantic_plan_user_prompt = f"用户问题:\n{question}\n\nSchema上下文:\n{schema_context}{refine_context}"
+              llm_config = {
+                  "tokenUrl": str(llm_token_url or "").strip(),
+                  "chatUrl": str(llm_chat_url or "").strip(),
+                  "appId": str(llm_app_id or "").strip(),
+                  "staticToken": str(llm_static_token or ""),
+                  "model": str(llm_model or "").strip(),
+                  "user": str(llm_user or "").strip(),
+                  "basic_auth": str(llm_basic_auth or "").strip(),
+                  "timeout-millis": _to_int(llm_timeout_ms, 600000),
+                  "temperature": llm_temperature if llm_temperature is not None else 0,
+                  "top_p": llm_top_p if llm_top_p is not None else 1,
+                  "max_completion_tokens": _to_int(llm_max_completion_tokens, 12288),
+                  "stream": _to_bool(llm_stream),
+              }
 
+              token_request_body = {
+                  "appId": llm_config["appId"],
+                  "credential": base64.b64encode(str(llm_config.get("staticToken") or "").encode("utf-8")).decode("utf-8"),
+              }
 
-          def _normalize_plan(plan, planner, question=''):
-              plan = _coerce_semantic_execution_plan(plan)
-              planner_primary = _ensure_non_empty_string(planner.get('primary_collection'), 'planner.primary_collection')
-              planner_related = set(_ensure_string_list(planner.get('related_collections') or [], 'planner.related_collections'))
-              execution_mode = str(plan.get('execution_mode') or 'single_stage').strip() or 'single_stage'
-              primary_collection = _ensure_non_empty_string(plan.get('primary_collection'), 'execution_plan.primary_collection')
-              if primary_collection != planner_primary:
-                  raise ValueError('execution_plan.primary_collection must match planner.primary_collection')
-              collections = _ensure_string_list(plan.get('collections') or [primary_collection], 'execution_plan.collections')
-              if primary_collection not in collections:
-                  collections = [primary_collection] + [c for c in collections if c != primary_collection]
-              for c in collections:
-                  if c != primary_collection:
-                      planner_related.add(c)
-
-              raw_stages = plan.get('stages') or []
-              if not isinstance(raw_stages, list) or not raw_stages:
-                  raise ValueError('execution_plan.stages must be a non-empty array')
-              for raw in raw_stages:
-                  if not isinstance(raw, dict):
-                      continue
-                  stage_collection = str(raw.get('collection') or '').strip()
-                  if stage_collection and stage_collection not in collections:
-                      collections.append(stage_collection)
-
-              normalized_stages = []
-              seen_stage_names = set()
-              allowed_intents = COMPILER_SUPPORTED_INTENT_TYPES
-              for idx, raw in enumerate(raw_stages):
-                  if not isinstance(raw, dict):
-                      raise ValueError(f'stages[{idx}] must be an object')
-                  stage_name = _ensure_non_empty_string(raw.get('stage_name') or f'stage{idx + 1}', f'stages[{idx}].stage_name')
-                  if stage_name in seen_stage_names:
-                      raise ValueError(f'duplicate stage_name: {stage_name}')
-                  seen_stage_names.add(stage_name)
-                  collection = _ensure_non_empty_string(raw.get('collection'), f'stages[{idx}].collection')
-                  if collection not in collections:
-                      collections.append(collection)
-                  if collection != primary_collection and collection not in planner_related:
-                      planner_related.add(collection)
-                  raw_intent_type = _ensure_non_empty_string(raw.get('intent_type'), f'stages[{idx}].intent_type')
-                  intent_type = canonicalize_intent_type(raw_intent_type, raw)
-                  if intent_type not in allowed_intents:
-                      raise ValueError(f'unsupported intent_type: {raw_intent_type}')
-                  default_limit = 0 if intent_type in {'group_top_entity', 'group_top_record'} else 20
-                  limit = int(raw.get('limit') if raw.get('limit') is not None else default_limit)
-                  if limit < 0:
-                      raise ValueError(f'stages[{idx}].limit must be >= 0')
-                  rank_n = int(raw.get('rank_n') or 0)
-                  if intent_type in {'group_top_entity', 'group_top_record'} and rank_n <= 0:
-                      rank_n = 1
-                  stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
-                  stage = {
-                      'stage_name': stage_name,
-                      'collection': collection,
-                      'depends_on': str(raw.get('depends_on') or '').strip(),
-                      'intent_type': intent_type,
-                      'time_range': stage_time_range,
-                      'group_fields': _ensure_string_list(raw.get('group_fields') or [], f'stages[{idx}].group_fields'),
-                      'entity_field': str(raw.get('entity_field') or '').strip(),
-                      'metric_function': str(raw.get('metric_function') or '').strip(),
-                      'metric_field': str(raw.get('metric_field') or '').strip(),
-                      'metric_alias': str(raw.get('metric_alias') or '').strip(),
-                      'rank_n': rank_n,
-                      'rank_order_field': str(raw.get('rank_order_field') or '').strip(),
-                      'rank_direction': str(raw.get('rank_direction') or '').strip() or 'desc',
-                      'sort': raw.get('sort') or [],
-                      'limit': limit,
-                      'projection_mode': str(raw.get('projection_mode') or 'none').strip() or 'none',
-                      'projection_fields': _ensure_string_list(raw.get('projection_fields') or [], f'stages[{idx}].projection_fields'),
-                      'join_source_field': str(raw.get('join_source_field') or '').strip(),
-                      'apply_global_limit': bool(raw.get('apply_global_limit', False)),
-                  }
-                  stage['filters'] = _sanitize_stage_filters(raw.get('filters') or [], stage['time_range'])
-                  if intent_type == 'enrich_related':
-                      stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
-                      stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
-                  if _is_effectively_empty_stage(stage):
-                      continue
-                  normalized_stages.append(stage)
-
-              final_merge = plan.get('final_merge') or {}
-              if not normalized_stages:
-                  raise ValueError('execution_plan has no effective stages')
-              if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
-                  execution_mode = 'single_stage'
-              if execution_mode == 'single_stage':
-                  normalized_stages = normalized_stages[:1]
-              visualization = _normalize_visualization(plan.get('visualization'))
-              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
-              chart_request_title = str(chart_request.get('title') or '').strip()
-              if chart_request_title:
-                  visualization['title'] = chart_request_title
-              # Phase 11: Mongo compiler consumes validator-normalized chart_request
-              # only. Do not infer visualization intent from the user's natural
-              # language in the compile path.
-
-              merge_mode = str(final_merge.get('merge_mode') or 'none').strip() or 'none'
-              if len(normalized_stages) <= 1 or merge_mode == 'none':
-                  execution_mode = 'single_stage'
-                  merge_mode = 'none'
               return {
-                  'execution_mode': execution_mode,
-                  'primary_collection': primary_collection,
-                  'collections': collections,
-                  'reasoning': str(plan.get('reasoning') or '').strip(),
-                  'visualization': visualization,
-                  'stages': normalized_stages,
-                  'final_merge': {
-                      'merge_mode': merge_mode,
-                      'left_stage': str(final_merge.get('left_stage') or (normalized_stages[0]['stage_name'] if normalized_stages else '')).strip(),
-                      'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
-                      'left_field': str(final_merge.get('left_field') or '').strip(),
-                      'right_field': str(final_merge.get('right_field') or '').strip(),
-                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
-                  },
+                  "schema_context": schema_context,
+                  "schema_metadata_json": schema_metadata_summary_text,
+                  "schema_alias_index_json": schema_alias_index_summary_text,
+                  "schema_context_ref_json": json.dumps(schema_context_ref, ensure_ascii=False) if schema_context_ref else str(schema_context_ref_json or '{}'),
+                  "prompt": semantic_plan_user_prompt,
+                  "prompt_json": json.dumps({"system": SEMANTIC_PLAN_SYSTEM_PROMPT, "user": semantic_plan_user_prompt, "schema_context_ref": schema_context_ref, "warnings": [schema_context_ref_warning] if schema_context_ref_warning else []}, ensure_ascii=False),
+                  "planner_json": planner_json,
+                  "semantic_plan_system_prompt": SEMANTIC_PLAN_SYSTEM_PROMPT,
+                  "semantic_plan_user_prompt": semantic_plan_user_prompt,
+                  "semantic_plan_json_schema": SEMANTIC_PLAN_CONTRACT_SCHEMA_JSON,
+                  "token_url": llm_config["tokenUrl"],
+                  "chat_url": llm_config["chatUrl"],
+                  "llm_config_json": json.dumps(llm_config, ensure_ascii=False),
+                  "token_request_body_json": json.dumps(token_request_body, ensure_ascii=False),
+                  "request_id": f"llm_{uuid.uuid4().hex}",
               }
-
-
-          def _build_stage_match(stage):
-              parts = []
-              time_expr = _apply_time_range(stage.get('time_range'))
-              if time_expr:
-                  parts.append(time_expr)
-              for idx, f in enumerate(stage.get('filters') or []):
-                  if not isinstance(f, dict):
-                      raise ValueError(f"{stage['stage_name']}.filters[{idx}] must be an object")
-                  field = _ensure_non_empty_string(f.get('field'), f"{stage['stage_name']}.filters[{idx}].field")
-                  operator = _ensure_non_empty_string(f.get('operator'), f"{stage['stage_name']}.filters[{idx}].operator")
-                  value = f.get('value')
-                  parts.append(_build_match_expr(field, operator, value))
-              return _merge_match(parts)
-
-
-          def _append_projection(pipeline, fields):
-              unique_fields = []
-              seen = set()
-              for field in fields or []:
-                  text = str(field or '').strip()
-                  if text and text not in seen:
-                      seen.add(text)
-                      unique_fields.append(text)
-              if not unique_fields:
-                  return
-              proj = {'_id': 0}
-              for field in unique_fields:
-                  proj[field] = f'${field}'
-              pipeline.append({'$project': proj})
-
-
-          def _compile_detail_query(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              _append_projection(pipeline, stage.get('projection_fields'))
-              sort_stage = {}
-              for s in stage.get('sort') or []:
-                  field = _ensure_non_empty_string(s.get('field'), f"{stage['stage_name']}.sort.field")
-                  direction = -1 if str(s.get('direction') or 'desc').strip() == 'desc' else 1
-                  sort_stage[field] = direction
-              if sort_stage:
-                  pipeline.append({'$sort': sort_stage})
-              if int(stage.get('limit') or 0) > 0:
-                  pipeline.append({'$limit': int(stage['limit'])})
-              validated_ast = {
-                  'primary_collection': stage['collection'],
-                  'collections': [stage['collection']],
-                  'expands': [],
-                  'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                  'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                  'aggregations': [],
-                  'group_by': [],
-                  'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
-                  'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in stage.get('projection_fields') or []],
-                  'reasoning': stage['intent_type'],
-              }
-              return validated_ast, pipeline
-
-
-          def _compile_aggregate_summary(stage, schema_context, stage_outputs):
-              pipeline = []
-              match_expr = _build_stage_match(stage)
-              if match_expr:
-                  pipeline.append({'$match': match_expr})
-              group_fields = stage.get('group_fields') or []
-              metric_alias = _ensure_non_empty_string(stage.get('metric_alias'), f"{stage['stage_name']}.metric_alias")
-              metric_function = _ensure_non_empty_string(stage.get('metric_function'), f"{stage['stage_name']}.metric_function")
-              metric_field = _ensure_non_empty_string(stage.get('metric_field'), f"{stage['stage_name']}.metric_field")
-              if metric_function == 'count':
-                  agg_expr = {'$sum': 1}
-              else:
-                  op_map = {'sum': '$sum', 'avg': '$avg', 'max': '$max', 'min': '$min'}
-                  if metric_function not in op_map:
+        code_language: python3
+        desc: 汇总Schema上下文，准备语义计划提示词与内部LLM调用请求
+        outputs:
+          chat_url:
+            children:
+            type: string
+          llm_config_json:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          prompt:
+            children:
+            type: string
+          prompt_json:
+            children:
+            type: string
+          planner_json:
+            children:
+            type: string
+          request_id:
+            children:
+            type: string
+          schema_context:
+            children:
+            type: string
+          semantic_plan_json_schema:
+            children:
+            type: string
+          semantic_plan_system_prompt:
+            children:
+            type: string
+          semantic_plan_user_prompt:
+            children:
+            type: string
+          token_request_body_json:
+            children:
+            type: string
+          token_url:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并Schema上下文并准备语义计划提示词
+        type: code
+        variables:
+        - value_selector:
+          - '1777100000005'
+          - schema_context
+          value_type: string
+          variable: arg1
+        - value_selector:
+          - '1777000000001'
+          - collection_selection_json
+          value_type: string
+          variable: arg2
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: arg3
+        - value_selector:
+          - env
+          - LLM_TOKEN_URL
+          value_type: string
+          variable: llm_token_url
+        - value_selector:
+          - env
+          - LLM_CHAT_URL
+          value_type: string
+          variable: llm_chat_url
+        - value_selector:
+          - env
+          - LLM_APP_ID
+          value_type: string
+          variable: llm_app_id
+        - value_selector:
+          - env
+          - LLM_STATIC_TOKEN
+          value_type: string
+          variable: llm_static_token
+        - value_selector:
+          - env
+          - LLM_MODEL
+          value_type: string
+          variable: llm_model
+        - value_selector:
+          - env
+          - LLM_USER
+          value_type: string
+          variable: llm_user
+        - value_selector:
+          - env
+          - LLM_BASIC_AUTH
+          value_type: string
+          variable: llm_basic_auth
+        - value_selector:
+          - env
+          - LLM_TIMEOUT_MS
+          value_type: number
+          variable: llm_timeout_ms
+        - value_selector:
+          - env
+          - LLM_TEMPERATURE
+          value_type: number
+          variable: llm_temperature
+        - value_selector:
+          - env
+          - LLM_TOP_P
+          value_type: number
+          variable: llm_top_p
+        - value_selector:
+          - env
+          - LLM_MAX_COMPLETION_TOKENS
+          value_type: number
+          variable: llm_max_completion_tokens
+        - value_selector:
+          - env
+          - LLM_STREAM
+          value_type: string
+          variable: llm_stream
+        - value_selector:
+          - '1776000000001'
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1776000000004'
+          - normalized_turn_intent_json
+          value_type: string
+          variable: normalized_turn_intent_json
+        - value_selector:
+          - '1776000000004'
+          - turn_intent
+          value_type: string
+          variable: turn_intent
+        - value_selector:
+          - '1776000000004'
+          - query_refinement_json
+          value_type: string
+          variable: query_refinement_json
+        - value_selector:
+          - '1777000000001'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1776000000001'
+          - compact_context_json
+          value_type: string
+          variable: compact_context_json
+        - value_selector:
+          - '1777100000005'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_summary_json
+        - value_selector:
+          - '1777100000005'
+          - schema_alias_index_json
+          value_type: string
+          variable: schema_alias_index_summary_json
+        - value_selector:
+          - '1777100000005'
+          - schema_context_ref_json
+          value_type: string
+          variable: schema_context_ref_json
+      height: 96
+      id: '1775000000005'
+      position:
+        x: 6720
+        y: -620
+      positionAbsolute:
+        x: 6720
+        y: -620
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242

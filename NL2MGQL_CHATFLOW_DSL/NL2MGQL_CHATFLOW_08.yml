@@ -1,3 +1,86 @@
+    - data:
+        code: |
+          import json
+          from datetime import datetime, timezone
+          import re
+
+          # schema metadata C contract helpers
+          import copy
+          import hashlib
+          import json
+          import re
+
+
+          CONTRACT_VERSION = 'schema_metadata_contract'
+          ALIAS_INDEX_CONTRACT_VERSION = 'schema_alias_index_contract'
+          NON_SEMANTIC_SCHEMA_KEYS = {'warnings', 'parse_errors', 'source_refs', 'raw_schema', 'raw_schema_text', 'schema_digest'}
+
+
+          def default_query_rules():
+              return {
+                  'require_time_range_for_aggregate': True,
+                  'max_limit': 100,
+                  'allowed_operations': ['find', 'aggregate'],
+                  'aggregate_required_when': [],
+                  'find_allowed_when': [],
+                  'sensitive_field_policy': 'deny_return_group_sort',
+                  'default_limit': 100,
+                  'max_time_range_days': 366,
+              }
+
+
+          def _strip_quotes(v):
+              v = str(v or '').strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                  return v[1:-1]
+              return v
+
+
+          def _split_inline_list(body):
+              # Simple comma split that keeps quoted Chinese/ASCII aliases intact for the schema docs used here.
+              return [_strip_quotes(x.strip()) for x in re.split(r'\s*,\s*', str(body or '')) if x.strip()]
+
+
+          def _parse_scalar(v):
+              v = str(v or '').strip()
+              if not v:
+                  return ''
+              if v in {'|', '>', '|-', '>-'}:
+                  return ''
+              if v in {'true', 'True'}:
+                  return True
+              if v in {'false', 'False'}:
+                  return False
+              if v in {'null', 'Null', 'NULL', '~'}:
+                  return None
+              if v.startswith('[') and v.endswith(']'):
+                  return _split_inline_list(v[1:-1].strip())
+              if v.startswith('{') and v.endswith('}'):
+                  try:
+                      return json.loads(v)
+                  except Exception:
+                      return _strip_quotes(v)
+              if re.match(r'^-?\d+$', v):
+                  try:
+                      return int(v)
+                  except Exception:
+                      pass
+              if re.match(r'^-?\d+\.\d+$', v):
+                  try:
+                      return float(v)
+                  except Exception:
+                      pass
+              return _strip_quotes(v)
+
+
+          def _parse_simple_yaml(text):
+              root = {}
+              stack = [(-1, root)]
+              lines = str(text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+              i = 0
+              while i < len(lines):
+                  raw = lines[i]
+                  if not raw.strip() or raw.lstrip().startswith('#'):
                       i += 1
                       continue
                   indent = len(raw) - len(raw.lstrip(' '))
@@ -898,3 +981,656 @@
 
           def _first_stage_for_context(plan):
               stages = _execution_stages(plan if isinstance(plan, dict) else {})
+              return stages[0] if stages and isinstance(stages[0], dict) else {}
+
+
+          COMPACT_CONTEXT_TARGET_BYTES = 12000
+          COMPACT_CONTEXT_HARD_BYTES = 60000
+          MAX_PREVIEW_ROWS = 5
+          MAX_PREVIEW_FIELDS = 20
+          MAX_PREVIEW_STRING = 200
+
+
+          def _safe_int_value(value, default=0):
+              try:
+                  return int(value)
+              except Exception:
+                  return default
+
+
+          def _dedupe_values(values, limit=50):
+              out = []
+              for value in values or []:
+                  text = str(value or '').strip()
+                  if text and text not in out:
+                      out.append(text)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
+          def _compact_value(value, max_len=MAX_PREVIEW_STRING):
+              if isinstance(value, str):
+                  return value[:max_len]
+              if isinstance(value, (int, float, bool)) or value is None:
+                  return value
+              try:
+                  return json.dumps(value, ensure_ascii=False, default=str)[:max_len]
+              except Exception:
+                  return str(value)[:max_len]
+
+
+          def _normalize_time_range(value):
+              value = value if isinstance(value, dict) else {}
+              return {
+                  'field': str(value.get('field') or ''),
+                  'mode': str(value.get('mode') or ''),
+                  'relative_days': _safe_int_value(value.get('relative_days'), 0),
+                  'start': str(value.get('start') or ''),
+                  'end': str(value.get('end') or ''),
+              }
+
+
+          def _compact_rows_profile(rows):
+              fields = []
+              numeric_fields = []
+              dimension_fields = []
+              preview_rows = []
+              for row in rows or []:
+                  if not isinstance(row, dict):
+                      continue
+                  for key, value in row.items():
+                      name = str(key)
+                      if name not in fields:
+                          fields.append(name)
+                      if isinstance(value, (int, float)) and not isinstance(value, bool):
+                          if name not in numeric_fields:
+                              numeric_fields.append(name)
+                      elif isinstance(value, (str, bool)) or value is None:
+                          if name not in dimension_fields:
+                              dimension_fields.append(name)
+                  if len(preview_rows) < MAX_PREVIEW_ROWS:
+                      compact = {}
+                      for key, value in row.items():
+                          if len(compact) >= MAX_PREVIEW_FIELDS:
+                              break
+                          compact[str(key)] = _compact_value(value)
+                      preview_rows.append(compact)
+              return {
+                  'row_count': len(rows or []),
+                  'fields': fields[:80],
+                  'numeric_fields': numeric_fields[:40],
+                  'dimension_fields': dimension_fields[:40],
+                  'preview_rows': preview_rows,
+              }
+
+
+          def _compact_chart_request(chart_request):
+              chart_request = chart_request if isinstance(chart_request, dict) else {}
+              return {
+                  'enabled': bool(chart_request.get('enabled') or chart_request.get('chart_type') or chart_request.get('type')),
+                  'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or ''),
+                  'x_field': str(chart_request.get('x_field') or chart_request.get('x') or ''),
+                  'y_field': str(chart_request.get('y_field') or chart_request.get('y') or ''),
+                  'series_name': str(chart_request.get('series_name') or chart_request.get('series') or ''),
+                  'title': str(chart_request.get('title') or '')[:200],
+              }
+
+
+          def _schema_context_ref(collections, schema_metadata_json='', collection_catalog_json='', collection_selection_json=''):
+              warnings = []
+              meta = _loads_obj(schema_metadata_json)
+              catalog = _loads_obj(collection_catalog_json)
+              selection = _loads_obj(collection_selection_json)
+              selected = []
+              for item in [selection.get('selected_primary_collection')] + list(selection.get('selected_related_collections') or []) + list(collections or []):
+                  item = str(item or '').strip()
+                  if item and item not in selected:
+                      selected.append(item)
+              digest = str(meta.get('schema_digest') or '')
+              if digest and not digest.startswith('sha256:'):
+                  digest = 'sha256:' + digest
+              catalog_digest = str(catalog.get('catalog_digest') or selection.get('collection_catalog_digest') or '')
+              if catalog_digest and not catalog_digest.startswith('sha256:'):
+                  catalog_digest = 'sha256:' + catalog_digest
+              if not digest:
+                  warnings.append('schema_context_ref.schema_digest 缺失；compact context 仅保存引用摘要，不写入完整 schema。')
+              if not catalog_digest:
+                  warnings.append('schema_context_ref.catalog_digest 缺失；下一轮需要重新确认 collection catalog。')
+              return {
+                  'ref': {
+                      'collections': selected,
+                      'schema_digest': digest,
+                      'schema_version': str(meta.get('schema_version') or ''),
+                      'catalog_digest': catalog_digest,
+                  },
+                  'warnings': warnings,
+              }
+
+
+          def _first_stage_summary(stage, primary, related):
+              stage = stage if isinstance(stage, dict) else {}
+              return {
+                  'primary_collection': primary or str(stage.get('collection') or ''),
+                  'related_collections': related if isinstance(related, list) else [],
+                  'intent_type': str(stage.get('intent_type') or ''),
+                  'time_range': _normalize_time_range(stage.get('time_range')),
+                  'filters': stage.get('filters') if isinstance(stage.get('filters'), list) else [],
+                  'group_fields': stage.get('group_fields') if isinstance(stage.get('group_fields'), list) else [],
+                  'metric_alias': str(stage.get('metric_alias') or ''),
+                  'metric_function': str(stage.get('metric_function') or ''),
+                  'metric_field': str(stage.get('metric_field') or ''),
+                  'sort': stage.get('sort') if isinstance(stage.get('sort'), list) else [],
+                  'limit': _safe_int_value(stage.get('limit'), 0),
+                  'projection_fields': stage.get('projection_fields') if isinstance(stage.get('projection_fields'), list) else [],
+              }
+
+
+          def _dump_compact_context(compact):
+              compact['answer_summary'] = str(compact.get('answer_summary') or '')[:800]
+              compact.setdefault('context_warnings', [])
+              compact['size_guard'] = {'max_bytes': COMPACT_CONTEXT_TARGET_BYTES, 'actual_bytes': 0, 'truncated': False, 'truncate_reason': ''}
+              text = json.dumps(compact, ensure_ascii=False)
+              compact['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
+              if compact['size_guard']['actual_bytes'] > COMPACT_CONTEXT_TARGET_BYTES:
+                  compact['last_result_profile']['preview_rows'] = compact['last_result_profile'].get('preview_rows', [])[:3]
+                  compact['answer_summary'] = compact.get('answer_summary', '')[:400]
+                  compact['size_guard']['truncated'] = True
+                  compact['size_guard']['truncate_reason'] = 'compact_context 超过 12000 bytes，裁剪 preview_rows 与 answer_summary。'
+                  compact['context_warnings'].append(compact['size_guard']['truncate_reason'])
+                  text = json.dumps(compact, ensure_ascii=False)
+                  compact['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
+              if compact['size_guard']['actual_bytes'] > COMPACT_CONTEXT_HARD_BYTES:
+                  compact['last_result_profile']['preview_rows'] = []
+                  compact['answer_summary'] = compact.get('answer_summary', '')[:200]
+                  compact['size_guard']['truncated'] = True
+                  compact['size_guard']['truncate_reason'] = 'compact_context 超过 60000 bytes 硬上限，清空 preview_rows。'
+                  compact['context_warnings'].append(compact['size_guard']['truncate_reason'])
+                  text = json.dumps(compact, ensure_ascii=False)
+                  compact['size_guard']['actual_bytes'] = len(text.encode('utf-8'))
+              return json.dumps(compact, ensure_ascii=False)
+
+
+          def _compact_context_contract(question, normalized_plan, chart_request, rows, answer_summary, schema_metadata_json='', collection_catalog_json='', collection_selection_json=''):
+              stage = _first_stage_for_context(normalized_plan)
+              primary = str((normalized_plan or {}).get('primary_collection') or stage.get('primary_collection') or stage.get('collection') or '').strip()
+              collections = _dedupe_values([primary] + list((normalized_plan or {}).get('related_collections') or []))
+              if not collections and stage.get('collection'):
+                  collections.append(str(stage.get('collection')).strip())
+              related = [c for c in collections if c and c != primary]
+              plan_summary = _first_stage_summary(stage, primary, related)
+              result_profile = _compact_rows_profile(rows)
+              chart = _compact_chart_request(chart_request)
+              schema_ref_payload = _schema_context_ref(collections, schema_metadata_json, collection_catalog_json, collection_selection_json)
+              warnings = list(schema_ref_payload.get('warnings') or [])
+              compact = {
+                  'context_version': 'compact_context_contract',
+                  'has_last_context': bool(question and (primary or plan_summary.get('group_fields') or plan_summary.get('metric_alias') or result_profile.get('row_count') or answer_summary)),
+                  'last_question': str(question or '')[:1000],
+                  'last_turn_intent': {'turn_intent': '', 'refine_type': ''},
+                  'last_primary_collection': primary,
+                  'last_related_collections': related,
+                  'last_plan_summary': plan_summary,
+                  'last_resolved_fields': _dedupe_values(plan_summary.get('group_fields') + plan_summary.get('projection_fields') + [plan_summary.get('metric_field')], 80),
+                  'last_resolved_metrics': _dedupe_values([plan_summary.get('metric_alias'), plan_summary.get('metric_field')], 40),
+                  'last_chart_request': chart,
+                  'last_result_profile': result_profile,
+                  'schema_context_ref': schema_ref_payload.get('ref') or {'collections': [], 'schema_digest': '', 'schema_version': '', 'catalog_digest': ''},
+                  'answer_summary': str(answer_summary or '')[:800],
+                  'size_guard': {'max_bytes': COMPACT_CONTEXT_TARGET_BYTES, 'actual_bytes': 0, 'truncated': False, 'truncate_reason': ''},
+                  'context_warnings': warnings,
+              }
+              return compact
+
+
+
+          BANNED_CONTEXT_KEYS = {
+              'schema_metadata_json', 'schema_alias_index_json', 'schema_runtime_context_json',
+              'hydrated_schema_metadata_json', 'hydrated_schema_alias_index_json', 'collection_catalog_json',
+              'raw_schema_docs', 'raw_llm_response', 'full_prompt', 'pipeline_json', 'request_body_json',
+              'query_response_body', 'query_response_headers', 'compiler_debug_json', 'validator_debug',
+              'chart_debug', 'stage_execution_trace', 'full_rows', 'rows_json', 'merged_rows_json',
+              'echarts option', 'echarts_markdown', 'chart_payload.option', 'chart_payload.echarts_markdown'
+          }
+
+          ANSWER_PAYLOAD_CONTRACT_VERSION = 'answer_payload_contract'
+          CONTEXT_UPDATE_CONTRACT_VERSION = 'context_update_contract'
+          COMPACT_CONTEXT_CONTRACT_VERSION = 'compact_context_contract'
+
+
+          def _loads_any(value, fallback=None):
+              if fallback is None:
+                  fallback = {}
+              if isinstance(value, (dict, list)):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  try:
+                      return json.loads(value)
+                  except Exception:
+                      return fallback
+              return fallback
+
+
+          def _safe_bool(value):
+              if isinstance(value, bool):
+                  return value
+              if isinstance(value, str):
+                  return value.strip().lower() in {'true', '1', 'yes', 'y'}
+              return bool(value)
+
+
+          def _safe_int(value, default=0):
+              try:
+                  if value in (None, '') or isinstance(value, bool):
+                      return default
+                  return int(float(value))
+              except Exception:
+                  return default
+
+
+          def _compact_chart_payload(payload):
+              if not isinstance(payload, dict):
+                  return {'enabled': False, 'summary': '', 'warning': ''}
+              allowed = ('contract_version', 'enabled', 'chart_type', 'title', 'x_field', 'y_field', 'series_name', 'summary', 'warning', 'data_profile')
+              out = {k: payload.get(k) for k in allowed if k in payload}
+              out.pop('option', None)
+              out.pop('echarts_markdown', None)
+              out.pop('chart_debug', None)
+              profile = out.get('data_profile') if isinstance(out.get('data_profile'), dict) else {}
+              if profile:
+                  out['data_profile'] = {
+                      'row_count': _safe_int(profile.get('row_count'), 0),
+                      'fields': [str(x) for x in (profile.get('fields') or [])[:50]],
+                      'preview_rows': [r for r in (profile.get('preview_rows') or [])[:5] if isinstance(r, dict)],
+                  }
+              return out
+
+
+          def _query_result_profile(query_result_json, rows, fields_json='', row_count=0):
+              qr = _loads_any(query_result_json, {})
+              profile = qr.get('profile') if isinstance(qr, dict) and isinstance(qr.get('profile'), dict) else {}
+              qr_rows = profile.get('preview_rows') if isinstance(profile.get('preview_rows'), list) else []
+              source_rows = qr_rows or _rows(rows)[:5]
+              fields = []
+              if isinstance(qr, dict) and isinstance(qr.get('fields'), list):
+                  fields = qr.get('fields') or []
+              if not fields:
+                  parsed_fields = _loads_any(fields_json, [])
+                  fields = parsed_fields if isinstance(parsed_fields, list) else []
+              if not fields:
+                  fields = _fields(source_rows, [])[:50]
+              count = _safe_int(row_count, -1)
+              if count < 0 and isinstance(qr, dict):
+                  count = _safe_int(qr.get('row_count'), -1)
+              if count < 0:
+                  count = len(_rows(rows))
+              numeric_fields = profile.get('numeric_fields') if isinstance(profile.get('numeric_fields'), list) else []
+              dimension_fields = profile.get('dimension_fields') if isinstance(profile.get('dimension_fields'), list) else []
+              if (not numeric_fields and not dimension_fields) and source_rows:
+                  for f in [str(x) for x in fields[:50]]:
+                      vals = [r.get(f) for r in source_rows if isinstance(r, dict) and r.get(f) is not None]
+                      if vals and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+                          numeric_fields.append(f)
+                      else:
+                          dimension_fields.append(f)
+              return {
+                  'row_count': max(0, count),
+                  'fields': [str(x) for x in fields[:50]],
+                  'preview_rows': [r for r in source_rows[:5] if isinstance(r, dict)],
+                  'numeric_fields': [str(x) for x in numeric_fields[:40]],
+                  'dimension_fields': [str(x) for x in dimension_fields[:40]],
+              }
+
+
+          def _query_success(query_result_json, execution_success=True):
+              qr = _loads_any(query_result_json, {})
+              if isinstance(qr, dict) and 'success' in qr:
+                  return _safe_bool(qr.get('success'))
+              if isinstance(qr, dict) and 'execution_success' in qr:
+                  return _safe_bool(qr.get('execution_success'))
+              return _safe_bool(execution_success)
+
+
+          def _normalize_result_summary_prefix(summary):
+              s = str(summary or '').strip()
+              if s.startswith('结果摘要：'):
+                  return s
+              if s.startswith('结果摘要:'):
+                  return '结果摘要：' + s[len('结果摘要:'):].lstrip()
+              return ('结果摘要：' + chr(10) + s) if s else ''
+
+          def _compiler_error(query_result_json, execution_error=''):
+              qr = _loads_any(query_result_json, {})
+              msg = ''
+              if isinstance(qr, dict):
+                  msg = str(qr.get('execution_error') or qr.get('error') or qr.get('message') or '')
+              raw = (str(execution_error or '') or msg)[:300]
+              if raw:
+                  return '执行阶段失败，已隐藏内部错误细节。'
+              return '执行阶段返回失败。'
+
+
+          def _markdown_from_payload(payload):
+              parts = []
+              for key in ('answer_text', 'chart_echarts_markdown', 'message'):
+                  val = str(payload.get(key) or '').strip()
+                  if val and val not in parts:
+                      parts.append(val)
+              return '\n\n'.join(parts).strip() or '系统在处理该查询时出现异常，请调整问题后重试。'
+
+
+          def _answer_payload(answer_type, answer_text='', chart_markdown='', result_summary='', message='', chart_payload=None, query_profile=None, should_save=True, context_summary=None):
+              return {
+                  'contract_version': ANSWER_PAYLOAD_CONTRACT_VERSION,
+                  'answer_type': answer_type or 'system_error',
+                  'answer_text': str(answer_text or ''),
+                  'chart_echarts_markdown': str(chart_markdown or ''),
+                  'result_summary': str(result_summary or ''),
+                  'message': str(message or ''),
+                  'chart_payload': _compact_chart_payload(chart_payload or {}),
+                  'query_result_profile': query_profile or {'row_count': 0, 'fields': [], 'preview_rows': []},
+                  'state_update': {
+                      'should_save_context': bool(should_save),
+                      'context_summary': context_summary if isinstance(context_summary, dict) else {},
+                  },
+                        }
+
+
+          def _context_update(compact_context, should_save=True, warnings=None, clear_fields=None):
+              compact = compact_context if isinstance(compact_context, dict) else {}
+              compact_json = _dump_compact_context(compact) if compact else '{}'
+              return {
+                  'contract_version': CONTEXT_UPDATE_CONTRACT_VERSION,
+                  'should_save_context': bool(should_save and compact),
+                  'compact_context': compact,
+                  'last_context_json': compact_json,
+                  'warnings': warnings or (compact.get('context_warnings') if isinstance(compact, dict) else []) or [],
+                  'clear_fields': clear_fields or [],
+              }, compact_json
+
+          def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = '', last_context_json: str = '{}', schema_runtime_context_json: str = '{}', selected_schema_context_ref_json: str = '{}', validator_result_json: str = '{}'):
+              try:
+                  semantic_plan = _loads_obj(semantic_plan_json)
+                  normalized_plan = _loads_obj(normalized_semantic_plan_json)
+                  mode = _answer_mode(answer_mode, normalized_plan, semantic_plan)
+                  result_rows = _rows(rows)
+                  chart_payload = _loads_obj(chart_payload_json)
+                  chart = str((chart_payload.get('echarts_markdown') if isinstance(chart_payload, dict) else '') or chart_echarts_markdown or '').strip()
+                  chart_enabled = bool((chart_payload.get('enabled') if isinstance(chart_payload, dict) else False))
+                  chart_available = bool(chart_enabled and chart)
+                  query_profile = _query_result_profile(query_result_json, result_rows, fields_json, row_count)
+                  success = _query_success(query_result_json, execution_success)
+
+                  if not success:
+                      err = _compiler_error(query_result_json, execution_error) or '执行阶段返回失败。'
+                      answer_type = 'execution_error'
+                      answer_text = '查询执行失败：' + err
+                      result_summary = answer_text
+                      chart_markdown = ''
+                      compact_rows = []
+                  elif query_profile.get('row_count', 0) == 0:
+                      answer_type = 'empty_result'
+                      answer_text = '已完成查询，但当前条件下没有查到结果。'
+                      detail = _summary(question, [], normalized_plan)
+                      if detail and detail != answer_text:
+                          answer_text = (answer_text + '\n结果摘要：' + detail)[:4000]
+                      result_summary = answer_text
+                      chart_markdown = ''
+                      compact_rows = []
+                  elif chart_available:
+                      answer_type = 'query_with_chart'
+                      summary_text = _summary(question, query_profile.get('preview_rows') or result_rows[:5], normalized_plan)
+                      analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True) if _needs_analysis(question, mode) else ''
+                      result_summary = (summary_text or '已返回查询结果。')[:1200]
+                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else ''))[:4000]
+                      chart_markdown = chart
+                      compact_rows = query_profile.get('preview_rows') or result_rows[:5]
+                  else:
+                      answer_type = 'query_only'
+                      summary_text = _summary(question, query_profile.get('preview_rows') or result_rows[:5], normalized_plan)
+                      analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, False) if _needs_analysis(question, mode) else ''
+                      warning = ''
+                      if _plan_needs_chart(normalized_plan, semantic_plan, question):
+                          warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or '图表字段未匹配或图表配置不可用'
+                      result_summary = (summary_text or '已返回查询结果。')[:1200]
+                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
+                      chart_markdown = ''
+                      compact_rows = query_profile.get('preview_rows') or result_rows[:5]
+
+                  chart_profile = chart_payload.get('data_profile') if isinstance(chart_payload, dict) and isinstance(chart_payload.get('data_profile'), dict) else {}
+                  if chart_profile.get('preview_rows') and not compact_rows:
+                      compact_rows = chart_profile.get('preview_rows')[:5]
+                  if answer_type == 'execution_error':
+                      prior_context = _loads_obj(last_context_json)
+                      compact_context = prior_context if isinstance(prior_context, dict) and prior_context else _compact_context_contract(question, {}, {}, [], result_summary or answer_text, '{}', collection_catalog_json, collection_selection_json)
+                  else:
+                      compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, result_summary or answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
+                      compact_context['last_result_profile'] = query_profile
+                  if answer_type != 'execution_error' and isinstance(chart_payload, dict) and chart_payload.get('summary'):
+                      compact_context['last_chart_request'].update({k: chart_payload.get(k) for k in ('chart_type', 'title', 'x_field', 'y_field') if chart_payload.get(k)})
+
+                  # Prefer hydrated/selected validator runtime schema ref; never let empty compiler metadata overwrite prior non-empty ref.
+                  runtime_ctx = _loads_any(schema_runtime_context_json, {})
+                  validator_result = _loads_any(validator_result_json, {})
+                  validator_debug = validator_result.get('debug') if isinstance(validator_result, dict) and isinstance(validator_result.get('debug'), dict) else {}
+                  prior_context = _loads_any(last_context_json, {})
+                  candidates = [
+                      _loads_any(selected_schema_context_ref_json, {}),
+                      validator_debug.get('schema_context_ref') if isinstance(validator_debug.get('schema_context_ref'), dict) else {},
+                      runtime_ctx.get('schema_context_ref') if isinstance(runtime_ctx, dict) and isinstance(runtime_ctx.get('schema_context_ref'), dict) else {},
+                      prior_context.get('schema_context_ref') if isinstance(prior_context, dict) and isinstance(prior_context.get('schema_context_ref'), dict) else {},
+                      compact_context.get('schema_context_ref') if isinstance(compact_context.get('schema_context_ref'), dict) else {},
+                  ]
+                  merged_ref = {'collections': [], 'schema_digest': '', 'schema_version': '', 'catalog_digest': ''}
+                  for ref in candidates:
+                      if not isinstance(ref, dict):
+                          continue
+                      cols = ref.get('collections') if isinstance(ref.get('collections'), list) else []
+                      if cols and not merged_ref['collections']:
+                          merged_ref['collections'] = [str(c) for c in cols if str(c or '').strip()]
+                      for k in ('schema_digest', 'schema_version', 'catalog_digest'):
+                          val = str(ref.get(k) or '').strip()
+                          if val and not merged_ref.get(k):
+                              merged_ref[k] = val
+                  for k in ('schema_digest', 'catalog_digest'):
+                      if merged_ref.get(k) and not str(merged_ref[k]).startswith('sha256:'):
+                          merged_ref[k] = 'sha256:' + str(merged_ref[k])
+                  compact_context['schema_context_ref'] = merged_ref
+                  compact_context['context_warnings'] = [w for w in (compact_context.get('context_warnings') or []) if 'schema_context_ref.catalog_digest 缺失' not in str(w)]
+                  if not merged_ref.get('catalog_digest'):
+                      compact_context['context_warnings'].append('schema_context_ref.catalog_digest 缺失；下一轮需要重新确认 collection catalog。')
+                  if '不对' in str(question or '') or '不再' in str(question or ''):
+                      compact_context['last_turn_intent'] = {'turn_intent': 'refine_query', 'refine_type': 'requery'}
+                  context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')) and answer_type != 'execution_error')
+                  payload = _answer_payload(
+                      answer_type,
+                      answer_text=answer_text,
+                      chart_markdown=chart_markdown,
+                      result_summary=result_summary or answer_text,
+                      message='',
+                      chart_payload=chart_payload,
+                      query_profile=query_profile,
+                      should_save=context_update.get('should_save_context'),
+                      context_summary=compact_context,
+                  )
+                  answer_markdown = _markdown_from_payload(payload)
+                  sanitized_chart_payload = _compact_chart_payload(chart_payload)
+                  return {
+                      'final_answer_markdown': answer_markdown,
+                      'answer_payload_markdown': answer_markdown,
+                      'answer_text': payload.get('answer_text') or '',
+                      'chart_echarts_markdown': payload.get('chart_echarts_markdown') or '',
+                      'answer_payload_json': json.dumps(payload, ensure_ascii=False),
+                      'chart_payload_json': json.dumps(sanitized_chart_payload, ensure_ascii=False),
+                      'context_update_json': json.dumps(context_update, ensure_ascii=False),
+                      'compact_context_json': compact_context_json,
+                      'answer_mode': mode or '',
+                      'result_summary': payload.get('result_summary') or '',
+                      'final_answer_summary': (payload.get('result_summary') or payload.get('answer_text') or '')[:4000],
+                      'last_result_fields_json': _result_fields_json(query_profile.get('preview_rows') or []),
+                      'last_updated_at': datetime.now(timezone.utc).isoformat(),
+                      'has_last_context_state': 'true' if context_update.get('should_save_context') else 'false',
+                  }
+              except Exception:
+                  compact_context = {'context_version': COMPACT_CONTEXT_CONTRACT_VERSION, 'has_last_context': False, 'last_question': str(question or '')[:1000], 'last_turn_intent': {'validator_route': 'system_error'}, 'answer_summary': '系统在处理该查询时出现异常，请调整问题后重试。', 'schema_context_ref': {'collections': [], 'schema_digest': '', 'schema_version': '', 'catalog_digest': ''}, 'last_plan_summary': {}, 'last_primary_collection': '', 'last_related_collections': [], 'last_resolved_fields': [], 'last_resolved_metrics': [], 'last_chart_request': {}, 'last_result_profile': {'row_count': 0, 'fields': [], 'preview_rows': []}, 'size_guard': {}, 'context_warnings': []}
+                  context_update, compact_context_json = _context_update(compact_context, should_save=False)
+                  payload = _answer_payload('system_error', answer_text='系统在处理该查询时出现异常，请调整问题后重试。', should_save=False, context_summary={})
+                  answer_markdown = _markdown_from_payload(payload)
+                  return {'final_answer_markdown': answer_markdown, 'answer_payload_markdown': answer_markdown, 'answer_text': payload['answer_text'], 'chart_echarts_markdown': '', 'answer_payload_json': json.dumps(payload, ensure_ascii=False), 'chart_payload_json': json.dumps({'enabled': False}, ensure_ascii=False), 'context_update_json': json.dumps(context_update, ensure_ascii=False), 'compact_context_json': compact_context_json, 'answer_mode': '', 'result_summary': payload['answer_text'], 'final_answer_summary': payload['answer_text'], 'last_result_fields_json': '[]', 'last_updated_at': datetime.now(timezone.utc).isoformat(), 'has_last_context_state': 'false'}
+        code_language: python3
+        desc: 统一合并图表、查询摘要、分析、澄清或降级说明，输出 final_answer_markdown；debug 不进入最终回答。
+        outputs:
+          final_answer_markdown:
+            children:
+            type: string
+          answer_payload_markdown:
+            children:
+            type: string
+          answer_text:
+            children:
+            type: string
+          chart_echarts_markdown:
+            children:
+            type: string
+          answer_payload_json:
+            children:
+            type: string
+          chart_payload_json:
+            children:
+            type: string
+          context_update_json:
+            children:
+            type: string
+          compact_context_json:
+            children:
+            type: string
+          answer_mode:
+            children:
+            type: string
+          final_answer_summary:
+            children:
+            type: string
+          last_result_fields_json:
+            children:
+            type: string
+          last_updated_at:
+            children:
+            type: string
+          has_last_context_state:
+            children:
+            type: string
+          result_summary:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_合并最终回答
+        type: code
+        variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: semantic_plan_json
+        - value_selector:
+          - '1776000000024'
+          - normalized_semantic_plan_json
+          value_type: string
+          variable: normalized_semantic_plan_json
+        - value_selector:
+          - '1775000000007'
+          - merged_rows_json
+          value_type: string
+          variable: rows
+        - value_selector:
+          - '1781000000001'
+          - chart_echarts_markdown
+          value_type: string
+          variable: chart_echarts_markdown
+        - value_selector:
+          - '1781000000001'
+          - chart_payload_json
+          value_type: string
+          variable: chart_payload_json
+        - value_selector:
+          - '1776000000024'
+          - answer_mode
+          value_type: string
+          variable: answer_mode
+        - value_selector:
+          - '1775000000007'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1777000000001'
+          - collection_catalog_json
+          value_type: string
+          variable: collection_catalog_json
+        - value_selector:
+          - '1777000000001'
+          - collection_selection_json
+          value_type: string
+          variable: collection_selection_json
+        - value_selector:
+          - '1775000000007'
+          - query_result_json
+          value_type: string
+          variable: query_result_json
+        - value_selector:
+          - '1775000000007'
+          - row_count
+          value_type: number
+          variable: row_count
+        - value_selector:
+          - '1775000000007'
+          - fields_json
+          value_type: string
+          variable: fields_json
+        - value_selector:
+          - '1775000000007'
+          - execution_success
+          value_type: boolean
+          variable: execution_success
+        - value_selector:
+          - '1775000000007'
+          - execution_error
+          value_type: string
+          variable: execution_error
+        - value_selector:
+          - conversation
+          - last_context_json
+          value_type: string
+          variable: last_context_json
+        - value_selector:
+          - '1780000000009'
+          - schema_runtime_context_json
+          value_type: string
+          variable: schema_runtime_context_json
+        - value_selector:
+          - '1780000000009'
+          - schema_context_ref_json
+          value_type: string
+          variable: selected_schema_context_ref_json
+        - value_selector:
+          - '1778000000001'
+          - validator_result_json
+          value_type: string
+          variable: validator_result_json
+      height: 96
+      id: '1775000000022'
+      position:
+        x: 16380
+        y: -120
+      positionAbsolute:
+        x: 16380
+        y: -120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242

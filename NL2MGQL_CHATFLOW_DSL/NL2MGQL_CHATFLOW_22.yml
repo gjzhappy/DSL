@@ -1,0 +1,140 @@
+    - data:
+        code: |
+          import json
+          def _loads(v, default=None):
+              if default is None: default = {}
+              if isinstance(v, (dict, list)): return v
+              if isinstance(v, str) and v.strip():
+                  try: return json.loads(v)
+                  except Exception: return default
+              return default
+          def _dumps(v): return json.dumps(v if v is not None else {}, ensure_ascii=False, separators=(',', ':'))
+          def _as_ref_list(v):
+              if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
+              if isinstance(v, str) and v.strip(): return [x.strip() for x in v.split(',') if x.strip()]
+              return []
+          def _prune_ref_to_parsed(ref, meta, warnings):
+              ref = dict(ref or {})
+              parsed = set((meta.get('collections') or {}).keys()) if isinstance(meta, dict) else set()
+              requested = _as_ref_list(ref.get('collections'))
+              if parsed and requested:
+                  kept = [c for c in requested if c in parsed]
+                  removed = [c for c in requested if c not in parsed]
+                  if removed:
+                      warnings.append({'type': 'schema_context_ref_pruned_to_parsed_collections', 'removed': removed, 'reason': 'requested collection was not parsed into schema_metadata.collections'})
+                  ref['collections'] = kept
+              return ref
+
+          def main(base_schema_runtime_context_json='{}', hydrated_schema_runtime_context_json='{}'):
+              base = _loads(base_schema_runtime_context_json, {}) or {}
+              hydrated = _loads(hydrated_schema_runtime_context_json, {}) or {}
+              ctx = hydrated if hydrated.get('schema_context_ready') else base
+              warnings = ctx.get('warnings') if isinstance(ctx.get('warnings'), list) else []
+              meta = _loads(ctx.get('schema_metadata_json'), {}) or {}
+              if isinstance(ctx.get('schema_context_ref'), dict):
+                  ctx['schema_context_ref'] = _prune_ref_to_parsed(ctx.get('schema_context_ref'), meta, warnings)
+                  ctx['warnings'] = warnings
+              ctx.setdefault('contract_version', 'schema_runtime_context_contract')
+              ctx['schema_runtime_context_json'] = _dumps(ctx)
+              return {
+                  'contract_version': ctx.get('contract_version'),
+                  'schema_context_ready': bool(ctx.get('schema_context_ready')),
+                  'validator_schema_context_ready': bool(ctx.get('validator_schema_context_ready') or ctx.get('schema_context_ready')),
+                  'schema_hydration_needed': bool(ctx.get('schema_hydration_needed')),
+                  'schema_hydration_reason': str(ctx.get('schema_hydration_reason') or ''),
+                  'schema_hydration_collections_json': _dumps(ctx.get('schema_hydration_collections') or []),
+                  'schema_metadata_json': ctx.get('schema_metadata_json') or '{}',
+                  'schema_alias_index_json': ctx.get('schema_alias_index_json') or '{}',
+                  'schema_digest': str(ctx.get('schema_digest') or ''),
+                  'schema_version': str(ctx.get('schema_version') or ''),
+                  'catalog_digest': str(ctx.get('catalog_digest') or ''),
+                  'schema_source': str(ctx.get('schema_source') or 'missing'),
+                  'schema_context_ref_json': _dumps(ctx.get('schema_context_ref') or {}),
+                  'warnings_json': _dumps(ctx.get('warnings') or []),
+                  'errors_json': _dumps(ctx.get('errors') or []),
+                  'schema_runtime_context_json': ctx['schema_runtime_context_json'],
+              }
+        code_language: python3
+        desc: Phase 10：统一选择 validator 最终 runtime schema context。schema ready / no-hydration
+          使用 base；hydration 成功使用 hydrated runtime；失败则让 validator 走 non-valid，不绕过 validator。
+        outputs:
+          contract_version:
+            children:
+            type: string
+          schema_context_ready:
+            children:
+            type: boolean
+          validator_schema_context_ready:
+            children:
+            type: boolean
+          schema_hydration_needed:
+            children:
+            type: boolean
+          schema_hydration_reason:
+            children:
+            type: string
+          schema_hydration_collections_json:
+            children:
+            type: string
+          schema_metadata_json:
+            children:
+            type: string
+          schema_alias_index_json:
+            children:
+            type: string
+          schema_digest:
+            children:
+            type: string
+          schema_version:
+            children:
+            type: string
+          catalog_digest:
+            children:
+            type: string
+          schema_source:
+            children:
+            type: string
+          schema_context_ref_json:
+            children:
+            type: string
+          warnings_json:
+            children:
+            type: string
+          errors_json:
+            children:
+            type: string
+          schema_runtime_context_json:
+            children:
+            type: string
+        selected: false
+        title: 代码执行_选择最终Validator运行时Schema上下文
+        type: code
+        variables:
+        - value_selector:
+          - '1779000000001'
+          - schema_runtime_context_json
+          value_type: string
+          variable: base_schema_runtime_context_json
+        - value_selector:
+          - '1780000000008'
+          - schema_runtime_context_json
+          value_type: string
+          variable: hydrated_schema_runtime_context_json
+      height: 80
+      id: '1780000000009'
+      position:
+        x: 14080
+        y: 120
+      positionAbsolute:
+        x: 14080
+        y: 120
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: -120
+      y: 80
+      zoom: 0.55
+  rag_pipeline_variables: []
