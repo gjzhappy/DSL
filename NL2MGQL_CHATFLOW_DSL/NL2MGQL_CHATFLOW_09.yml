@@ -281,10 +281,21 @@
                   count = _safe_int(qr.get('row_count'), -1)
               if count < 0:
                   count = len(_rows(rows))
+              numeric_fields = profile.get('numeric_fields') if isinstance(profile.get('numeric_fields'), list) else []
+              dimension_fields = profile.get('dimension_fields') if isinstance(profile.get('dimension_fields'), list) else []
+              if (not numeric_fields and not dimension_fields) and source_rows:
+                  for f in [str(x) for x in fields[:50]]:
+                      vals = [r.get(f) for r in source_rows if isinstance(r, dict) and r.get(f) is not None]
+                      if vals and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+                          numeric_fields.append(f)
+                      else:
+                          dimension_fields.append(f)
               return {
                   'row_count': max(0, count),
                   'fields': [str(x) for x in fields[:50]],
                   'preview_rows': [r for r in source_rows[:5] if isinstance(r, dict)],
+                  'numeric_fields': [str(x) for x in numeric_fields[:40]],
+                  'dimension_fields': [str(x) for x in dimension_fields[:40]],
               }
 
 
@@ -296,6 +307,14 @@
                   return _safe_bool(qr.get('execution_success'))
               return _safe_bool(execution_success)
 
+
+          def _normalize_result_summary_prefix(summary):
+              s = str(summary or '').strip()
+              if s.startswith('结果摘要：'):
+                  return s
+              if s.startswith('结果摘要:'):
+                  return '结果摘要：' + s[len('结果摘要:'):].lstrip()
+              return ('结果摘要：' + chr(10) + s) if s else ''
 
           def _compiler_error(query_result_json, execution_error=''):
               qr = _loads_any(query_result_json, {})
@@ -346,8 +365,7 @@
                   'clear_fields': clear_fields or [],
               }, compact_json
 
-
-          def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = '', last_context_json: str = '{}'):
+          def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = '', last_context_json: str = '{}', schema_runtime_context_json: str = '{}', selected_schema_context_ref_json: str = '{}', validator_result_json: str = '{}'):
               try:
                   semantic_plan = _loads_obj(semantic_plan_json)
                   normalized_plan = _loads_obj(normalized_semantic_plan_json)
@@ -381,7 +399,7 @@
                       summary_text = _summary(question, query_profile.get('preview_rows') or result_rows[:5], normalized_plan)
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True) if _needs_analysis(question, mode) else ''
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
-                      answer_text = ('已完成查询。\n结果摘要：' + result_summary + (('\n\n' + analysis_text) if analysis_text else ''))[:4000]
+                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else ''))[:4000]
                       chart_markdown = chart
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
                   else:
@@ -392,7 +410,7 @@
                       if _plan_needs_chart(normalized_plan, semantic_plan, question):
                           warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or '图表字段未匹配或图表配置不可用'
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
-                      answer_text = ('已完成查询。\n结果摘要：' + result_summary + (('\n\n' + analysis_text) if analysis_text else '') + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
+                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
                       chart_markdown = ''
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
 
@@ -407,6 +425,39 @@
                       compact_context['last_result_profile'] = query_profile
                   if answer_type != 'execution_error' and isinstance(chart_payload, dict) and chart_payload.get('summary'):
                       compact_context['last_chart_request'].update({k: chart_payload.get(k) for k in ('chart_type', 'title', 'x_field', 'y_field') if chart_payload.get(k)})
+
+                  # Prefer hydrated/selected validator runtime schema ref; never let empty compiler metadata overwrite prior non-empty ref.
+                  runtime_ctx = _loads_any(schema_runtime_context_json, {})
+                  validator_result = _loads_any(validator_result_json, {})
+                  validator_debug = validator_result.get('debug') if isinstance(validator_result, dict) and isinstance(validator_result.get('debug'), dict) else {}
+                  prior_context = _loads_any(last_context_json, {})
+                  candidates = [
+                      _loads_any(selected_schema_context_ref_json, {}),
+                      validator_debug.get('schema_context_ref') if isinstance(validator_debug.get('schema_context_ref'), dict) else {},
+                      runtime_ctx.get('schema_context_ref') if isinstance(runtime_ctx, dict) and isinstance(runtime_ctx.get('schema_context_ref'), dict) else {},
+                      prior_context.get('schema_context_ref') if isinstance(prior_context, dict) and isinstance(prior_context.get('schema_context_ref'), dict) else {},
+                      compact_context.get('schema_context_ref') if isinstance(compact_context.get('schema_context_ref'), dict) else {},
+                  ]
+                  merged_ref = {'collections': [], 'schema_digest': '', 'schema_version': '', 'catalog_digest': ''}
+                  for ref in candidates:
+                      if not isinstance(ref, dict):
+                          continue
+                      cols = ref.get('collections') if isinstance(ref.get('collections'), list) else []
+                      if cols and not merged_ref['collections']:
+                          merged_ref['collections'] = [str(c) for c in cols if str(c or '').strip()]
+                      for k in ('schema_digest', 'schema_version', 'catalog_digest'):
+                          val = str(ref.get(k) or '').strip()
+                          if val and not merged_ref.get(k):
+                              merged_ref[k] = val
+                  for k in ('schema_digest', 'catalog_digest'):
+                      if merged_ref.get(k) and not str(merged_ref[k]).startswith('sha256:'):
+                          merged_ref[k] = 'sha256:' + str(merged_ref[k])
+                  compact_context['schema_context_ref'] = merged_ref
+                  compact_context['context_warnings'] = [w for w in (compact_context.get('context_warnings') or []) if 'schema_context_ref.catalog_digest 缺失' not in str(w)]
+                  if not merged_ref.get('catalog_digest'):
+                      compact_context['context_warnings'].append('schema_context_ref.catalog_digest 缺失；下一轮需要重新确认 collection catalog。')
+                  if '不对' in str(question or '') or '不再' in str(question or ''):
+                      compact_context['last_turn_intent'] = {'turn_intent': 'refine_query', 'refine_type': 'requery'}
                   context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')) and answer_type != 'execution_error')
                   payload = _answer_payload(
                       answer_type,
@@ -572,6 +623,21 @@
           - last_context_json
           value_type: string
           variable: last_context_json
+        - value_selector:
+          - '1780000000009'
+          - schema_runtime_context_json
+          value_type: string
+          variable: schema_runtime_context_json
+        - value_selector:
+          - '1780000000009'
+          - schema_context_ref_json
+          value_type: string
+          variable: selected_schema_context_ref_json
+        - value_selector:
+          - '1778000000001'
+          - validator_result_json
+          value_type: string
+          variable: validator_result_json
       height: 96
       id: '1775000000022'
       position:
@@ -626,6 +692,19 @@
           def _profile(rows, fields):
               fs=_fields(rows, fields); nums=[f for f in fs if _numeric(rows,f)]
               return {'preview_rows': rows[:5], 'numeric_fields': nums, 'dimension_fields': [f for f in fs if f not in nums]}
+          def _label_map(schema_runtime_context_json='', schema_metadata_json='', schema_alias_index_json=''):
+              labels={}
+              runtime=_loads(schema_runtime_context_json,{})
+              meta=_loads(runtime.get('schema_metadata_json') if isinstance(runtime,dict) else '',{}) or _loads(schema_metadata_json,{})
+              for coll in ((meta.get('collections') or {}).values() if isinstance(meta.get('collections'),dict) else []):
+                  for sec in ('fields','metrics'):
+                      items=coll.get(sec) if isinstance(coll,dict) else None
+                      vals=items.values() if isinstance(items,dict) else (items if isinstance(items,list) else [])
+                      for it in vals:
+                          if isinstance(it,dict) and it.get('name') and it.get('label'):
+                              labels[str(it.get('name'))]=str(it.get('label'))
+              return labels
+
           def _chart_req(*sources):
               default={'enabled':False,'chart_type':'','x_field':'','y_field':'','series_name':'','title':'','field_labels':{}}
               found={}
@@ -660,10 +739,12 @@
               fence=chr(96)*3
               return fence+'echarts\n'+json.dumps(option,ensure_ascii=False,indent=2)+'\n'+fence
           def _title(req):
-              if req.get('title'): return str(req.get('title'))
-              labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}
-              x=labels.get(req.get('x_field')) or req.get('x_field') or '维度'; y=labels.get(req.get('y_field')) or req.get('series_name') or req.get('y_field') or '指标'
-              return ('按%s统计%s' % (x,y)) if x and y else '查询结果图表'
+              labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}; x=labels.get(req.get('x_field')) or req.get('x_field') or '维度'; y=labels.get(req.get('y_field')) or req.get('series_name') or req.get('y_field') or '指标'; raw=str(req.get('title') or '').strip(); title=('按%s统计%s' % (x,y)) if x and y else '查询结果图表'
+              if raw:
+                  rewritten=raw
+                  for k,v in labels.items(): rewritten=rewritten.replace(str(k), str(v))
+                  return title if (rewritten != raw or re.search(r'[A-Za-z_]', raw)) else raw
+              return title
           def _payload(req, qr, chart_only=False):
               rows=qr.get('rows') if isinstance(qr.get('rows'),list) else []; fields=set(_fields(rows, qr.get('fields') if isinstance(qr.get('fields'),list) else []))
               p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':int(qr.get('row_count') or len(rows)),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{}}
@@ -681,7 +762,9 @@
               ctype=str(req.get('chart_type') or 'bar')
               if ctype not in {'bar','line','pie','scatter'}:
                   p['warning']='暂不支持该图表类型'; return p
-              title=_title(req); series=req.get('series_name') or y
+              labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}
+              title=_title(req); series=labels.get(req.get('series_name')) or labels.get(y) or req.get('series_name') or y
+              x_label=labels.get(x) or x; y_label=labels.get(y) or y
               if ctype=='pie':
                   data=[{'name':str(r.get(x) if r.get(x) is not None else '未分类'),'value':_num(r.get(y)) or 0} for r in rows[:20]]
                   option={'title':{'text':title},'tooltip':{'trigger':'item'},'series':[{'name':series,'type':'pie','data':data}]}
@@ -689,15 +772,17 @@
               elif ctype=='scatter':
                   if not _numeric(rows,x): p['warning']='散点图横轴字段不是数字，未生成图表。'; return p
                   data=[[_num(r.get(x)),_num(r.get(y))] for r in rows if _num(r.get(x)) is not None and _num(r.get(y)) is not None]
-                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'scatter','data':data}]}
+                  option={'title':{'text':title},'tooltip':{'trigger':'item'},'xAxis':{'type':'value','name':x_label},'yAxis':{'type':'value','name':y_label},'series':[{'name':series,'type':'scatter','data':data}]}
               else:
-                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
+                  option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x_label,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y_label},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
                   if ctype=='line' and not re.search(r'date|time|day|month|year|日期|时间|日|月|年',x,re.I): p['warning']='折线图横轴不是明显时间或有序字段。'
               p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':'已生成%s图表，共%s条数据。' % (ctype, len(rows))})
               return p
 
-          def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str=''):
+          def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str='', schema_runtime_context_json: str='', schema_metadata_json: str='', schema_alias_index_json: str=''):
               req=_chart_req(normalized_plan_json, semantic_plan_json, chart_request_json)
+              labels=_label_map(schema_runtime_context_json, schema_metadata_json, schema_alias_index_json)
+              req['field_labels']={**labels, **(req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {})}
               qr=_query_result(query_result_json, rows_json, row_count, fields_json, merged_rows_json)
               p=_payload(req, qr, False)
               return {'chart_payload_json':_dumps(p),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':p.get('echarts_markdown') or '', 'chart_summary':p.get('summary') or '', 'chart_warning':p.get('warning') or '', 'chart_enabled':bool(p.get('enabled')), 'data_profile_json':_dumps(p.get('data_profile') or {}), 'chart_debug_json':_dumps(p.get('chart_debug') or {})}
@@ -773,6 +858,21 @@
           - merged_rows_json
           value_type: string
           variable: merged_rows_json
+        - value_selector:
+          - '1780000000009'
+          - schema_runtime_context_json
+          value_type: string
+          variable: schema_runtime_context_json
+        - value_selector:
+          - '1780000000009'
+          - schema_metadata_json
+          value_type: string
+          variable: schema_metadata_json
+        - value_selector:
+          - '1780000000009'
+          - schema_alias_index_json
+          value_type: string
+          variable: schema_alias_index_json
       height: 80
       id: '1781000000001'
       position:
