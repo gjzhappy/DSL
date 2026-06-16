@@ -792,6 +792,57 @@
                   bucket.append(item)
 
 
+          def _iter_named_items(v):
+              """Support dict[name -> meta] and list[{"name": ..., ...}] metadata shapes."""
+              if isinstance(v, dict):
+                  for name, meta in v.items():
+                      if isinstance(meta, dict):
+                          item = dict(meta)
+                          item.setdefault('name', name)
+                          yield item
+                      else:
+                          yield {'name': str(name), 'value': meta}
+              elif isinstance(v, list):
+                  for item in v:
+                      if isinstance(item, dict):
+                          yield item
+
+
+          def _iter_items(v):
+              if isinstance(v, dict):
+                  for name, meta in v.items():
+                      if isinstance(meta, dict):
+                          item = dict(meta)
+                          item.setdefault('name', name)
+                          yield item
+                      else:
+                          yield {'name': str(name), 'value': meta}
+              elif isinstance(v, list):
+                  for item in v:
+                      if isinstance(item, dict):
+                          yield item
+
+
+          def _get_named_meta(items, name):
+              target = str(name or '').strip()
+              if not target:
+                  return {}
+              for item in _iter_named_items(items):
+                  if str(item.get('name') or '').strip() == target:
+                      return item
+              return {}
+
+
+          def _alias_index_has_content(idx):
+              if not isinstance(idx, dict):
+                  return False
+              for key in ('aliases', 'field_aliases', 'metric_aliases', 'collection_aliases'):
+                  value = idx.get(key)
+                  if isinstance(value, dict) and value:
+                      return True
+              return False
+
+
           def build_alias_index(schema_metadata):
               meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections' in schema_metadata else extract_schema_metadata(schema_metadata)
               aliases = {}
@@ -801,6 +852,8 @@
               value_aliases = {}
               warnings = []
               for cname, coll in (meta.get('collections') or {}).items():
+                  if not isinstance(coll, dict):
+                      continue
                   _add_alias(collection_aliases, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
                   _add_alias(collection_aliases, coll.get('collection_label'), cname, 'collection', cname, coll.get('collection_label'), 'collection.label')
                   _add_alias(aliases, cname, cname, 'collection', cname, coll.get('collection_label'), 'collection.name')
@@ -808,7 +861,10 @@
                   for a in coll.get('collection_aliases') or []:
                       _add_alias(collection_aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
                       _add_alias(aliases, a, cname, 'collection', cname, coll.get('collection_label'), 'collection.aliases')
-                  for fname, f in (coll.get('fields') or {}).items():
+                  for f in _iter_named_items(coll.get('fields') or {}):
+                      fname = str(f.get('name') or '').strip()
+                      if not fname:
+                          continue
                       for alias, source in [(fname, 'field.name'), (f.get('label'), 'field.label')]:
                           _add_alias(aliases, alias, cname, 'field', fname, f.get('label'), source)
                           _add_alias(field_aliases, alias, cname, 'field', fname, f.get('label'), source)
@@ -818,7 +874,10 @@
                       for val_alias, canonical_value in (f.get('value_aliases') or {}).items():
                           _add_alias(aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
                           _add_alias(value_aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
-                  for mname, m in (coll.get('metrics') or {}).items():
+                  for m in _iter_named_items(coll.get('metrics') or {}):
+                      mname = str(m.get('name') or '').strip()
+                      if not mname:
+                          continue
                       for alias, source in [(mname, 'metric.name'), (m.get('label'), 'metric.label')]:
                           _add_alias(aliases, alias, cname, 'metric', mname, m.get('label'), source)
                           _add_alias(metric_aliases, alias, cname, 'metric', mname, m.get('label'), source)
@@ -842,7 +901,17 @@
 
           def _meta_and_index(schema_metadata):
               meta = schema_metadata if isinstance(schema_metadata, dict) and 'collections' in schema_metadata else extract_schema_metadata(schema_metadata)
-              return meta, build_alias_index(meta)
+              idx = schema_metadata.get('schema_alias_index') if isinstance(schema_metadata, dict) else {}
+              if not _alias_index_has_content(idx):
+                  idx = schema_metadata.get('schema_alias_index_json') if isinstance(schema_metadata, dict) else {}
+                  if isinstance(idx, str) and idx.strip():
+                      try:
+                          idx = json.loads(idx)
+                      except Exception:
+                          idx = {}
+              if not _alias_index_has_content(idx):
+                  idx = build_alias_index(meta)
+              return meta, idx
 
 
           def _resolve_from_candidates(raw, candidates, cname, kind, unresolved_warning):
@@ -867,10 +936,13 @@
               meta, idx = _meta_and_index(schema_metadata)
               colls = meta.get('collections') or {}
               cname = str(collection_name or '').strip()
-              if cname in colls and raw in (colls[cname].get('fields') or {}):
-                  f = colls[cname]['fields'][raw]
-                  return {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source': 'schema_field_name', 'label': f.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
-              candidates = [x for x in (idx.get('field_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'field']
+              if cname in colls:
+                  f = _get_named_meta(colls[cname].get('fields') or {}, raw)
+                  if f:
+                      return {'input': raw, 'resolved': raw, 'kind': 'field', 'collection': cname, 'source': 'schema_field_name', 'label': f.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
+              field_aliases = idx.get('field_aliases') if isinstance(idx.get('field_aliases'), dict) else {}
+              aliases = idx.get('aliases') if isinstance(idx.get('aliases'), dict) else {}
+              candidates = [x for x in (field_aliases or aliases).get(raw, []) if isinstance(x, dict) and x.get('kind') == 'field']
               result = _resolve_from_candidates(raw, candidates, cname, 'field', '字段别名未在 schema metadata 中声明，未自动归一。')
               if result.get('source') != 'unresolved':
                   return result
@@ -884,10 +956,13 @@
               meta, idx = _meta_and_index(schema_metadata)
               colls = meta.get('collections') or {}
               cname = str(collection_name or '').strip()
-              if cname in colls and raw in (colls[cname].get('metrics') or {}):
-                  m = colls[cname]['metrics'][raw]
-                  return {'input': raw, 'resolved': raw, 'kind': 'metric', 'collection': cname, 'source': 'schema_metric_name', 'label': m.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
-              candidates = [x for x in (idx.get('metric_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'metric']
+              if cname in colls:
+                  m = _get_named_meta(colls[cname].get('metrics') or {}, raw)
+                  if m:
+                      return {'input': raw, 'resolved': raw, 'kind': 'metric', 'collection': cname, 'source': 'schema_metric_name', 'label': m.get('label') or prettify_field_name(raw), 'confidence': 1.0, 'warning': ''}
+              metric_aliases = idx.get('metric_aliases') if isinstance(idx.get('metric_aliases'), dict) else {}
+              aliases = idx.get('aliases') if isinstance(idx.get('aliases'), dict) else {}
+              candidates = [x for x in (metric_aliases or aliases).get(raw, []) if isinstance(x, dict) and x.get('kind') == 'metric']
               return _resolve_from_candidates(raw, candidates, cname, 'metric', '指标别名未在 schema metadata 中声明，未自动归一。')
 
 
@@ -896,5 +971,7 @@
               meta, idx = _meta_and_index(schema_metadata)
               cname = str(collection_name or '').strip()
               fname = str(field_name or '').strip()
-              candidates = [x for x in (idx.get('value_aliases') or idx.get('aliases') or {}).get(raw, []) if x.get('kind') == 'value']
+              value_aliases = idx.get('value_aliases') if isinstance(idx.get('value_aliases'), dict) else {}
+              aliases = idx.get('aliases') if isinstance(idx.get('aliases'), dict) else {}
+              candidates = [x for x in (value_aliases or aliases).get(raw, []) if isinstance(x, dict) and x.get('kind') == 'value']
               if cname:

@@ -13,12 +13,15 @@
               meta, _ = _meta_and_index(schema_metadata)
               fname = str(field_name or '').strip()
               cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}) and fname in meta['collections'][cname].get('fields', {}):
-                  return meta['collections'][cname]['fields'][fname].get('label') or prettify_field_name(fname)
+              if cname and cname in meta.get('collections', {}):
+                  f = _get_named_meta(meta['collections'][cname].get('fields') or {}, fname)
+                  if f:
+                      return f.get('label') or prettify_field_name(fname)
               hits = []
               for cn, c in (meta.get('collections') or {}).items():
-                  if fname in c.get('fields', {}):
-                      hits.append(c['fields'][fname].get('label') or prettify_field_name(fname))
+                  f = _get_named_meta(c.get('fields') or {}, fname)
+                  if f:
+                      hits.append(f.get('label') or prettify_field_name(fname))
               return hits[0] if len(hits) == 1 else prettify_field_name(fname)
 
 
@@ -26,12 +29,15 @@
               meta, _ = _meta_and_index(schema_metadata)
               name = str(metric_name or '').strip()
               cname = str(collection_name or '').strip()
-              if cname and cname in meta.get('collections', {}) and name in meta['collections'][cname].get('metrics', {}):
-                  return meta['collections'][cname]['metrics'][name].get('label') or prettify_field_name(name)
+              if cname and cname in meta.get('collections', {}):
+                  m = _get_named_meta(meta['collections'][cname].get('metrics') or {}, name)
+                  if m:
+                      return m.get('label') or prettify_field_name(name)
               hits = []
               for cn, c in (meta.get('collections') or {}).items():
-                  if name in c.get('metrics', {}):
-                      hits.append(c['metrics'][name].get('label') or prettify_field_name(name))
+                  m = _get_named_meta(c.get('metrics') or {}, name)
+                  if m:
+                      hits.append(m.get('label') or prettify_field_name(name))
               return hits[0] if len(hits) == 1 else prettify_field_name(name)
 
 

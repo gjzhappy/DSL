@@ -780,11 +780,11 @@
               alias = _ensure_obj(ctx.get('schema_alias_index_json'), 'runtime.schema_alias_index_json') if isinstance(ctx, dict) and ctx.get('schema_alias_index_json') else {}
               if not meta and schema_metadata_json:
                   meta = _ensure_obj(schema_metadata_json, 'schema_metadata_json')
-              if not alias and schema_alias_index_json:
+              if not _alias_index_has_content(alias) and schema_alias_index_json:
                   alias = _ensure_obj(schema_alias_index_json, 'schema_alias_index_json')
               if not meta:
                   meta = extract_schema_metadata(fallback_context)
-              if not alias:
+              if not _alias_index_has_content(alias):
                   alias = build_alias_index(meta)
               return meta, alias
 
