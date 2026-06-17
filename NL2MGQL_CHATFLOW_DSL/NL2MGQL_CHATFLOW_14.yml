@@ -618,15 +618,16 @@
                           enrich_stage = enrich_stages[0]
                           changed = False
                           if not str(final_merge.get('right_stage') or '').strip():
-                              final_merge['right_stage'] = str(final_merge.get('merge_stage_name') or enrich_stage.get('stage_name') or '').strip(); changed = True
+                              final_merge['right_stage'] = str(enrich_stage.get('stage_name') or '').strip(); changed = True
                           if not str(final_merge.get('left_stage') or '').strip() and str(enrich_stage.get('depends_on') or '').strip():
                               final_merge['left_stage'] = str(enrich_stage.get('depends_on') or '').strip(); changed = True
                           if not str(final_merge.get('left_field') or '').strip():
-                              final_merge['left_field'] = str(enrich_stage.get('join_source_field') or final_merge.get('merge_key') or '').strip(); changed = True
+                              final_merge['left_field'] = str(enrich_stage.get('join_source_field') or '').strip(); changed = True
                           if not str(final_merge.get('right_field') or '').strip():
-                              final_merge['right_field'] = str(enrich_stage.get('join_target_field') or final_merge.get('merge_key') or '').strip(); changed = True
+                              final_merge['right_field'] = str(enrich_stage.get('join_target_field') or '').strip(); changed = True
                           if not str(final_merge.get('attach_as') or '').strip():
-                              final_merge['attach_as'] = str(enrich_stage.get('attach_as') or 'product_info').strip(); changed = True
+                              related_collection = str(enrich_stage.get('collection') or '').strip()
+                              final_merge['attach_as'] = str(enrich_stage.get('attach_as') or ((related_collection + '_info') if related_collection else 'related_info')).strip(); changed = True
                           if changed:
                               normalizer_warnings.append({'type': 'final_merge_enrich_fields_fill', 'right_stage': final_merge.get('right_stage'), 'left_stage': final_merge.get('left_stage')})
                   contract = {

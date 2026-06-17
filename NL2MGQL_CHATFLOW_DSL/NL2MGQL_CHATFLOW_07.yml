@@ -173,6 +173,147 @@
                   return str(item.get('source_field') or item.get('field') or item.get('field_name') or '').strip()
               return ''
 
+          def _stage_by_name(plan, stage_name):
+              stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+              for st in stages:
+                  if isinstance(st, dict) and str(st.get('stage_name') or '').strip() == str(stage_name or '').strip():
+                      return st
+              return None
+
+          def _first_stage_by_type(plan, stage_type):
+              stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+              for st in stages:
+                  if isinstance(st, dict) and str(st.get('stage_type') or '').strip() == stage_type:
+                      return st
+              return None
+
+          def _relation_join_key(schema, primary_collection, related_collection):
+              if not isinstance(schema, dict):
+                  return '', ''
+              collections = schema.get('collections') or {}
+              primary_meta = collections.get(primary_collection) or {}
+              relations = primary_meta.get('relations') or []
+              if not isinstance(relations, list):
+                  return '', ''
+              for rel in relations:
+                  if not isinstance(rel, dict):
+                      continue
+                  if str(rel.get('target_collection') or '').strip() != str(related_collection or '').strip():
+                      continue
+                  join_keys = rel.get('join_keys') or []
+                  if not isinstance(join_keys, list) or not join_keys:
+                      continue
+                  jk = join_keys[0]
+                  if not isinstance(jk, dict):
+                      continue
+                  source_field = str(jk.get('source_field') or '').strip()
+                  target_field = str(jk.get('target_field') or '').strip()
+                  if source_field and target_field:
+                      return source_field, target_field
+              return '', ''
+
+          def _legacy_join_fields(final_merge):
+              if not isinstance(final_merge, dict):
+                  return '', ''
+              join_fields = final_merge.get('join_fields')
+              if isinstance(join_fields, list) and join_fields:
+                  first = join_fields[0]
+                  if isinstance(first, dict):
+                      left_field = str(first.get('left_field') or first.get('source_field') or '').strip()
+                      right_field = str(first.get('right_field') or first.get('target_field') or '').strip()
+                      if left_field and right_field:
+                          return left_field, right_field
+              merge_keys = final_merge.get('merge_keys')
+              if isinstance(merge_keys, list) and len(merge_keys) >= 2:
+                  left = merge_keys[0]; right = merge_keys[1]
+                  if isinstance(left, dict) and isinstance(right, dict):
+                      left_field = str(left.get('source_field') or left.get('field') or left.get('field_name') or '').strip()
+                      right_field = str(right.get('source_field') or right.get('field') or right.get('field_name') or '').strip()
+                      if left_field and right_field:
+                          return left_field, right_field
+              join_keys = final_merge.get('join_keys')
+              if isinstance(join_keys, list) and join_keys:
+                  first = join_keys[0]
+                  if isinstance(first, dict):
+                      left_field = str(first.get('source_field') or first.get('left_field') or '').strip()
+                      right_field = str(first.get('target_field') or first.get('right_field') or '').strip()
+                      if left_field and right_field:
+                          return left_field, right_field
+              return '', ''
+
+          def _strip_legacy_join_fields(plan):
+              if not isinstance(plan, dict):
+                  return plan
+              final_merge = plan.get('final_merge')
+              if isinstance(final_merge, dict):
+                  for key in ('join_fields', 'merge_keys', 'join_keys', 'additional_fields', 'merge_key', 'merge_stage_name'):
+                      final_merge.pop(key, None)
+              for key in ('joins', 'join', 'relations', 'relation', 'lookups', 'lookup', 'enrichments', 'enrich'):
+                  plan.pop(key, None)
+              return plan
+
+          def _canonicalize_enrich_contract(plan, schema=None, normalizer_warnings=None):
+              if normalizer_warnings is None:
+                  normalizer_warnings = []
+              if not isinstance(plan, dict):
+                  return plan
+              stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+              related = plan.get('related_collections') if isinstance(plan.get('related_collections'), list) else []
+              enrich_stages = [st for st in stages if isinstance(st, dict) and str(st.get('stage_type') or '').strip() == 'enrich_related']
+              final_merge = plan.get('final_merge')
+              if not isinstance(final_merge, dict):
+                  final_merge = {}; plan['final_merge'] = final_merge
+              if not related and not enrich_stages:
+                  plan['execution_mode'] = 'single_stage'
+                  final_merge.clear()
+                  final_merge.update({'merge_mode': 'none', 'left_stage': '', 'right_stage': '', 'left_field': '', 'right_field': '', 'attach_as': ''})
+                  _strip_legacy_join_fields(plan)
+                  return plan
+              plan['execution_mode'] = 'multi_stage'
+              final_merge['merge_mode'] = 'enrich'
+              primary_stage = _first_stage_by_type(plan, 'primary_query')
+              if not primary_stage and stages:
+                  primary_stage = stages[0] if isinstance(stages[0], dict) else None
+              enrich_stage = enrich_stages[0] if enrich_stages else None
+              left_stage = str(final_merge.get('left_stage') or (primary_stage or {}).get('stage_name') or 'stage1').strip()
+              right_stage = str(final_merge.get('right_stage') or (enrich_stage or {}).get('stage_name') or 'stage2').strip()
+              final_merge['left_stage'] = left_stage; final_merge['right_stage'] = right_stage
+              primary_collection = str(plan.get('primary_collection') or (primary_stage or {}).get('collection') or '').strip()
+              related_collection = str((enrich_stage or {}).get('collection') or (related[0] if related else '') or '').strip()
+              left_field = str(final_merge.get('left_field') or '').strip()
+              right_field = str(final_merge.get('right_field') or '').strip()
+              if enrich_stage:
+                  left_field = left_field or str(enrich_stage.get('join_source_field') or '').strip()
+                  right_field = right_field or str(enrich_stage.get('join_target_field') or '').strip()
+              if not left_field or not right_field:
+                  rel_left, rel_right = _relation_join_key(schema or {}, primary_collection, related_collection)
+                  left_field = left_field or rel_left; right_field = right_field or rel_right
+                  if rel_left and rel_right:
+                      normalizer_warnings.append({'type': 'enrich_join_fields_fill_from_schema_relation', 'left_field': rel_left, 'right_field': rel_right})
+              if not left_field or not right_field:
+                  legacy_left, legacy_right = _legacy_join_fields(final_merge)
+                  left_field = left_field or legacy_left; right_field = right_field or legacy_right
+                  if legacy_left and legacy_right:
+                      normalizer_warnings.append({'type': 'legacy_join_fields_migrated', 'left_field': legacy_left, 'right_field': legacy_right})
+              final_merge['left_field'] = left_field
+              final_merge['right_field'] = right_field
+              if not str(final_merge.get('attach_as') or '').strip():
+                  final_merge['attach_as'] = related_collection + '_info' if related_collection else 'related_info'
+              if enrich_stage:
+                  enrich_stage['depends_on'] = str(enrich_stage.get('depends_on') or left_stage).strip()
+                  if left_field:
+                      enrich_stage['join_source_field'] = left_field
+                  if right_field:
+                      enrich_stage['join_target_field'] = right_field
+                  projections = enrich_stage.get('projection_fields')
+                  if not isinstance(projections, list):
+                      projections = []
+                  if right_field and right_field not in [str(x) for x in projections]:
+                      enrich_stage['projection_fields'] = [right_field] + projections
+                      normalizer_warnings.append({'type': 'enrich_projection_join_target_fill', 'field': right_field})
+              _strip_legacy_join_fields(plan)
+              return plan
+
           def _clean_for_contract(value, warnings, path=''):
               if isinstance(value, dict):
                   cleaned = {}
@@ -341,7 +482,8 @@
                       'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
                       'warnings': _as_list(plan.get('warnings')),
                   }
-                  _strip_runtime_fields_from_semantic_plan(contract)
+                  contract = _canonicalize_enrich_contract(contract, schema=None, normalizer_warnings=normalizer_warnings)
+                  contract = _strip_runtime_fields_from_semantic_plan(contract)
                   route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
                   return contract, True, route, '', normalizer_warnings, source or 'unknown'
               except Exception as e:
