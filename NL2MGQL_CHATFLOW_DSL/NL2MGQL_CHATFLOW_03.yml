@@ -273,6 +273,7 @@
                   "8. 用户要求的分组字段必须来自 primary collection 或明确的最终合并字段。",
                   "9. 用户要求统计数量时，优先使用对应 collection 的 count metric；若 metric 存在 order_count，则 metric_alias 使用该 metric name。",
                   "10. 相对时间“过去三个月”使用 time_range.mode=\"relative_days\"，relative_days=90，field 使用 primary collection 的 default_time_field。",
+                  "11. 你只能使用统一 semantic_plan_contract 表达单集合和多集合查询。单集合查询：related_collections 必须为 []；execution_mode 必须为 single_stage；final_merge.merge_mode 必须为 none；不得输出 join_fields / merge_keys / join_keys / joins / relations / lookups。多集合 enrich 查询：primary_collection 是主集合；related_collections 列出补充集合；stages 必须包含一个 primary_query stage 和一个或多个 enrich_related stage；enrich_related stage 必须包含 depends_on / join_source_field / join_target_field；final_merge 必须包含 merge_mode=enrich / left_stage / right_stage / left_field / right_field / attach_as；不得输出 join_fields / merge_keys / join_keys / additional_fields 等 legacy 字段。如果需要表达 A.field -> B.field：stage2.join_source_field、stage2.join_target_field、final_merge.left_field、final_merge.right_field 均填写对应 schema relation join key 字段。不要发明 schema 未声明的关联键；关联键必须来自 schema relations.join_keys；如果 schema relations 没有声明关联关系，不能生成 enrich_related，应要求澄清或 needs_replan。",
               ])
               json_only_closure = "\n\n".join([
                   "【现在开始输出】",

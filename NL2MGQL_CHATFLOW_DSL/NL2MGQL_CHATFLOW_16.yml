@@ -248,6 +248,45 @@
               primary_stages = [st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_type")) == "primary_query"]
               enrich_stages = [st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_type")) == "enrich_related"]
               final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
+              for key in ("join_fields", "merge_keys", "join_keys", "additional_fields", "merge_key", "merge_stage_name"):
+                  final_merge.pop(key, None)
+              for key in ("joins", "join", "relations", "relation", "lookups", "lookup", "enrichments", "enrich"):
+                  plan.pop(key, None)
+
+              def _relation_join_key_for(rc):
+                  rels0 = [r for r in _iter_named_items((collections.get(primary) or {}).get("relations") or []) if _str(r.get("target_collection")) == _str(rc)]
+                  for rel0 in rels0:
+                      for jk0 in rel0.get("join_keys") or []:
+                          if isinstance(jk0, dict) and _str(jk0.get("source_field")) and _str(jk0.get("target_field")):
+                              return _str(jk0.get("source_field")), _str(jk0.get("target_field"))
+                  return "", ""
+
+              if _str(final_merge.get("merge_mode")) == "enrich" and enrich_stages:
+                  enrich_stage0 = next((st for st in enrich_stages if _str(st.get("stage_name")) == _str(final_merge.get("right_stage"))), enrich_stages[0])
+                  rel_left, rel_right = _relation_join_key_for(_str(enrich_stage0.get("collection") or (related[0] if related else "")))
+                  primary_stage0 = primary_stages[0] if primary_stages else None
+                  changed0 = False
+                  if not _str(final_merge.get("left_stage")):
+                      final_merge["left_stage"] = _str(enrich_stage0.get("depends_on") or (primary_stage0 or {}).get("stage_name") or "stage1"); changed0 = True
+                  if not _str(final_merge.get("right_stage")):
+                      final_merge["right_stage"] = _str(enrich_stage0.get("stage_name") or "stage2"); changed0 = True
+                  if not _str(final_merge.get("left_field")):
+                      final_merge["left_field"] = _str(enrich_stage0.get("join_source_field") or rel_left); changed0 = True
+                  if not _str(final_merge.get("right_field")):
+                      final_merge["right_field"] = _str(enrich_stage0.get("join_target_field") or rel_right); changed0 = True
+                  if not _str(enrich_stage0.get("depends_on")) and _str(final_merge.get("left_stage")):
+                      enrich_stage0["depends_on"] = _str(final_merge.get("left_stage")); changed0 = True
+                  if not _str(enrich_stage0.get("join_source_field")) and _str(final_merge.get("left_field")):
+                      enrich_stage0["join_source_field"] = _str(final_merge.get("left_field")); changed0 = True
+                  if not _str(enrich_stage0.get("join_target_field")) and _str(final_merge.get("right_field")):
+                      enrich_stage0["join_target_field"] = _str(final_merge.get("right_field")); changed0 = True
+                  if not _str(final_merge.get("attach_as")):
+                      rc0 = _str(enrich_stage0.get("collection") or (related[0] if related else ""))
+                      final_merge["attach_as"] = (rc0 + "_info") if rc0 else "related_info"; changed0 = True
+                  if changed0:
+                      autofixes.append({"type": "enrich_contract_standard_fields_autofill", "left_stage": final_merge.get("left_stage"), "right_stage": final_merge.get("right_stage"), "left_field": final_merge.get("left_field"), "right_field": final_merge.get("right_field")})
+                  plan["final_merge"] = final_merge
+
               for enrich_stage in enrich_stages:
                   stage_name = _str(enrich_stage.get("stage_name"))
                   depends_on = _str(enrich_stage.get("depends_on"))
@@ -278,18 +317,19 @@
                       autofixes.append({"type": "enrich_projection_join_target_fill", "stage_name": stage_name, "field": join_target})
 
               if _str(final_merge.get("merge_mode")) == "enrich" and enrich_stages:
-                  enrich_stage = next((st for st in enrich_stages if _str(st.get("stage_name")) == _str(final_merge.get("right_stage") or final_merge.get("merge_stage_name"))), enrich_stages[0])
+                  enrich_stage = next((st for st in enrich_stages if _str(st.get("stage_name")) == _str(final_merge.get("right_stage"))), enrich_stages[0])
                   changed = False
                   if not _str(final_merge.get("right_stage")):
-                      final_merge["right_stage"] = _str(final_merge.get("merge_stage_name") or enrich_stage.get("stage_name")); changed = True
+                      final_merge["right_stage"] = _str(enrich_stage.get("stage_name")); changed = True
                   if not _str(final_merge.get("left_stage")):
                       final_merge["left_stage"] = _str(enrich_stage.get("depends_on")); changed = True
                   if not _str(final_merge.get("left_field")):
-                      final_merge["left_field"] = _str(enrich_stage.get("join_source_field") or final_merge.get("merge_key")); changed = True
+                      final_merge["left_field"] = _str(enrich_stage.get("join_source_field")); changed = True
                   if not _str(final_merge.get("right_field")):
-                      final_merge["right_field"] = _str(enrich_stage.get("join_target_field") or final_merge.get("merge_key")); changed = True
+                      final_merge["right_field"] = _str(enrich_stage.get("join_target_field")); changed = True
                   if not _str(final_merge.get("attach_as")):
-                      final_merge["attach_as"] = _str(enrich_stage.get("attach_as") or "product_info"); changed = True
+                      rc = _str(enrich_stage.get("collection") or (related[0] if related else ""))
+                      final_merge["attach_as"] = (rc + "_info") if rc else "related_info"; changed = True
                   if changed:
                       autofixes.append({"type": "final_merge_enrich_fields_fill", "right_stage": final_merge.get("right_stage"), "left_stage": final_merge.get("left_stage")})
                   if not all(_str(final_merge.get(k)) for k in ("left_stage", "right_stage", "left_field", "right_field")):
@@ -403,7 +443,9 @@
 
               if errors:
                   joined = "；".join(errors)
-                  if any("敏感/PII" in e or "forbidden_usage" in e or "relation" in e or "join" in e for e in errors):
+                  blocked_error = any(("敏感/PII" in e or "forbidden_usage" in e or "命中 forbidden" in e or "schema relations 未声明" in e or "禁止 LLM 发明 join" in e) for e in errors)
+                  replanable_join_error = any(("join_source_field 必须非空" in e or "join_target_field 必须非空" in e or "final_merge_enrich_fields_required" in e or "final_merge_enrich_left_field_invalid" in e or "final_merge_enrich_right_field_invalid" in e) for e in errors)
+                  if blocked_error and not replanable_join_error:
                       return _finalize(_result("blocked", plan, errors, warnings, autofixes, blocked="这个查询涉及敏感字段或非法关联，不能直接执行。", debug=debug))
                   if any("未知字段" in e or "多个候选" in e or "枚举值" in e for e in errors):
                       return _finalize(_result("requires_clarification", plan, errors, warnings, autofixes, clarification="我需要确认一下：当前查询中的字段、指标或枚举值对应哪个 schema 定义？", debug=debug))
