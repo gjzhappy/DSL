@@ -850,11 +850,15 @@
       type: custom
       width: 242
     - data:
+        authorization:
+          config:
+          type: no-auth
         desc: ''
         selected: false
         title: HTTP请求_获取动态Token_意图识别
         type: http-request
         method: post
+        params: ''
         url: "{{#1776100000001.token_url#}}"
         headers: Content-Type:application/json
         body:
