@@ -36,6 +36,21 @@
                   elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
                       errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
 
+                  top_keywords = ("top", "topn", "前", "排名", "排行", "榜单", "最高", "最低", "最多", "最少", "第一", "最大", "最小")
+                  has_top_semantics = any(k in _str(question).lower() for k in top_keywords)
+                  if _str(stage.get("intent_type")) == "group_top_entity" and not _str(stage.get("entity_field")):
+                      existing_group_fields = [_str(x) for x in _list(stage.get("group_fields")) if _str(x)]
+                      if existing_group_fields and not has_top_semantics:
+                          stage["intent_type"] = "aggregate_summary"
+                          autofixes.append({
+                              "type": "group_top_entity_without_entity_downgraded_to_aggregate_summary",
+                              "reason": "普通分组聚合不能因第二个 group field 是实体字段而误判为 group_top_entity",
+                              "group_fields": existing_group_fields,
+                          })
+                      else:
+                          errors.append("stage.entity_field is required for group_top_entity")
+                          route_hint = "needs_replan"
+
                   group_fields = []
                   for gf in _list(stage.get("group_fields")):
                       group_fields.append(_canonical_field(_str(gf), schema, coll, "group_fields", errors, warnings, autofixes, "groupable"))
