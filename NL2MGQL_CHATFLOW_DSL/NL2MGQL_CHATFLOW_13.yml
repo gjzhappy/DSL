@@ -475,15 +475,40 @@
                   except Exception: return []
               return []
 
+          def _stages(plan):
+              if not isinstance(plan,dict): return []
+              top=plan.get('stages')
+              legacy=(plan.get('execution_plan') or {}).get('stages') if isinstance(plan.get('execution_plan'),dict) else []
+              return top if isinstance(top,list) and top else (legacy if isinstance(legacy,list) else [])
+
           def _first_stage(plan):
-              stages=((plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []) if isinstance(plan,dict) else []
+              stages=_stages(plan)
               return stages[0] if isinstance(stages,list) and stages and isinstance(stages[0],dict) else {}
 
           def _set_stage(plan, stage):
-              if not isinstance(plan.get('execution_plan'),dict): plan['execution_plan']={}
-              stages=plan['execution_plan'].get('stages')
+              stages=_stages(plan)
               if not isinstance(stages,list) or not stages: stages=[{}]
-              stages[0].update(stage); plan['execution_plan']['stages']=stages
+              stages[0].update(stage); plan['stages']=stages; plan.pop('execution_plan',None)
+
+          def _authoritative_replan(new, turn_intent, patch_reason, query_refinement_json, changed_fields_json, current_question):
+              if str(turn_intent or 'refine_query') != 'refine_query': return False
+              path_text=(str(patch_reason or '')+' '+str(query_refinement_json or '')+' '+str(changed_fields_json or '')).lower()
+              if not any(x in path_text for x in ['llm_refine','full_replan','replan','重规划']): return False
+              return isinstance(new,dict) and new.get('contract_version')=='semantic_plan_contract' and bool(_stages(new))
+
+          def _has_negative_group_change(current_question, query_refinement_json, changed_fields_json):
+              text=(str(current_question or '')+' '+str(query_refinement_json or '')+' '+str(changed_fields_json or '')).lower()
+              return any(x in text for x in ['不再按','不要按','不按','negative_fields','group_by changed'])
+
+          def _safe_defaults(plan):
+              if not plan.get('answer_mode'): plan['answer_mode']='data'
+              if 'requires_clarification' not in plan: plan['requires_clarification']=False
+              if 'warnings' not in plan or not isinstance(plan.get('warnings'),list): plan['warnings']=[]
+              for st in _stages(plan):
+                  if isinstance(st,dict) and not st.get('limit'):
+                      st['limit']=100
+              plan['stages']=_stages(plan); plan.pop('execution_plan',None)
+              return plan
           def _allowed_fields(question, query_refinement_json, changed_fields_json):
               text=(str(question or '')+' '+json.dumps(_loads(query_refinement_json),ensure_ascii=False)).lower()
               allowed=set(_list(changed_fields_json))
@@ -492,12 +517,18 @@
                   if any(k.lower() in text for k in keys): allowed.add(field)
               return allowed
 
-          def main(old_normalized_semantic_plan_json: str, replanned_normalized_semantic_plan_json: str, current_question: str, query_refinement_json: str, changed_fields_json: str, refine_schema_context: str, patch_reason: str, replan_valid=True, replan_error: str=''):
+          def main(old_normalized_semantic_plan_json: str, replanned_normalized_semantic_plan_json: str, current_question: str, query_refinement_json: str, changed_fields_json: str, refine_schema_context: str, patch_reason: str, replan_valid=True, replan_error: str='', turn_intent: str='refine_query', **kwargs):
               old=_loads(old_normalized_semantic_plan_json); new=_loads(replanned_normalized_semantic_plan_json)
               if str(replan_valid).lower() in {'false','0','no'} or not new:
                   return {'normalized_semantic_plan_json':json.dumps(old,ensure_ascii=False),'guard_valid':False,'guard_warning':'','guard_error':str(replan_error or '重规划结果无效'),'guard_changed_fields_json':'[]','guard_rollback_fields_json':'[]','guard_debug_json':json.dumps({'fallback':'old_plan'},ensure_ascii=False)}
               if not old:
                   return {'normalized_semantic_plan_json':'','guard_valid':False,'guard_warning':'','guard_error':'缺少上一轮归一化语义计划，无法进行差异保护','guard_changed_fields_json':'[]','guard_rollback_fields_json':'[]','guard_debug_json':'{}'}
+              if _authoritative_replan(new, turn_intent, patch_reason, query_refinement_json, changed_fields_json, current_question):
+                  new=_safe_defaults(new)
+                  guard_note='full_replan_authoritative'
+                  if _has_negative_group_change(current_question, query_refinement_json, changed_fields_json):
+                      guard_note+='; negative_group_change_no_old_backfill'
+                  return {'normalized_semantic_plan_json':json.dumps(new,ensure_ascii=False),'guard_valid':True,'guard_warning':guard_note,'guard_error':'','guard_changed_fields_json':json.dumps(sorted(set(_list(changed_fields_json))),ensure_ascii=False),'guard_rollback_fields_json':'[]','guard_debug_json':json.dumps({'allowed_fields':['safe_defaults_only'],'patch_reason':patch_reason,'authoritative_replan':True},ensure_ascii=False)}
               os=_first_stage(old); ns=_first_stage(new); allowed=_allowed_fields(current_question,query_refinement_json,changed_fields_json)
               changed=[]; rollback=[]; warnings=[]; errors=[]
               for k in PROTECT:

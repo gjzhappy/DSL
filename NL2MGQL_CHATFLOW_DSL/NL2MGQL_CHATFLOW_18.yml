@@ -235,13 +235,20 @@
                           plan = _deepcopy_json(wrapped)
                           break
                   plan = _clean_for_contract(plan, warnings)
-                  execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
-                  if isinstance(execution_plan.get('stages'), list):
-                      plan['stages'] = execution_plan.get('stages')
-                      if isinstance(execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
-                          plan['final_merge'] = execution_plan.get('final_merge')
-                      if execution_plan.get('execution_mode') and not plan.get('execution_mode'):
-                          plan['execution_mode'] = execution_plan.get('execution_mode')
+                  top_stages = plan.get('stages')
+                  legacy_execution_plan = plan.get('execution_plan') if isinstance(plan.get('execution_plan'), dict) else {}
+                  legacy_stages = legacy_execution_plan.get('stages')
+                  if isinstance(top_stages, list) and top_stages:
+                      plan['stages'] = top_stages
+                  elif isinstance(legacy_stages, list) and legacy_stages:
+                      plan['stages'] = legacy_stages
+                      if isinstance(legacy_execution_plan.get('final_merge'), dict) and not isinstance(plan.get('final_merge'), dict):
+                          plan['final_merge'] = legacy_execution_plan.get('final_merge')
+                      if legacy_execution_plan.get('execution_mode') and not plan.get('execution_mode'):
+                          plan['execution_mode'] = legacy_execution_plan.get('execution_mode')
+                  else:
+                      plan['stages'] = top_stages if isinstance(top_stages, list) else []
+                  plan.pop('execution_plan', None)
                   if not isinstance(plan.get('chart_request'), dict) and isinstance(plan.get('visualization'), dict):
                       plan['chart_request'] = plan.get('visualization')
                   if not isinstance(plan.get('chart_request'), dict):

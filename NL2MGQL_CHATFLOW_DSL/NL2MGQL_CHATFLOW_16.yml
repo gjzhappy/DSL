@@ -481,6 +481,73 @@
               return _finalize(_result(route_hint, plan, [], warnings, autofixes, debug=debug))
 
 
+          def _shallow_row(row, max_fields=20, max_str=160):
+              out = {}
+              if not isinstance(row, dict):
+                  return out
+              for k, v in row.items():
+                  if len(out) >= max_fields:
+                      break
+                  key = str(k)
+                  if isinstance(v, (str, int, float, bool)) or v is None:
+                      out[key] = v[:max_str] if isinstance(v, str) else v
+                  elif isinstance(v, dict):
+                      out[key] = json.dumps(v, ensure_ascii=False, default=str)[:max_str]
+                  elif isinstance(v, list):
+                      out[key] = json.dumps(v[:5], ensure_ascii=False, default=str)[:max_str]
+                  else:
+                      out[key] = str(v)[:max_str]
+              return out
+
+          def _shallow_result_profile(profile):
+              profile = profile if isinstance(profile, dict) else {}
+              rows = profile.get("preview_rows") if isinstance(profile.get("preview_rows"), list) else []
+              return {
+                  "row_count": profile.get("row_count", 0),
+                  "fields": [str(x) for x in (profile.get("fields") or [])[:50]],
+                  "preview_rows": [_shallow_row(r) for r in rows[:5] if isinstance(r, dict)],
+              }
+
+          def _normalized_plan_output(plan):
+              plan = plan if isinstance(plan, dict) else {}
+              chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+              related = plan.get("related_collections") if isinstance(plan.get("related_collections"), list) else []
+              stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
+              return {
+                  "contract_version": _str(plan.get("contract_version")),
+                  "primary_collection": _str(plan.get("primary_collection")),
+                  "related_collections": [str(x) for x in related[:10]],
+                  "execution_mode": _str(plan.get("execution_mode")),
+                  "stage_count": len(stages),
+                  "needs_chart": bool(plan.get("needs_chart")),
+                  "chart_request": {
+                      "enabled": bool(chart.get("enabled")),
+                      "chart_type": _str(chart.get("chart_type")),
+                      "x_field": _str(chart.get("x_field")),
+                      "y_field": _str(chart.get("y_field")),
+                      "series_name": _str(chart.get("series_name")),
+                  },
+              }
+
+          def _debug_output(debug, route, plan, warnings, errors):
+              debug = debug if isinstance(debug, dict) else {}
+              schema_ref = debug.get("schema_context_ref") if isinstance(debug.get("schema_context_ref"), dict) else {}
+              stages = plan.get("stages") if isinstance(plan, dict) and isinstance(plan.get("stages"), list) else []
+              return {
+                  "validator_route": route or "",
+                  "schema_context_ready": bool(schema_ref),
+                  "schema_context_ref": {
+                      "collections": [str(x) for x in (schema_ref.get("collections") or [])[:20]],
+                      "schema_digest": _str(schema_ref.get("schema_digest")),
+                      "schema_version": _str(schema_ref.get("schema_version")),
+                      "catalog_digest": _str(schema_ref.get("catalog_digest")),
+                  },
+                  "stage_count": len(stages),
+                  "warnings_count": len(warnings if isinstance(warnings, list) else []),
+                  "errors_count": len(errors if isinstance(errors, list) else []),
+              }
+
+
           def _finalize(res: Dict[str, Any]) -> Dict[str, Any]:
               route = res.get("validator_route")
               if route == "valid":
@@ -519,7 +586,7 @@
                   "last_resolved_fields": prior.get("last_resolved_fields") if isinstance(prior.get("last_resolved_fields"), list) else [],
                   "last_resolved_metrics": prior.get("last_resolved_metrics") if isinstance(prior.get("last_resolved_metrics"), list) else [],
                   "last_chart_request": prior.get("last_chart_request") if isinstance(prior.get("last_chart_request"), dict) else {},
-                  "last_result_profile": prior.get("last_result_profile") if isinstance(prior.get("last_result_profile"), dict) else {"row_count": 0, "fields": [], "preview_rows": []},
+                  "last_result_profile": _shallow_result_profile(prior.get("last_result_profile")),
                   "schema_context_ref": schema_ref or prior.get("schema_context_ref") or {"collections": [], "schema_digest": "", "schema_version": "", "catalog_digest": ""},
                   "answer_summary": text[:800],
                   "size_guard": {},
@@ -538,6 +605,10 @@
                   "state_update": {"should_save_context": should_save, "context_summary": compact},
               }
               context_update = {"contract_version": "context_update_contract", "should_save_context": should_save, "compact_context": compact, "last_context_json": compact_json, "warnings": [], "clear_fields": []}
+              full_plan = res.get("normalized_plan") if isinstance(res.get("normalized_plan"), dict) else {}
+              full_debug = res.get("debug") if isinstance(res.get("debug"), dict) else {}
+              res["normalized_plan"] = _normalized_plan_output(full_plan)
+              res["debug"] = _debug_output(full_debug, route, full_plan, _list(res.get("warnings")), _list(res.get("errors")))
               res["answer_payload_json"] = json.dumps(answer_payload, ensure_ascii=False)
               res["context_update_json"] = json.dumps(context_update, ensure_ascii=False)
               res["compact_context_json"] = compact_json
