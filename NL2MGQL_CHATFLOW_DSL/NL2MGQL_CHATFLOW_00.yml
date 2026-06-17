@@ -315,70 +315,6 @@ workflow:
     - ENABLE_FULL_LLM
     value: 'true'
     value_type: string
-  - description: 本轮选定意图文本（满血LLM或本地兜底汇合）
-    id: 98b8f330-3f3b-4e1d-8b21-111111111001
-    name: selected_intent_text
-    selector:
-    - conversation
-    - selected_intent_text
-    value: ''
-    value_type: string
-  - description: 本轮选定意图结构化 JSON（满血LLM或本地兜底汇合）
-    id: 98b8f330-3f3b-4e1d-8b21-111111111002
-    name: selected_intent_structured_json
-    selector:
-    - conversation
-    - selected_intent_structured_json
-    value: '{}'
-    value_type: string
-  - description: 本轮选定意图来源
-    id: 98b8f330-3f3b-4e1d-8b21-111111111003
-    name: selected_intent_source
-    selector:
-    - conversation
-    - selected_intent_source
-    value: ''
-    value_type: string
-  - description: 本轮意图是否使用满血失败后的本地兜底
-    id: 98b8f330-3f3b-4e1d-8b21-111111111004
-    name: intent_fallback_used
-    selector:
-    - conversation
-    - intent_fallback_used
-    value: 'false'
-    value_type: string
-  - description: 本轮意图兜底原因
-    id: 98b8f330-3f3b-4e1d-8b21-111111111005
-    name: intent_fallback_reason
-    selector:
-    - conversation
-    - intent_fallback_reason
-    value: ''
-    value_type: string
-  - description: 满血意图识别 HTTP 状态码
-    id: 98b8f330-3f3b-4e1d-8b21-111111111006
-    name: full_intent_status_code
-    selector:
-    - conversation
-    - full_intent_status_code
-    value: 0
-    value_type: number
-  - description: 满血意图识别错误信息
-    id: 98b8f330-3f3b-4e1d-8b21-111111111007
-    name: full_intent_error_message
-    selector:
-    - conversation
-    - full_intent_error_message
-    value: ''
-    value_type: string
-  - description: 满血/本地意图识别调试 JSON
-    id: 98b8f330-3f3b-4e1d-8b21-111111111008
-    name: intent_debug_json
-    selector:
-    - conversation
-    - intent_debug_json
-    value: '{}'
-    value_type: string
   features:
     file_upload:
       allowed_file_extensions:
@@ -442,20 +378,9 @@ workflow:
     - data:
         isInLoop: false
         sourceType: code
-        targetType: assigner
-      id: 1776100000001-source-1776100000002-target
-      source: '1776100000001'
-      sourceHandle: source
-      target: '1776100000002'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
         targetType: if-else
-      id: 1776100000002-source-1776100000003-target
-      source: '1776100000002'
+      id: 1776100000001-source-1776100000003-target
+      source: '1776100000001'
       sourceHandle: source
       target: '1776100000003'
       targetHandle: target
@@ -475,11 +400,11 @@ workflow:
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: code
-      id: 1776100000003-false-1776100000018-target
+        targetType: llm
+      id: 1776100000003-false-1776000000003-target
       source: '1776100000003'
       sourceHandle: 'false'
-      target: '1776100000018'
+      target: '1776000000003'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -519,11 +444,11 @@ workflow:
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: code
-      id: 1776100000006-false-1776100000019-target
+        targetType: llm
+      id: 1776100000006-false-1776000000003-target
       source: '1776100000006'
       sourceHandle: 'false'
-      target: '1776100000019'
+      target: '1776000000003'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -553,43 +478,21 @@ workflow:
         isInLoop: false
         sourceType: if-else
         targetType: code
-      id: 1776100000009-true-1776100000010-target
+      id: 1776100000009-true-1776000000004-target
       source: '1776100000009'
       sourceHandle: 'true'
-      target: '1776100000010'
+      target: '1776000000004'
       targetHandle: target
       type: custom
       zIndex: 0
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: code
-      id: 1776100000009-false-1776100000016-target
+        targetType: llm
+      id: 1776100000009-false-1776000000003-target
       source: '1776100000009'
       sourceHandle: 'false'
-      target: '1776100000016'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: assigner
-      id: 1776100000010-source-1776100000011-target
-      source: '1776100000010'
-      sourceHandle: source
-      target: '1776100000011'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: code
-      id: 1776100000011-source-1776000000004-target
-      source: '1776100000011'
-      sourceHandle: source
-      target: '1776000000004'
+      target: '1776000000003'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -597,98 +500,10 @@ workflow:
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776000000003-source-1776100000012-target
+      id: 1776000000003-source-1776000000004-target
       source: '1776000000003'
       sourceHandle: source
-      target: '1776100000012'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: assigner
-      id: 1776100000018-source-1776100000020-target
-      source: '1776100000018'
-      sourceHandle: source
-      target: '1776100000020'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: llm
-      id: 1776100000020-source-1776000000003-target
-      source: '1776100000020'
-      sourceHandle: source
-      target: '1776000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: assigner
-      id: 1776100000012-source-1776100000013-target
-      source: '1776100000012'
-      sourceHandle: source
-      target: '1776100000013'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: code
-      id: 1776100000013-source-1776000000004-target
-      source: '1776100000013'
-      sourceHandle: source
       target: '1776000000004'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: assigner
-      id: 1776100000019-source-1776100000021-target
-      source: '1776100000019'
-      sourceHandle: source
-      target: '1776100000021'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: llm
-      id: 1776100000021-source-1776000000003-target
-      source: '1776100000021'
-      sourceHandle: source
-      target: '1776000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: assigner
-      id: 1776100000016-source-1776100000017-target
-      source: '1776100000016'
-      sourceHandle: source
-      target: '1776100000017'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: llm
-      id: 1776100000017-source-1776000000003-target
-      source: '1776100000017'
-      sourceHandle: source
-      target: '1776000000003'
       targetHandle: target
       type: custom
       zIndex: 0
