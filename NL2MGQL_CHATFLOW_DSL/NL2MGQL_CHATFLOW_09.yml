@@ -407,7 +407,8 @@
                       summary_text = _summary(question, query_profile.get('preview_rows') or result_rows[:5], normalized_plan)
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, False) if _needs_analysis(question, mode) else ''
                       warning = ''
-                      if _plan_needs_chart(normalized_plan, semantic_plan, question):
+                      requested_chart = bool((_chart_request(normalized_plan).get('enabled') if isinstance(_chart_request(normalized_plan), dict) else False) or (_chart_request(semantic_plan).get('enabled') if isinstance(_chart_request(semantic_plan), dict) else False))
+                      if requested_chart and _plan_needs_chart(normalized_plan, semantic_plan, question):
                           warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or '图表字段未匹配或图表配置不可用'
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
@@ -749,7 +750,7 @@
               rows=qr.get('rows') if isinstance(qr.get('rows'),list) else []; fields=set(_fields(rows, qr.get('fields') if isinstance(qr.get('fields'),list) else []))
               p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':int(qr.get('row_count') or len(rows)),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{}}
               if not req.get('enabled'):
-                  p['warning']='chart_request disabled'; return p
+                  p['warning']=''; return p
               if not qr.get('success',True):
                   p['warning']=str(qr.get('error') or '查询执行失败，未生成图表。'); p['chart_error']=p['warning']; return p
               if not rows:
