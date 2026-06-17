@@ -122,6 +122,7 @@
                   stage["filters"] = filters
 
                   stage_output_field_alias_map = {}
+                  group_field_names = {_str(gf) for gf in group_fields if _str(gf)}
                   canonical_metric_alias = _str(stage.get("metric_alias"))
                   if canonical_metric_alias:
                       stage_output_field_alias_map[canonical_metric_alias] = canonical_metric_alias
@@ -142,8 +143,11 @@
                           if _str(top_chart_request.get(chart_key)):
                               stage_output_field_alias_map[_str(top_chart_request.get(chart_key))] = canonical_metric_alias
                       for fix in autofixes:
-                          if isinstance(fix, dict) and _str(fix.get("to")) == canonical_metric_alias and _str(fix.get("from")):
-                              stage_output_field_alias_map[_str(fix.get("from"))] = canonical_metric_alias
+                          fix_from = _str(fix.get("from")) if isinstance(fix, dict) else ""
+                          if isinstance(fix, dict) and _str(fix.get("to")) == canonical_metric_alias and fix_from and fix_from not in group_field_names:
+                              stage_output_field_alias_map[fix_from] = canonical_metric_alias
+                      for gf in group_field_names:
+                          stage_output_field_alias_map.pop(gf, None)
                   if stage_output_field_alias_map:
                       debug.setdefault("stage_output_field_alias_maps", {})[_str(stage.get("stage_name") or i)] = dict(stage_output_field_alias_map)
 
@@ -156,14 +160,27 @@
                       return value, value in stage_output_field_alias_map
 
                   projections = []
+                  group_field_set = group_field_names
+                  for gf in group_fields:
+                      _add(projections, gf)
                   for pf in _list(stage.get("projection_fields")):
                       pf_str = _str(pf)
+                      if not pf_str:
+                          continue
+                      if pf_str in group_field_set:
+                          _add(projections, pf_str)
+                          continue
                       canonical_pf, is_stage_output = _canonical_stage_output_field(pf_str, "projection_fields")
                       if is_stage_output or canonical_pf in derived_fields:
-                          projections.append(canonical_pf)
+                          _add(projections, canonical_pf)
                           autofixes.append({"type": "derived_metric_alias_allow", "field": canonical_pf, "place": "projection_fields"})
                       else:
-                          projections.append(_canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                          _add(projections, _canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                  if _stage_is_aggregate(stage) and canonical_metric_alias:
+                      _add(projections, canonical_metric_alias)
+                  join_source_field = _str(stage.get("join_source_field"))
+                  if join_source_field:
+                      _add(projections, join_source_field)
                   stage["projection_fields"] = projections
 
                   tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
@@ -289,7 +306,11 @@
 
               for enrich_stage in enrich_stages:
                   stage_name = _str(enrich_stage.get("stage_name"))
-                  depends_on = _str(enrich_stage.get("depends_on"))
+                  old_depends_on = enrich_stage.get("depends_on")
+                  depends_on = _normalize_stage_depends_on(old_depends_on)
+                  enrich_stage["depends_on"] = depends_on
+                  if str(old_depends_on) != str(depends_on):
+                      autofixes.append({"type": "depends_on_canonicalize", "stage_name": stage_name, "from": old_depends_on, "to": depends_on})
                   if not depends_on:
                       prior_primary = [st for st in primary_stages if stage_positions.get(_str(st.get("stage_name")), 10**9) < stage_positions.get(stage_name, -1)]
                       if len(prior_primary) == 1 and _str(prior_primary[0].get("stage_name")):

@@ -110,6 +110,33 @@
           def _as_list(value):
               return value if isinstance(value, list) else []
 
+          def _normalize_stage_depends_on(value):
+              """Normalize depends_on to scalar stage name for semantic_plan_contract."""
+              if value is None:
+                  return ""
+              if isinstance(value, list):
+                  for item in value:
+                      s = str(item or "").strip()
+                      if s:
+                          return s
+                  return ""
+              s = str(value or "").strip()
+              if not s:
+                  return ""
+              if s.startswith("[") and s.endswith("]"):
+                  try:
+                      import ast
+                      parsed = ast.literal_eval(s)
+                      if isinstance(parsed, list):
+                          for item in parsed:
+                              item_s = str(item or "").strip()
+                              if item_s:
+                                  return item_s
+                          return ""
+                  except Exception:
+                      pass
+              return s
+
           def _message_to_text(value):
               if value is None:
                   return ""
@@ -300,7 +327,11 @@
               if not str(final_merge.get('attach_as') or '').strip():
                   final_merge['attach_as'] = related_collection + '_info' if related_collection else 'related_info'
               if enrich_stage:
-                  enrich_stage['depends_on'] = str(enrich_stage.get('depends_on') or left_stage).strip()
+                  old_depends_on = enrich_stage.get('depends_on')
+                  new_depends_on = _normalize_stage_depends_on(old_depends_on) or left_stage
+                  enrich_stage['depends_on'] = new_depends_on
+                  if str(old_depends_on) != str(new_depends_on):
+                      normalizer_warnings.append({'type': 'depends_on_canonicalized', 'stage_name': enrich_stage.get('stage_name'), 'from': old_depends_on, 'to': new_depends_on})
                   if left_field:
                       enrich_stage['join_source_field'] = left_field
                   if right_field:
@@ -427,7 +458,12 @@
                   enrich_stages = [s for s in stages if isinstance(s, dict) and str(s.get('stage_type') or '').strip() == 'enrich_related']
                   if str(plan.get('execution_mode') or 'single_stage').strip() != 'single_stage' and enrich_stages:
                       for enrich_stage in enrich_stages:
-                          if not str(enrich_stage.get('depends_on') or '').strip():
+                          old_depends_on = enrich_stage.get('depends_on')
+                          new_depends_on = _normalize_stage_depends_on(old_depends_on)
+                          enrich_stage['depends_on'] = new_depends_on
+                          if str(old_depends_on) != str(new_depends_on):
+                              normalizer_warnings.append({'type': 'depends_on_canonicalized', 'stage_name': enrich_stage.get('stage_name'), 'from': old_depends_on, 'to': new_depends_on})
+                          if not new_depends_on:
                               prior_primary = [s for s in primary_stages if stages.index(s) < stages.index(enrich_stage)]
                               if len(prior_primary) == 1 and str(prior_primary[0].get('stage_name') or '').strip():
                                   enrich_stage['depends_on'] = str(prior_primary[0].get('stage_name') or '').strip()
