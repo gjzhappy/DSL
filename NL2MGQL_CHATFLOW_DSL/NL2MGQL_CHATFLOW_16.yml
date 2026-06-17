@@ -160,27 +160,33 @@
                       return value, value in stage_output_field_alias_map
 
                   projections = []
+
+                  def add_projection_field(value):
+                      text = _str(value)
+                      if text and text not in projections:
+                          projections.append(text)
+
                   group_field_set = group_field_names
                   for gf in group_fields:
-                      _add(projections, gf)
+                      add_projection_field(gf)
                   for pf in _list(stage.get("projection_fields")):
                       pf_str = _str(pf)
                       if not pf_str:
                           continue
                       if pf_str in group_field_set:
-                          _add(projections, pf_str)
+                          add_projection_field(pf_str)
                           continue
                       canonical_pf, is_stage_output = _canonical_stage_output_field(pf_str, "projection_fields")
                       if is_stage_output or canonical_pf in derived_fields:
-                          _add(projections, canonical_pf)
+                          add_projection_field(canonical_pf)
                           autofixes.append({"type": "derived_metric_alias_allow", "field": canonical_pf, "place": "projection_fields"})
                       else:
-                          _add(projections, _canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
+                          add_projection_field(_canonical_field(canonical_pf, schema, coll, "projection_fields", errors, warnings, autofixes, "projectable"))
                   if _stage_is_aggregate(stage) and canonical_metric_alias:
-                      _add(projections, canonical_metric_alias)
+                      add_projection_field(canonical_metric_alias)
                   join_source_field = _str(stage.get("join_source_field"))
                   if join_source_field:
-                      _add(projections, join_source_field)
+                      add_projection_field(join_source_field)
                   stage["projection_fields"] = projections
 
                   tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
