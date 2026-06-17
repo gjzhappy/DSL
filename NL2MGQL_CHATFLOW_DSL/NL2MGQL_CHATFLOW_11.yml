@@ -100,15 +100,40 @@
               return base
 
 
-          def main(selected_intent_structured_json: str = '{}', selected_intent_text: str = '', selected_intent_source: str = '', intent_fallback_used: str = 'false', intent_fallback_reason: str = '', full_intent_status_code=0, full_intent_error_message: str = '', intent_debug_json: str = '{}', last_context_json: str = '', question: str = '', old_normalized_semantic_plan_json: str = '{}', **kwargs):
+          def main(full_intent_ok: str = 'false', full_intent_text: str = '', full_intent_structured_json: str = '{}', full_intent_status_code=0, full_intent_error_message: str = '', full_intent_debug_json: str = '{}', local_intent_structured=None, local_intent_text: str = '', enable_full_llm: str = 'false', last_context_json: str = '', question: str = '', old_normalized_semantic_plan_json: str = '{}', **kwargs):
               ctx = _loads_obj(last_context_json)
               old_plan = _loads_obj(old_normalized_semantic_plan_json)
-              obj = _loads_obj(selected_intent_structured_json)
-              source = str(selected_intent_source or '')
+              full_ok = str(full_intent_ok or '').strip().lower() == 'true'
+              full_status = _safe_int(full_intent_status_code, 0)
+              if full_ok:
+                  source = 'full_llm'
+                  selected_text = str(full_intent_text or full_intent_structured_json or '')
+                  selected_structured = full_intent_structured_json or '{}'
+                  fallback_used = 'false'
+                  fallback_reason = ''
+                  debug_json = str(full_intent_debug_json or '{}')
+              else:
+                  source = 'local_fallback'
+                  selected_text = str(local_intent_text or '')
+                  try:
+                      selected_structured = json.dumps(local_intent_structured, ensure_ascii=False) if isinstance(local_intent_structured, dict) and local_intent_structured else selected_text
+                  except Exception:
+                      selected_structured = selected_text
+                  fallback_enabled = str(enable_full_llm or '').strip().lower() == 'true'
+                  fallback_used = 'true' if fallback_enabled else 'false'
+                  if fallback_enabled:
+                      if not str(full_intent_structured_json or '').strip() or str(full_intent_structured_json or '').strip() == '{}':
+                          fallback_reason = 'full_intent_request_unavailable'
+                      else:
+                          fallback_reason = 'full_intent_check_failed'
+                  else:
+                      fallback_reason = ''
+                  debug_json = str(full_intent_debug_json or '{}')
+              obj = _loads_obj(selected_structured)
               if not obj:
-                  obj = _loads_obj(selected_intent_text)
+                  obj = _loads_obj(selected_text)
               valid = bool(obj) and bool(source)
-              err = '' if valid else ('empty_selected_intent' if not source and not str(selected_intent_text or '').strip() and str(selected_intent_structured_json or '').strip() in ('', '{}') else 'parse_failed')
+              err = '' if valid else ('empty_selected_intent' if not str(selected_text or '').strip() and str(selected_structured or '').strip() in ('', '{}') else 'parse_failed')
               obj = {k: obj.get(k) for k in SCHEMA_KEYS}
               intent = str(obj.get('turn_intent') or 'new_query').strip()
               if intent not in ALLOWED:
@@ -168,11 +193,11 @@
                   'context_binding_json': json.dumps(cb, ensure_ascii=False),
                   'analysis_focus': str(obj.get('analysis_focus') or ''),
                   'selected_intent_source': source,
-                  'intent_fallback_used': str(intent_fallback_used).lower(),
-                  'intent_fallback_reason': str(intent_fallback_reason or ''),
-                  'full_intent_status_code': int(full_intent_status_code or 0),
+                  'intent_fallback_used': fallback_used,
+                  'intent_fallback_reason': fallback_reason,
+                  'full_intent_status_code': full_status,
                   'full_intent_error_message': str(full_intent_error_message or ''),
-                  'intent_debug_json': str(intent_debug_json or '{}'),
+                  'intent_debug_json': debug_json,
               }
         code_language: python3
         desc: ''
@@ -242,45 +267,50 @@
         type: code
         variables:
         - value_selector:
-          - conversation
-          - selected_intent_structured_json
+          - '1776100000008'
+          - full_intent_ok
           value_type: string
-          variable: selected_intent_structured_json
+          variable: full_intent_ok
         - value_selector:
-          - conversation
-          - selected_intent_text
+          - '1776100000008'
+          - full_intent_text
           value_type: string
-          variable: selected_intent_text
+          variable: full_intent_text
         - value_selector:
-          - conversation
-          - selected_intent_source
+          - '1776100000008'
+          - full_intent_structured_json
           value_type: string
-          variable: selected_intent_source
+          variable: full_intent_structured_json
         - value_selector:
-          - conversation
-          - intent_fallback_used
-          value_type: string
-          variable: intent_fallback_used
-        - value_selector:
-          - conversation
-          - intent_fallback_reason
-          value_type: string
-          variable: intent_fallback_reason
-        - value_selector:
-          - conversation
+          - '1776100000008'
           - full_intent_status_code
           value_type: number
           variable: full_intent_status_code
         - value_selector:
-          - conversation
+          - '1776100000008'
           - full_intent_error_message
           value_type: string
           variable: full_intent_error_message
         - value_selector:
-          - conversation
-          - intent_debug_json
+          - '1776100000008'
+          - full_intent_debug_json
           value_type: string
-          variable: intent_debug_json
+          variable: full_intent_debug_json
+        - value_selector:
+          - '1776000000003'
+          - structured_output
+          value_type: object
+          variable: local_intent_structured
+        - value_selector:
+          - '1776000000003'
+          - text
+          value_type: string
+          variable: local_intent_text
+        - value_selector:
+          - env
+          - ENABLE_FULL_LLM
+          value_type: string
+          variable: enable_full_llm
         - value_selector:
           - '1776000000001'
           - last_context_json
@@ -299,11 +329,11 @@
       height: 80
       id: '1776000000004'
       position:
-        x: 1840
-        y: 0
+        x: 4320
+        y: -1320
       positionAbsolute:
-        x: 1840
-        y: 0
+        x: 4320
+        y: -1320
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1065,11 +1095,11 @@
       height: 80
       id: '1776000000013'
       position:
-        x: 2300
-        y: 0
+        x: 4660
+        y: -1320
       positionAbsolute:
-        x: 2300
-        y: 0
+        x: 4660
+        y: -1320
       selected: false
       sourcePosition: right
       targetPosition: left
