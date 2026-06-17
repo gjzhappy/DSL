@@ -114,11 +114,20 @@
               if value is None:
                   return ""
               if isinstance(value, str):
-                  return value
+                  return value.strip()
+              if isinstance(value, dict):
+                  typ = value.get('type') or value.get('code') or value.get('warning_type') or ''
+                  msg = value.get('message') or value.get('reason') or value.get('detail') or ''
+                  if typ and msg:
+                      return f"{typ}: {msg}"
+                  if typ:
+                      return str(typ).strip()
+                  if msg:
+                      return str(msg).strip()
               try:
-                  return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                  return json.dumps(value, ensure_ascii=False, sort_keys=True)
               except Exception:
-                  return str(value)
+                  return str(value).strip()
 
           def _safe_join_messages(values, sep="\n"):
               if values is None:
@@ -142,6 +151,27 @@
 
           def _as_dict(value):
               return value if isinstance(value, dict) else {}
+
+          def _strip_runtime_fields_from_semantic_plan(plan):
+              if not isinstance(plan, dict):
+                  return plan
+              plan.pop('normalizer_warnings', None)
+              plan.pop('normalizer_errors', None)
+              plan.pop('normalizer_debug', None)
+              return plan
+
+          def _merge_key_field(merge_keys, stage_name):
+              if not isinstance(merge_keys, list):
+                  return ''
+              target_stage = str(stage_name or '').strip()
+              for item in merge_keys:
+                  if not isinstance(item, dict):
+                      continue
+                  item_stage = str(item.get('stage_name') or item.get('stage') or '').strip()
+                  if item_stage != target_stage:
+                      continue
+                  return str(item.get('source_field') or item.get('field') or item.get('field_name') or '').strip()
+              return ''
 
           def _clean_for_contract(value, warnings, path=''):
               if isinstance(value, dict):
@@ -269,16 +299,29 @@
                           merge_keys = final_merge.get('merge_keys')
                           merge_key = final_merge.get('merge_key')
                           if not merge_key and isinstance(merge_keys, list) and merge_keys:
-                              merge_key = str(merge_keys[0] or '').strip()
+                              merge_key = ''
+                              for item in merge_keys:
+                                  if isinstance(item, dict):
+                                      merge_key = str(item.get('source_field') or item.get('field') or item.get('field_name') or '').strip()
+                                  else:
+                                      merge_key = str(item or '').strip()
+                                  if merge_key:
+                                      break
                           changed = False
                           if not str(final_merge.get('right_stage') or '').strip():
                               final_merge['right_stage'] = str(final_merge.get('merge_stage_name') or enrich_stage.get('stage_name') or '').strip(); changed = True
                           if not str(final_merge.get('left_stage') or '').strip() and str(enrich_stage.get('depends_on') or '').strip():
                               final_merge['left_stage'] = str(enrich_stage.get('depends_on') or '').strip(); changed = True
-                          if not str(final_merge.get('left_field') or '').strip():
-                              final_merge['left_field'] = str(enrich_stage.get('join_source_field') or merge_key or '').strip(); changed = True
-                          if not str(final_merge.get('right_field') or '').strip():
-                              final_merge['right_field'] = str(enrich_stage.get('join_target_field') or merge_key or '').strip(); changed = True
+                          left_field = str(final_merge.get('left_field') or '').strip()
+                          right_field = str(final_merge.get('right_field') or '').strip()
+                          if not left_field or left_field.startswith('{'):
+                              fixed_left_field = str(_merge_key_field(merge_keys, final_merge.get('left_stage')) or enrich_stage.get('join_source_field') or merge_key or '').strip()
+                              if fixed_left_field:
+                                  final_merge['left_field'] = fixed_left_field; changed = True
+                          if not right_field or right_field.startswith('{'):
+                              fixed_right_field = str(_merge_key_field(merge_keys, final_merge.get('right_stage')) or enrich_stage.get('join_target_field') or merge_key or '').strip()
+                              if fixed_right_field:
+                                  final_merge['right_field'] = fixed_right_field; changed = True
                           if not str(final_merge.get('attach_as') or '').strip():
                               final_merge['attach_as'] = str(enrich_stage.get('attach_as') or 'product_info').strip(); changed = True
                           if changed:
@@ -297,8 +340,8 @@
                       'clarification_question': str(plan.get('clarification_question') or '').strip(),
                       'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
                       'warnings': _as_list(plan.get('warnings')),
-                      'normalizer_warnings': normalizer_warnings,
                   }
+                  _strip_runtime_fields_from_semantic_plan(contract)
                   route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
                   return contract, True, route, '', normalizer_warnings, source or 'unknown'
               except Exception as e:
@@ -377,10 +420,11 @@
                   needs_chart = needs_chart or bool(parsed.get('needs_chart'))
                   if not chart_request and isinstance(parsed.get('chart_request'), dict):
                       chart_request = parsed.get('chart_request')
+              output_plan = _strip_runtime_fields_from_semantic_plan(_deepcopy_json(normalized)) if plan_valid else {}
               return {
-                  'semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
-                  'normalized_semantic_plan_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
-                  'semantic_plan_contract_json': json.dumps(normalized if plan_valid else {}, ensure_ascii=False),
+                  'semantic_plan_json': json.dumps(output_plan, ensure_ascii=False),
+                  'normalized_semantic_plan_json': json.dumps(output_plan, ensure_ascii=False),
+                  'semantic_plan_contract_json': json.dumps(output_plan, ensure_ascii=False),
                   'semantic_plan_raw_text': str(semantic_plan_raw_text or '')[:4000],
                   'plan_valid': plan_valid,
                   'normalizer_valid': plan_valid,
