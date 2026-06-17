@@ -674,6 +674,34 @@
               return str(v or "").strip()
 
 
+          def _normalize_stage_depends_on(value: Any) -> str:
+              """Normalize depends_on to scalar stage name for semantic_plan_contract."""
+              if value is None:
+                  return ""
+              if isinstance(value, list):
+                  for item in value:
+                      s = str(item or "").strip()
+                      if s:
+                          return s
+                  return ""
+              s = str(value or "").strip()
+              if not s:
+                  return ""
+              if s.startswith("[") and s.endswith("]"):
+                  try:
+                      import ast
+                      parsed = ast.literal_eval(s)
+                      if isinstance(parsed, list):
+                          for item in parsed:
+                              item_s = str(item or "").strip()
+                              if item_s:
+                                  return item_s
+                          return ""
+                  except Exception:
+                      pass
+              return s
+
+
           def _safe_message_text(item: Any) -> str:
               if item is None:
                   return ""
