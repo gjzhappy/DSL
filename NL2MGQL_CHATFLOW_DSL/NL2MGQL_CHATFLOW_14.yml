@@ -834,7 +834,7 @@
               return planner
 
 
-          def main(turn_intent: str, refine_like_requery, patch_applied, original_normalized_semantic_plan_json: str, patched_normalized_semantic_plan_json: str, guarded_normalized_semantic_plan_json: str, original_planner, original_schema_context: str, refine_schema_context: str, guard_valid=True, guard_error: str='', execution_input_error_from_upstream: str=''):
+          def main(turn_intent: str, refine_like_requery, patch_applied, original_normalized_semantic_plan_json: str, patched_normalized_semantic_plan_json: str, guarded_normalized_semantic_plan_json: str, original_planner, original_schema_context: str, refine_schema_context: str, guard_valid=True, guard_error: str='', execution_input_error_from_upstream: str='', full_schema_metadata_json: str='{}', full_schema_alias_index_json: str='{}'):
               is_refine = _bool(refine_like_requery) or str(turn_intent or '').strip() in REFINE_LIKE
               if is_refine and _bool(patch_applied):
                   selected_json = patched_normalized_semantic_plan_json
@@ -865,8 +865,14 @@
                   execution_input_error = execution_input_error or (normalizer_error or 'semantic_plan_normalizer 未能归一语义计划')
               normalized_json = json.dumps(plan, ensure_ascii=False) if normalizer_valid else '{}'
               planner = _derive_planner(plan, _loads(original_planner)) if plan else _loads(original_planner)
-              schema_metadata = extract_schema_metadata(schema_context)
-              schema_alias_index = build_alias_index(schema_metadata)
+              full_schema_metadata = _loads(full_schema_metadata_json)
+              full_schema_alias_index = _loads(full_schema_alias_index_json)
+              if not is_refine and isinstance(full_schema_metadata.get('collections'), dict) and full_schema_metadata.get('collections'):
+                  schema_metadata = full_schema_metadata
+                  schema_alias_index = full_schema_alias_index if isinstance(full_schema_alias_index, dict) else {}
+              else:
+                  schema_metadata = extract_schema_metadata(schema_context)
+                  schema_alias_index = build_alias_index(schema_metadata)
               return {
                   'normalized_semantic_plan_json': normalized_json,
                   'semantic_plan_json': normalized_json,
