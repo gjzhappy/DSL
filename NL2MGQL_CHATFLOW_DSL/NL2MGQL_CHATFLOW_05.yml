@@ -249,8 +249,16 @@
                   headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
                   return int(getattr(e, 'code', 0) or 0), body_text, headers
           def _merge_rows(left_rows, right_rows, left_field, right_field, attach_as):
+              # Left-join enrich results onto the primary rows.  The primary row is
+              # always the base object so group fields, projection fields and
+              # metric_alias values (for example order_count) cannot be lost.
+              left_rows = left_rows if isinstance(left_rows, list) else []
+              right_rows = right_rows if isinstance(right_rows, list) else []
+              left_field = str(left_field or '').strip()
+              right_field = str(right_field or '').strip()
+              attach_as = str(attach_as or '').strip() or 'related_info'
               right_index = {}
-              for row in right_rows or []:
+              for row in right_rows:
                   if not isinstance(row, dict):
                       continue
                   key = row.get(right_field)
@@ -261,12 +269,11 @@
                   elif key is not None:
                       right_index.setdefault(str(key), []).append(row)
               merged = []
-              for row in left_rows or []:
+              for row in left_rows:
                   if not isinstance(row, dict):
-                      merged.append(row)
                       continue
                   item = dict(row)
-                  key = item.get(left_field)
+                  key = row.get(left_field)
                   matches = []
                   if isinstance(key, list):
                       for val in key:
@@ -274,9 +281,11 @@
                   elif key is not None:
                       matches = right_index.get(str(key), [])
                   if len(matches) == 1:
-                      item[attach_as] = matches[0]
+                      item[attach_as] = dict(matches[0])
                   elif matches:
-                      item[attach_as] = matches
+                      item[attach_as] = [dict(m) for m in matches if isinstance(m, dict)]
+                  else:
+                      item[attach_as] = None
                   merged.append(item)
               return merged
           def _normalize_visualization(value):
@@ -936,9 +945,14 @@
               execution_mode = normalized_execution_plan.get('execution_mode')
               final_merge = normalized_execution_plan.get('final_merge') or {}
               if execution_mode == 'multi_stage' and final_merge.get('left_stage') and final_merge.get('right_stage'):
-                  left_rows = (stage_outputs.get(final_merge['left_stage']) or {}).get('rows') or []
-                  right_rows = (stage_outputs.get(final_merge['right_stage']) or {}).get('rows') or []
-                  merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), final_merge.get('attach_as') or 'related_info')
+                  left_stage_name = str(final_merge.get('left_stage') or '').strip()
+                  right_stage_name = str(final_merge.get('right_stage') or '').strip()
+                  left_rows = (stage_outputs.get(left_stage_name) or {}).get('rows') or []
+                  right_rows = (stage_outputs.get(right_stage_name) or {}).get('rows') or []
+                  right_stage = next((s for s in (normalized_execution_plan.get('stages') or []) if str((s or {}).get('stage_name') or '').strip() == right_stage_name), {})
+                  related_collection = str((right_stage or {}).get('collection') or '').strip()
+                  attach_as = str(final_merge.get('attach_as') or '').strip() or ((related_collection + '_info') if related_collection else 'related_info')
+                  merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), attach_as)
               else:
                   first_stage_name = normalized_execution_plan['stages'][0]['stage_name']
                   merged_rows = (stage_outputs.get(first_stage_name) or {}).get('rows') or []

@@ -489,6 +489,25 @@
               except Exception as e:
                   return {}, False, 'system_error', str(e), warnings, source or 'unknown'
 
+
+          def _has_explicit_chart_intent(question):
+              text = str(question or '').strip().lower()
+              if not text:
+                  return False
+              positive_keywords = ['画图','生成图表','图表','柱状图','条形图','折线图','饼图','趋势图','可视化','可视化展示','用图展示','做一个图','画一个图','展示为图表','bar chart','line chart','pie chart','chart','visualize','visualization']
+              return any(k in text for k in positive_keywords)
+
+          def _disable_chart_request(plan):
+              if not isinstance(plan, dict):
+                  return plan
+              plan['needs_chart'] = False
+              chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              chart_request.update({'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''})
+              plan['chart_request'] = chart_request
+              if isinstance(plan.get('visualization'), dict):
+                  plan['visualization'].update({'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''})
+              return plan
+
           def main(full_status_code, full_body, local_status_code, local_body, question=''):
               code, body, source = _pick_response(full_status_code, full_body, local_status_code, local_body)
               payload = None
@@ -563,6 +582,10 @@
                   if not chart_request and isinstance(parsed.get('chart_request'), dict):
                       chart_request = parsed.get('chart_request')
               output_plan = _strip_runtime_fields_from_semantic_plan(_deepcopy_json(normalized)) if plan_valid else {}
+              if plan_valid and not _has_explicit_chart_intent(question):
+                  output_plan = _disable_chart_request(output_plan)
+                  needs_chart = False
+                  chart_request = output_plan.get('chart_request') if isinstance(output_plan.get('chart_request'), dict) else {}
               return {
                   'semantic_plan_json': json.dumps(output_plan, ensure_ascii=False),
                   'normalized_semantic_plan_json': json.dumps(output_plan, ensure_ascii=False),

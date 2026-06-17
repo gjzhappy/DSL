@@ -424,6 +424,17 @@
                   if not sanitized_schema or not isinstance(sanitized_schema, dict):
                       raise ValueError('清洗后的 semantic_plan_json_schema 不是合法JSON对象')
                   model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
+                  chart_gating_rule = '''
+【图表意图 gating】
+- 默认 needs_chart=false，chart_request.enabled=false。
+- 只有用户明确要求图表/可视化时，才能设置 needs_chart=true 和 chart_request.enabled=true。
+- 明确图表意图包括：画图、生成图表、图表、柱状图、条形图、折线图、饼图、趋势图、可视化、可视化展示、用图展示、做一个图、画一个图、展示为图表。
+- “展示结果 / 展示合并后的结果 / 返回结果 / 查询结果 / 统计结果 / 查看 / 列出 / 展示数据”不是图表意图，不能启用图表。
+- 用户没有明确图表意图时，即使查询包含 group_fields、metric_alias、统计、排名、TopN，也不能自动生成图表。
+- 如果用户明确要求图表，但没有指定图表类型，可根据数据语义选择 bar/line/pie 等。
+'''
+                  if chart_gating_rule not in str(semantic_plan_system_prompt or ''):
+                      semantic_plan_system_prompt = str(semantic_plan_system_prompt or '') + '\n\n' + chart_gating_rule
                   prompt = semantic_plan_user_prompt
                   request_body = {
                       'model': model,

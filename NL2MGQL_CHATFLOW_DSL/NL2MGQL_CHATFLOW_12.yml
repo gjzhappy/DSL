@@ -237,7 +237,7 @@
               for r in rows[:20]: fields.update(r.keys())
               p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':len(rows),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{'mode':'chart_only'}}
               if not req.get('enabled'):
-                  p['warning']='chart_request disabled'; return p
+                  p['warning']=''; return p
               if not rows:
                   p['warning']='上一轮结果摘要不足以重新生成图表'; return p
               x=str(req.get('x_field') or ''); y=str(req.get('y_field') or '')
