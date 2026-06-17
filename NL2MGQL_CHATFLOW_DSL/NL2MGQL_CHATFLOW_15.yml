@@ -630,9 +630,52 @@
               return str(v or "").strip()
 
 
+          def _safe_message_text(item: Any) -> str:
+              if item is None:
+                  return ""
+              if isinstance(item, str):
+                  return item.strip()
+              if isinstance(item, dict):
+                  typ = item.get("type") or item.get("code") or item.get("warning_type") or ""
+                  msg = item.get("message") or item.get("reason") or item.get("detail") or ""
+                  if typ and msg:
+                      return f"{typ}: {msg}"
+                  if typ:
+                      return str(typ).strip()
+                  if msg:
+                      return str(msg).strip()
+                  try:
+                      return json.dumps(item, ensure_ascii=False, sort_keys=True)
+                  except Exception:
+                      return str(item).strip()
+              try:
+                  return str(item).strip()
+              except Exception:
+                  return ""
+
+          def _safe_text_list(value: Any) -> List[str]:
+              if value is None or value == "":
+                  return []
+              items = value if isinstance(value, list) else [value]
+              out: List[str] = []
+              for item in items:
+                  text = _safe_message_text(item)
+                  if text:
+                      out.append(text)
+              return out
+
+          def _sanitize_normalized_plan_runtime_fields(plan: Dict[str, Any]) -> Dict[str, Any]:
+              if not isinstance(plan, dict):
+                  return plan
+              if "normalizer_warnings" in plan:
+                  plan["normalizer_warnings"] = _safe_text_list(plan.get("normalizer_warnings"))
+              return plan
+
+
           def _result(route: str, plan: Dict[str, Any] | None, errors=None, warnings=None, autofixes=None, clarification="", blocked="", debug=None, needs_schema_retrieval=False) -> Dict[str, Any]:
               route = route if route in VALID_ROUTES else "invalid"
-              normalized = plan if isinstance(plan, dict) else {}
+              normalized = copy.deepcopy(plan) if isinstance(plan, dict) else {}
+              normalized = _sanitize_normalized_plan_runtime_fields(normalized)
               return {
                   "contract_version": "validator_result_contract",
                   "valid": route == "valid",
