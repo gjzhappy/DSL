@@ -100,15 +100,15 @@
               return base
 
 
-          def main(selected_intent_structured_json: str = '{}', selected_intent_text: str = '', selected_intent_source: str = '', intent_fallback_used: str = 'false', intent_fallback_reason: str = '', full_intent_status_code=0, full_intent_error_message: str = '', intent_debug_json: str = '{}', last_context_json: str = '{}', question: str = '', old_normalized_semantic_plan_json: str = '{}', **kwargs):
+          def main(intent_structured, intent_text: str, last_context_json: str, question: str, old_normalized_semantic_plan_json: str = '{}', **kwargs):
               ctx = _loads_obj(last_context_json)
               old_plan = _loads_obj(old_normalized_semantic_plan_json)
-              obj = _loads_obj(selected_intent_structured_json)
-              source = str(selected_intent_source or '').strip()
+              obj = _loads_obj(intent_structured)
+              source = 'structured_output' if obj else 'text'
               if not obj:
-                  obj = _loads_obj(selected_intent_text)
-              valid = bool(obj) and bool(source)
-              err = '' if valid else ('empty_selected_intent' if not source and not str(selected_intent_text or '').strip() and str(selected_intent_structured_json or '').strip() in {'', '{}'} else 'parse_failed')
+                  obj = _loads_obj(intent_text)
+              valid = bool(obj)
+              err = '' if valid else 'intent json parse failed; fallback to new_query'
               obj = {k: obj.get(k) for k in SCHEMA_KEYS}
               intent = str(obj.get('turn_intent') or 'new_query').strip()
               if intent not in ALLOWED:
@@ -123,11 +123,6 @@
               obj['analysis_focus'] = str(obj.get('analysis_focus') or '')
               obj['reason'] = str(obj.get('reason') or '')
               obj['source'] = source
-              obj['intent_fallback_used'] = _bool(intent_fallback_used, False)
-              obj['intent_fallback_reason'] = str(intent_fallback_reason or '')
-              obj['full_intent_status_code'] = _safe_int(full_intent_status_code, 0)
-              obj['full_intent_error_message'] = str(full_intent_error_message or '')
-              obj['intent_debug'] = _loads_obj(intent_debug_json)
 
               q = str(question or '')
               has_context = bool(ctx.get('has_last_context'))
@@ -172,12 +167,6 @@
                   'query_refinement_json': json.dumps(obj.get('query_refinement') or {}, ensure_ascii=False),
                   'context_binding_json': json.dumps(cb, ensure_ascii=False),
                   'analysis_focus': str(obj.get('analysis_focus') or ''),
-                  'selected_intent_source': source,
-                  'intent_fallback_used': bool(obj.get('intent_fallback_used')),
-                  'intent_fallback_reason': str(obj.get('intent_fallback_reason') or ''),
-                  'full_intent_status_code': _safe_int(obj.get('full_intent_status_code'), 0),
-                  'full_intent_error_message': str(obj.get('full_intent_error_message') or ''),
-                  'intent_debug_json': json.dumps(obj.get('intent_debug') or {}, ensure_ascii=False),
               }
         code_language: python3
         desc: ''
@@ -224,68 +213,20 @@
           missing_info:
             children:
             type: string
-          selected_intent_source:
-            children:
-            type: string
-          intent_fallback_used:
-            children:
-            type: boolean
-          intent_fallback_reason:
-            children:
-            type: string
-          full_intent_status_code:
-            children:
-            type: number
-          full_intent_error_message:
-            children:
-            type: string
-          intent_debug_json:
-            children:
-            type: string
         selected: false
         title: 代码执行_提取并规范化多轮意图结果
         type: code
         variables:
         - value_selector:
-          - conversation
-          - selected_intent_structured_json
-          value_type: string
-          variable: selected_intent_structured_json
+          - '1776000000003'
+          - structured_output
+          value_type: object
+          variable: intent_structured
         - value_selector:
-          - conversation
-          - selected_intent_text
+          - '1776000000003'
+          - text
           value_type: string
-          variable: selected_intent_text
-        - value_selector:
-          - conversation
-          - selected_intent_source
-          value_type: string
-          variable: selected_intent_source
-        - value_selector:
-          - conversation
-          - intent_fallback_used
-          value_type: string
-          variable: intent_fallback_used
-        - value_selector:
-          - conversation
-          - intent_fallback_reason
-          value_type: string
-          variable: intent_fallback_reason
-        - value_selector:
-          - conversation
-          - full_intent_status_code
-          value_type: number
-          variable: full_intent_status_code
-        - value_selector:
-          - conversation
-          - full_intent_error_message
-          value_type: string
-          variable: full_intent_error_message
-        - value_selector:
-          - conversation
-          - intent_debug_json
-          value_type: string
-          variable: intent_debug_json
+          variable: intent_text
         - value_selector:
           - '1776000000001'
           - last_context_json
