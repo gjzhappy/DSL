@@ -193,70 +193,6 @@ workflow:
     - last_context_update_json
     value: "{}"
     value_type: string
-  - description: 本轮多轮意图识别汇合文本（每轮进入分支前清空）
-    id: 60f4fd87-8d49-4c12-9001-000000000101
-    name: selected_intent_text
-    selector:
-    - conversation
-    - selected_intent_text
-    value: ''
-    value_type: string
-  - description: 本轮多轮意图识别汇合 structured JSON（每轮进入分支前清空）
-    id: 60f4fd87-8d49-4c12-9001-000000000102
-    name: selected_intent_structured_json
-    selector:
-    - conversation
-    - selected_intent_structured_json
-    value: "{}"
-    value_type: string
-  - description: 本轮多轮意图识别来源
-    id: 60f4fd87-8d49-4c12-9001-000000000103
-    name: selected_intent_source
-    selector:
-    - conversation
-    - selected_intent_source
-    value: ''
-    value_type: string
-  - description: 本轮多轮意图识别是否使用满血失败后的本地兜底
-    id: 60f4fd87-8d49-4c12-9001-000000000104
-    name: intent_fallback_used
-    selector:
-    - conversation
-    - intent_fallback_used
-    value: 'false'
-    value_type: string
-  - description: 本轮多轮意图识别兜底原因
-    id: 60f4fd87-8d49-4c12-9001-000000000105
-    name: intent_fallback_reason
-    selector:
-    - conversation
-    - intent_fallback_reason
-    value: ''
-    value_type: string
-  - description: 本轮满血意图识别 HTTP 状态码
-    id: 60f4fd87-8d49-4c12-9001-000000000106
-    name: full_intent_status_code
-    selector:
-    - conversation
-    - full_intent_status_code
-    value: 0
-    value_type: integer
-  - description: 本轮满血意图识别错误信息
-    id: 60f4fd87-8d49-4c12-9001-000000000107
-    name: full_intent_error_message
-    selector:
-    - conversation
-    - full_intent_error_message
-    value: ''
-    value_type: string
-  - description: 本轮多轮意图识别调试 JSON
-    id: 60f4fd87-8d49-4c12-9001-000000000108
-    name: intent_debug_json
-    selector:
-    - conversation
-    - intent_debug_json
-    value: "{}"
-    value_type: string
   environment_variables:
   - description: Collection registry used by generic collection matching before schema retrieval
     id: 11111111-2222-4333-8444-555555555555
@@ -377,14 +313,6 @@ workflow:
     selector:
     - env
     - ENABLE_FULL_LLM
-    value: 'true'
-    value_type: string
-  - description: 满血 LLM 是否启用 response_format json_schema
-    id: 0e8516e2-6cd1-48f9-9bd7-intent000001
-    name: FULL_LLM_RESPONSE_FORMAT_ENABLED
-    selector:
-    - env
-    - FULL_LLM_RESPONSE_FORMAT_ENABLED
     value: 'true'
     value_type: string
   features:
@@ -754,142 +682,10 @@ workflow:
     - data:
         isInLoop: false
         sourceType: code
-        targetType: assigner
-      id: 1776000000002-source-1776000000100-target
+        targetType: llm
+      id: 1776000000002-source-1776000000003-target
       source: '1776000000002'
       sourceHandle: source
-      target: '1776000000100'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: if-else
-      id: 1776000000100-source-1776000000101-target
-      source: '1776000000100'
-      sourceHandle: source
-      target: '1776000000101'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: if-else
-        targetType: http-request
-      id: 1776000000101-true-1776000000102-target
-      source: '1776000000101'
-      sourceHandle: 'true'
-      target: '1776000000102'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: http-request
-        targetType: code
-      id: 1776000000102-source-1776000000103-target
-      source: '1776000000102'
-      sourceHandle: source
-      target: '1776000000103'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: if-else
-      id: 1776000000103-source-1776000000104-target
-      source: '1776000000103'
-      sourceHandle: source
-      target: '1776000000104'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: if-else
-        targetType: code
-      id: 1776000000104-true-1776000000105-target
-      source: '1776000000104'
-      sourceHandle: 'true'
-      target: '1776000000105'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: code
-      id: 1776000000105-source-1776000000106-target
-      source: '1776000000105'
-      sourceHandle: source
-      target: '1776000000106'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: if-else
-      id: 1776000000106-source-1776000000107-target
-      source: '1776000000106'
-      sourceHandle: source
-      target: '1776000000107'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: if-else
-        targetType: assigner
-      id: 1776000000107-true-1776000000108-target
-      source: '1776000000107'
-      sourceHandle: 'true'
-      target: '1776000000108'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: code
-      id: 1776000000108-source-1776000000004-target
-      source: '1776000000108'
-      sourceHandle: source
-      target: '1776000000004'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: if-else
-        targetType: llm
-      id: 1776000000101-false-1776000000003-target
-      source: '1776000000101'
-      sourceHandle: 'false'
-      target: '1776000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: if-else
-        targetType: llm
-      id: 1776000000104-false-1776000000003-target
-      source: '1776000000104'
-      sourceHandle: 'false'
-      target: '1776000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: if-else
-        targetType: llm
-      id: 1776000000107-false-1776000000003-target
-      source: '1776000000107'
-      sourceHandle: 'false'
       target: '1776000000003'
       targetHandle: target
       type: custom
@@ -898,30 +694,8 @@ workflow:
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776000000003-source-1776000000109-target
+      id: 1776000000003-source-1776000000004-target
       source: '1776000000003'
-      sourceHandle: source
-      target: '1776000000109'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: assigner
-      id: 1776000000109-source-1776000000110-target
-      source: '1776000000109'
-      sourceHandle: source
-      target: '1776000000110'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: assigner
-        targetType: code
-      id: 1776000000110-source-1776000000004-target
-      source: '1776000000110'
       sourceHandle: source
       target: '1776000000004'
       targetHandle: target
