@@ -1,0 +1,728 @@
+    - data:
+        desc: 每轮进入满血/本地意图识别分支前清空 conversation 汇合变量，避免读取上一轮残留。
+        items:
+        - input_type: constant
+          operation: over-write
+          value: ''
+          variable_selector:
+          - conversation
+          - selected_intent_text
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: "{}"
+          variable_selector:
+          - conversation
+          - selected_intent_structured_json
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: ''
+          variable_selector:
+          - conversation
+          - selected_intent_source
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: 'false'
+          variable_selector:
+          - conversation
+          - intent_fallback_used
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: ''
+          variable_selector:
+          - conversation
+          - intent_fallback_reason
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: 0
+          variable_selector:
+          - conversation
+          - full_intent_status_code
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: ''
+          variable_selector:
+          - conversation
+          - full_intent_error_message
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: "{}"
+          variable_selector:
+          - conversation
+          - intent_debug_json
+          write_mode: over-write
+        selected: false
+        title: 初始化多轮意图识别汇合变量
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1776000000100'
+      position:
+        x: 1150
+        y: -260
+      positionAbsolute:
+        x: 1150
+        y: -260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: intent-enable-full
+            value: 'true'
+            varType: string
+            variable_selector:
+            - env
+            - ENABLE_FULL_LLM
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_是否启用满血LLM_意图识别
+        type: if-else
+      height: 124
+      id: '1776000000101'
+      position:
+        x: 1380
+        y: -260
+      positionAbsolute:
+        x: 1380
+        y: -260
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: token-body-intent
+            key: ''
+            type: text
+            value: '{"appId":"{{#env.LLM_APP_ID#}}","token":"{{#env.LLM_STATIC_TOKEN#}}"}'
+          type: json
+        desc: 使用静态token换取动态token（意图识别专用）
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 3
+          retry_enabled: false
+          retry_interval: 100
+        selected: false
+        ssl_verify: false
+        timeout:
+          max_connect_timeout: 600000
+          max_read_timeout: 600000
+          max_write_timeout: 600000
+        title: HTTP请求_获取动态Token_意图识别
+        type: http-request
+        url: '{{#env.LLM_TOKEN_URL#}}'
+        variables: []
+      height: 123
+      id: '1776000000102'
+      position:
+        x: 1610
+        y: -520
+      positionAbsolute:
+        x: 1610
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          
+          SCHEMA = {"type":"object","additionalProperties":False,"required":["turn_intent","need_previous_context","need_requery","need_rechart","need_analysis","can_answer_directly","reason","missing_info","chart_modification","query_refinement","analysis_focus"],"properties":{"turn_intent":{"type":"string","enum":["new_query","modify_chart","refine_query","explain_result","reanalyze_result","fix_result","continue_previous","clarify"]},"need_previous_context":{"type":"boolean"},"need_requery":{"type":"boolean"},"need_rechart":{"type":"boolean"},"need_analysis":{"type":"boolean"},"can_answer_directly":{"type":"boolean"},"reason":{"type":"string"},"missing_info":{"type":"array","items":{"type":"string"}},"chart_modification":{"type":"object","additionalProperties":True},"query_refinement":{"type":"object","additionalProperties":True},"analysis_focus":{"type":"string"}}}
+          
+          def _loads(v):
+              if isinstance(v, dict):
+                  return v
+              if isinstance(v, str) and v.strip():
+                  return json.loads(v)
+              return {}
+          
+          def _bool(v):
+              return v is True or str(v or '').strip().lower() in {'1','true','yes','y','on'}
+          
+          def main(status_code=0, body: str='', intent_prompt: str='', chat_url: str='', llm_config_json: str='{}', request_id: str='', full_llm_response_format_enabled: str='true', **kwargs):
+              try:
+                  code = int(status_code or 0)
+                  if code < 200 or code >= 300:
+                      raise ValueError('动态token获取失败: status=%s body=%s' % (code, str(body or '')[:1000]))
+                  token_json = _loads(body)
+                  authorization_value = str(token_json.get('result') or '').strip()
+                  if not authorization_value:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  try:
+                      llm_config = _loads(llm_config_json)
+                  except Exception:
+                      llm_config = {'model': str(llm_config_json or '').strip()}
+                  model = str(llm_config.get('model') or '').strip() or 'DeepSeek-V4-Flash'
+                  prompt = (str(intent_prompt or '') + '\n\n只输出 JSON object；不要 markdown；不要解释文字；不要代码块；不要 schema 外字段；必须满足以下 JSON Schema：\n' + json.dumps(SCHEMA, ensure_ascii=False))
+                  body_obj = {'model': model, 'messages': [{'role': 'system', 'content': '你是多轮数据查询 Chatflow 的意图识别器。只输出 JSON 对象。'}, {'role': 'user', 'content': prompt}], 'stream': False}
+                  if _bool(full_llm_response_format_enabled):
+                      body_obj['response_format'] = {'type': 'json_schema', 'json_schema': {'name': 'turn_intent_schema', 'strict': True, 'schema': SCHEMA}}
+                  return {'request_enabled': 'true', 'chat_url': str(chat_url or '').strip(), 'authorization_value': authorization_value, 'llm_request_body_json': json.dumps(body_obj, ensure_ascii=False), 'request_id': str(request_id or ''), 'full_intent_request_debug_json': json.dumps({'schema_name':'turn_intent_schema','prompt_length':len(prompt),'response_format_enabled':'response_format' in body_obj}, ensure_ascii=False), 'full_intent_error_message': ''}
+              except Exception as e:
+                  return {'request_enabled': 'false', 'chat_url': str(chat_url or '').strip(), 'authorization_value': '', 'llm_request_body_json': '', 'request_id': str(request_id or ''), 'full_intent_request_debug_json': '{}', 'full_intent_error_message': str(e)[:2000]}
+        code_language: python3
+        desc: 解析动态 token 并构造 turn_intent 满血 LLM 请求体。
+        outputs:
+          authorization_value:
+            type: string
+          chat_url:
+            type: string
+          llm_request_body_json:
+            type: string
+          request_enabled:
+            type: string
+          request_id:
+            type: string
+          full_intent_request_debug_json:
+            type: string
+          full_intent_error_message:
+            type: string
+        selected: false
+        title: 代码执行_构造满血LLM多轮意图识别请求
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000102'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1776000000102'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1776000000002'
+          - intent_prompt
+          value_type: string
+          variable: intent_prompt
+        - value_selector:
+          - env
+          - LLM_CHAT_URL
+          value_type: string
+          variable: chat_url
+        - value_selector:
+          - env
+          - LLM_MODEL
+          value_type: string
+          variable: llm_config_json
+        - value_selector:
+          - sys
+          - workflow_run_id
+          value_type: string
+          variable: request_id
+        - value_selector:
+          - env
+          - FULL_LLM_RESPONSE_FORMAT_ENABLED
+          value_type: string
+          variable: full_llm_response_format_enabled
+      height: 80
+      id: '1776000000103'
+      position:
+        x: 1840
+        y: -520
+      positionAbsolute:
+        x: 1840
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: intent-request-enabled
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1776000000103'
+            - request_enabled
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血意图识别请求是否可用
+        type: if-else
+      height: 124
+      id: '1776000000104'
+      position:
+        x: 2070
+        y: -520
+      positionAbsolute:
+        x: 2070
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error
+          
+          def main(chat_url: str='', authorization_value: str='', llm_request_body_json: str='', **kwargs):
+              try:
+                  data = json.dumps(json.loads(llm_request_body_json), ensure_ascii=False).encode('utf-8')
+                  req = urllib.request.Request(str(chat_url), data=data, headers={'Content-Type':'application/json','Authorization':str(authorization_value)}, method='POST')
+                  try:
+                      with urllib.request.urlopen(req, timeout=70) as resp:
+                          body = resp.read().decode('utf-8', errors='replace')
+                          return {'status_code': int(getattr(resp,'status',0) or 0), 'ok': True, 'body': body, 'body_preview': body[:4000], 'headers_json': json.dumps(dict(resp.headers.items()), ensure_ascii=False), 'error_message': ''}
+                  except urllib.error.HTTPError as e:
+                      body = e.read().decode('utf-8', errors='replace')
+                      return {'status_code': int(getattr(e,'code',0) or 0), 'ok': False, 'body': body, 'body_preview': body[:4000], 'headers_json': json.dumps(dict(e.headers.items()) if e.headers else {}, ensure_ascii=False), 'error_message': ('HTTP_ERROR: '+body[:1000])}
+              except Exception as e:
+                  return {'status_code': 0, 'ok': False, 'body': '', 'body_preview': '', 'headers_json': '{}', 'error_message': str(e)[:2000]}
+        code_language: python3
+        desc: 调用满血 LLM 意图识别并保留错误响应。
+        outputs:
+          status_code:
+            type: number
+          ok:
+            type: boolean
+          body:
+            type: string
+          body_preview:
+            type: string
+          headers_json:
+            type: string
+          error_message:
+            type: string
+        selected: false
+        title: 代码执行_调用满血LLM意图识别并保留错误响应
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000103'
+          - chat_url
+          value_type: string
+          variable: chat_url
+        - value_selector:
+          - '1776000000103'
+          - authorization_value
+          value_type: string
+          variable: authorization_value
+        - value_selector:
+          - '1776000000103'
+          - llm_request_body_json
+          value_type: string
+          variable: llm_request_body_json
+      height: 80
+      id: '1776000000105'
+      position:
+        x: 2300
+        y: -520
+      positionAbsolute:
+        x: 2300
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          ALLOWED={'new_query','modify_chart','refine_query','explain_result','reanalyze_result','fix_result','continue_previous','clarify'}
+          REQUIRED=['turn_intent','need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly','reason','missing_info','chart_modification','query_refinement','analysis_focus']
+          
+          def _extract(text):
+              raw=str(text or '').strip()
+              m=re.match(r'^```(?:json)?\s*(.*?)\s*```$', raw, flags=re.I|re.S)
+              raw=m.group(1).strip() if m else raw
+              a,b=raw.find('{'),raw.rfind('}')
+              return raw[a:b+1] if a>=0 and b>=a else raw
+          
+          def _content(body):
+              obj=json.loads(body)
+              choices=obj.get('choices') if isinstance(obj,dict) else None
+              msg=((choices or [{}])[0] or {}).get('message') if isinstance(choices,list) else {}
+              c=(msg or {}).get('content')
+              return c if isinstance(c,str) else json.dumps(c, ensure_ascii=False)
+          
+          def _validate(obj):
+              if not isinstance(obj,dict): return 'output_not_object'
+              miss=[k for k in REQUIRED if k not in obj]
+              if miss: return 'missing_required:'+','.join(miss)
+              if obj.get('turn_intent') not in ALLOWED: return 'invalid_turn_intent'
+              for k in ['need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly']:
+                  if not isinstance(obj.get(k), bool): return 'invalid_bool:'+k
+              if not isinstance(obj.get('missing_info'), list): return 'invalid_missing_info'
+              if not isinstance(obj.get('chart_modification'), dict): return 'invalid_chart_modification'
+              if not isinstance(obj.get('query_refinement'), dict): return 'invalid_query_refinement'
+              return ''
+          
+          def main(status_code=0, body: str='', error_message: str='', request_debug_json: str='{}', **kwargs):
+              code=int(status_code or 0)
+              debug={'status_code':code,'request_debug':request_debug_json}
+              try:
+                  if code < 200 or code >= 300: raise ValueError('http_non_2xx:'+str(code)+' '+str(error_message or '')[:1000])
+                  if not str(body or '').strip(): raise ValueError('empty_body')
+                  text=_content(body)
+                  if not str(text or '').strip(): raise ValueError('empty_choices_message_content')
+                  obj=json.loads(_extract(text))
+                  verr=_validate(obj)
+                  if verr: raise ValueError(verr)
+                  return {'full_intent_ok':'true','full_intent_status_code':code,'full_intent_text':text,'full_intent_structured_json':json.dumps(obj, ensure_ascii=False),'full_intent_error_message':'','full_intent_debug_json':json.dumps(debug, ensure_ascii=False)}
+              except Exception as e:
+                  return {'full_intent_ok':'false','full_intent_status_code':code,'full_intent_text':'','full_intent_structured_json':'{}','full_intent_error_message':str(e)[:2000],'full_intent_debug_json':json.dumps(debug, ensure_ascii=False)}
+        code_language: python3
+        desc: 校验满血 LLM turn_intent 原始输出 contract。
+        outputs:
+          full_intent_ok:
+            type: string
+          full_intent_status_code:
+            type: number
+          full_intent_text:
+            type: string
+          full_intent_structured_json:
+            type: string
+          full_intent_error_message:
+            type: string
+          full_intent_debug_json:
+            type: string
+        selected: false
+        title: 代码执行_判断满血LLM意图识别状态
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000105'
+          - status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1776000000105'
+          - body
+          value_type: string
+          variable: body
+        - value_selector:
+          - '1776000000105'
+          - error_message
+          value_type: string
+          variable: error_message
+        - value_selector:
+          - '1776000000103'
+          - full_intent_request_debug_json
+          value_type: string
+          variable: request_debug_json
+      height: 80
+      id: '1776000000106'
+      position:
+        x: 2530
+        y: -520
+      positionAbsolute:
+        x: 2530
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: intent-full-ok
+            value: 'true'
+            varType: string
+            variable_selector:
+            - '1776000000106'
+            - full_intent_ok
+          id: 'true'
+          logical_operator: and
+        desc: ''
+        selected: false
+        title: 条件分支_满血LLM意图识别是否成功
+        type: if-else
+      height: 124
+      id: '1776000000107'
+      position:
+        x: 2760
+        y: -520
+      positionAbsolute:
+        x: 2760
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: 满血意图识别成功后写入统一 conversation 汇合变量。
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000106'
+          - full_intent_text
+          variable_selector:
+          - conversation
+          - selected_intent_text
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000106'
+          - full_intent_structured_json
+          variable_selector:
+          - conversation
+          - selected_intent_structured_json
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: full_llm
+          variable_selector:
+          - conversation
+          - selected_intent_source
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: 'false'
+          variable_selector:
+          - conversation
+          - intent_fallback_used
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: ''
+          variable_selector:
+          - conversation
+          - intent_fallback_reason
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000106'
+          - full_intent_status_code
+          variable_selector:
+          - conversation
+          - full_intent_status_code
+          write_mode: over-write
+        - input_type: constant
+          operation: over-write
+          value: ''
+          variable_selector:
+          - conversation
+          - full_intent_error_message
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000106'
+          - full_intent_debug_json
+          variable_selector:
+          - conversation
+          - intent_debug_json
+          write_mode: over-write
+        selected: false
+        title: 包装满血意图识别结果并写入汇合变量
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1776000000108'
+      position:
+        x: 2990
+        y: -520
+      positionAbsolute:
+        x: 2990
+        y: -520
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+
+          def _json_text(v):
+              if isinstance(v, (dict, list)):
+                  return json.dumps(v, ensure_ascii=False)
+              text = str(v or '').strip()
+              return text if text else '{}'
+
+          def main(local_intent_structured=None, local_intent_text: str='', enable_full_llm: str='false', **kwargs):
+              full_enabled = str(enable_full_llm or '').strip().lower() in {'1','true','yes','y','on'}
+              return {
+                  'selected_intent_text': str(local_intent_text or ''),
+                  'selected_intent_structured_json': _json_text(local_intent_structured),
+                  'selected_intent_source': 'local_fallback',
+                  'intent_fallback_used': 'true' if full_enabled else 'false',
+                  'intent_fallback_reason': 'full_llm_fallback' if full_enabled else '',
+                  'full_intent_status_code': 0,
+                  'full_intent_error_message': '',
+                  'intent_debug_json': '{}',
+              }
+        code_language: python3
+        desc: 包装本地意图识别结果；根据 ENABLE_FULL_LLM 区分直接本地与满血失败兜底。
+        outputs:
+          selected_intent_text:
+            type: string
+          selected_intent_structured_json:
+            type: string
+          selected_intent_source:
+            type: string
+          intent_fallback_used:
+            type: string
+          intent_fallback_reason:
+            type: string
+          full_intent_status_code:
+            type: number
+          full_intent_error_message:
+            type: string
+          intent_debug_json:
+            type: string
+        selected: false
+        title: 包装本地兜底意图识别结果
+        type: code
+        variables:
+        - value_selector:
+          - '1776000000003'
+          - structured_output
+          value_type: object
+          variable: local_intent_structured
+        - value_selector:
+          - '1776000000003'
+          - text
+          value_type: string
+          variable: local_intent_text
+        - value_selector:
+          - env
+          - ENABLE_FULL_LLM
+          value_type: string
+          variable: enable_full_llm
+      height: 80
+      id: '1776000000109'
+      position:
+        x: 1610
+        y: 180
+      positionAbsolute:
+        x: 1610
+        y: 180
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: 将本地意图识别包装结果写入统一 conversation 汇合变量。
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - selected_intent_text
+          variable_selector:
+          - conversation
+          - selected_intent_text
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - selected_intent_structured_json
+          variable_selector:
+          - conversation
+          - selected_intent_structured_json
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - selected_intent_source
+          variable_selector:
+          - conversation
+          - selected_intent_source
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - intent_fallback_used
+          variable_selector:
+          - conversation
+          - intent_fallback_used
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - intent_fallback_reason
+          variable_selector:
+          - conversation
+          - intent_fallback_reason
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - full_intent_status_code
+          variable_selector:
+          - conversation
+          - full_intent_status_code
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - full_intent_error_message
+          variable_selector:
+          - conversation
+          - full_intent_error_message
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776000000109'
+          - intent_debug_json
+          variable_selector:
+          - conversation
+          - intent_debug_json
+          write_mode: over-write
+        selected: false
+        title: 包装本地兜底意图识别结果并写入汇合变量
+        type: assigner
+        version: '2'
+        write_mode: over-write
+      height: 270
+      id: '1776000000110'
+      position:
+        x: 1840
+        y: 180
+      positionAbsolute:
+        x: 1840
+        y: 180
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
