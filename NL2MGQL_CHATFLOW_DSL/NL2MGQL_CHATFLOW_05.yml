@@ -17,7 +17,10 @@
                   pipeline.append({'$sort': sort_stage})
               if int(stage.get('limit') or 0) > 0:
                   pipeline.append({'$limit': int(stage['limit'])})
-              projection_fields = stage.get('projection_fields') or (group_fields + [metric_alias])
+              projection_fields = list(stage.get('projection_fields') or [])
+              for required_field in list(group_fields) + [metric_alias]:
+                  if required_field and required_field not in projection_fields:
+                      projection_fields.append(required_field)
               if projection_fields:
                   _append_projection(pipeline, projection_fields)
               validated_ast = {
@@ -248,6 +251,24 @@
                   body_text = e.read().decode('utf-8', errors='replace') if hasattr(e, 'read') else str(e)
                   headers = dict(e.headers.items()) if getattr(e, 'headers', None) else {}
                   return int(getattr(e, 'code', 0) or 0), body_text, headers
+          GENERIC_ATTACH_NAMES = {'append', 'related', 'data', 'info', 'detail', 'details'}
+
+          def _default_attach_as(related_collection):
+              name = str(related_collection or '').strip()
+              if not name:
+                  return 'related_info'
+              if name.endswith('ies'):
+                  name = name[:-3] + 'y'
+              elif name.endswith('s') and len(name) > 1:
+                  name = name[:-1]
+              return name + '_info'
+
+          def _normalize_attach_as(attach_as, related_collection=''):
+              value = str(attach_as or '').strip()
+              if (not value) or (value in GENERIC_ATTACH_NAMES and str(related_collection or '').strip()):
+                  return _default_attach_as(related_collection)
+              return value
+
           def _merge_rows(left_rows, right_rows, left_field, right_field, attach_as):
               # Left-join enrich results onto the primary rows.  The primary row is
               # always the base object so group fields, projection fields and
@@ -256,7 +277,7 @@
               right_rows = right_rows if isinstance(right_rows, list) else []
               left_field = str(left_field or '').strip()
               right_field = str(right_field or '').strip()
-              attach_as = str(attach_as or '').strip() or 'related_info'
+              attach_as = _normalize_attach_as(attach_as)
               right_index = {}
               for row in right_rows:
                   if not isinstance(row, dict):
@@ -819,6 +840,73 @@
               return validated_ast
 
 
+          def _projection_aliases_from_ast(validated_ast):
+              aliases = []
+              if not isinstance(validated_ast, dict):
+                  return aliases
+              for item in validated_ast.get('projection') or []:
+                  if isinstance(item, dict):
+                      alias = str(item.get('alias') or item.get('field') or '').strip()
+                      if alias and alias not in aliases:
+                          aliases.append(alias)
+              return aliases
+
+          def _ensure_primary_projection_fields_for_enrich(stage, plan, validated_ast, pipeline):
+              if not isinstance(stage, dict) or str(stage.get('stage_type') or '') != 'primary_query' or str(stage.get('intent_type') or '') != 'aggregate_summary':
+                  return validated_ast, pipeline
+              required = []
+              for gb in stage.get('group_fields') or stage.get('group_by') or []:
+                  if isinstance(gb, dict):
+                      name = str(gb.get('alias') or gb.get('field') or '').strip()
+                  else:
+                      name = str(gb or '').strip()
+                  if name and name not in required:
+                      required.append(name)
+              for metric in stage.get('aggregations') or stage.get('metrics') or []:
+                  if isinstance(metric, dict):
+                      name = str(metric.get('alias') or metric.get('metric_alias') or metric.get('name') or '').strip()
+                      if name and name not in required:
+                          required.append(name)
+              metric_alias = str(stage.get('metric_alias') or '').strip()
+              if metric_alias and metric_alias not in required:
+                  required.append(metric_alias)
+              final_merge = plan.get('final_merge') if isinstance(plan, dict) and isinstance(plan.get('final_merge'), dict) else {}
+              left_stage = str(final_merge.get('left_stage') or '').strip()
+              stage_name = str(stage.get('stage_name') or '').strip()
+              if (not left_stage) or left_stage == stage_name:
+                  for name in (final_merge.get('left_field'),):
+                      name = str(name or '').strip()
+                      if name and name not in required:
+                          required.append(name)
+                  for enrich_stage in plan.get('stages') or [] if isinstance(plan, dict) else []:
+                      if isinstance(enrich_stage, dict) and str(enrich_stage.get('stage_type') or '') == 'enrich_related':
+                          dep = str(enrich_stage.get('depends_on') or left_stage or '').strip()
+                          if (not dep) or dep == stage_name:
+                              name = str(enrich_stage.get('join_source_field') or '').strip()
+                              if name and name not in required:
+                                  required.append(name)
+              if not required:
+                  return validated_ast, pipeline
+              aliases = _projection_aliases_from_ast(validated_ast)
+              changed = False
+              for name in required:
+                  if name not in aliases:
+                      validated_ast.setdefault('projection', []).append({'collection': stage.get('collection') or '', 'field': name, 'alias': name})
+                      aliases.append(name)
+                      changed = True
+              if isinstance(pipeline, list):
+                  for st in reversed(pipeline):
+                      if isinstance(st, dict) and isinstance(st.get('$project'), dict):
+                          project = st['$project']
+                          for name in required:
+                              if name not in project:
+                                  project[name] = '$' + name
+                                  changed = True
+                          break
+              if changed:
+                  stage['projection_fields'] = aliases
+              return validated_ast, pipeline
+
           def _dedupe_equivalent_project(pipeline):
               out=[]
               for st in pipeline or []:
@@ -884,6 +972,7 @@
               for stage in normalized_execution_plan.get('stages') or []:
                   stage = _sanitize_stage_for_compile(stage)
                   validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs, prior_stages, compiler_autofix_warnings)
+                  validated_ast, pipeline = _ensure_primary_projection_fields_for_enrich(stage, normalized_execution_plan, validated_ast, pipeline)
                   pipeline = _dedupe_equivalent_project(_assert_safe_pipeline(pipeline))
                   validated_ast = _sync_limit(validated_ast, pipeline)
                   pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
@@ -951,7 +1040,8 @@
                   right_rows = (stage_outputs.get(right_stage_name) or {}).get('rows') or []
                   right_stage = next((s for s in (normalized_execution_plan.get('stages') or []) if str((s or {}).get('stage_name') or '').strip() == right_stage_name), {})
                   related_collection = str((right_stage or {}).get('collection') or '').strip()
-                  attach_as = str(final_merge.get('attach_as') or '').strip() or ((related_collection + '_info') if related_collection else 'related_info')
+                  right_stage_attach = str((right_stage or {}).get('attach_as') or '').strip()
+                  attach_as = _normalize_attach_as(str(final_merge.get('attach_as') or right_stage_attach or '').strip(), related_collection)
                   merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), attach_as)
               else:
                   first_stage_name = normalized_execution_plan['stages'][0]['stage_name']

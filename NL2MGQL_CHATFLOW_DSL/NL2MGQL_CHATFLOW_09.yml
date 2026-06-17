@@ -365,6 +365,88 @@
                   'clear_fields': clear_fields or [],
               }, compact_json
 
+          def _default_attach_as(related_collection):
+              name = str(related_collection or '').strip()
+              if not name:
+                  return 'related_info'
+              if name.endswith('ies'):
+                  name = name[:-3] + 'y'
+              elif name.endswith('s') and len(name) > 1:
+                  name = name[:-1]
+              return name + '_info'
+
+          def _plan_attach_as(plan):
+              fm = plan.get('final_merge') if isinstance(plan, dict) and isinstance(plan.get('final_merge'), dict) else {}
+              attach = str(fm.get('attach_as') or '').strip()
+              right_stage = str(fm.get('right_stage') or '').strip()
+              related_collection = ''
+              for st in plan.get('stages') or [] if isinstance(plan, dict) else []:
+                  if not isinstance(st, dict):
+                      continue
+                  if str(st.get('stage_name') or '').strip() == right_stage or str(st.get('stage_type') or '').strip() == 'enrich_related':
+                      related_collection = str(st.get('collection') or '').strip()
+                      attach = attach or str(st.get('attach_as') or '').strip()
+                      break
+              if attach in {'append', 'related', 'data', 'info', 'detail', 'details'}:
+                  attach = ''
+              return attach or _default_attach_as(related_collection)
+
+          def _field_label(field):
+              labels = {'status': '订单状态', 'product_name': '商品名称', 'order_count': '订单数', 'category': '商品类目', 'brand': '品牌'}
+              return labels.get(str(field or ''), str(field or ''))
+
+          def _flatten_enriched_row(row, attach_as):
+              out = {}
+              if not isinstance(row, dict):
+                  return out
+              for k, v in row.items():
+                  if k == attach_as:
+                      continue
+                  if not isinstance(v, (dict, list)):
+                      out[k] = v
+              info = row.get(attach_as)
+              if isinstance(info, dict):
+                  for k, v in info.items():
+                      if k not in out and not isinstance(v, (dict, list)):
+                          out[k] = v
+              return out
+
+          def _markdown_table(rows, attach_as, limit=5):
+              flat = [_flatten_enriched_row(r, attach_as) for r in (rows or []) if isinstance(r, dict)]
+              if not flat:
+                  return ''
+              preferred = ['status', 'product_name', 'order_count', 'category', 'brand']
+              fields = [f for f in preferred if any(f in r for r in flat)]
+              for r in flat:
+                  for k in r.keys():
+                      if k not in fields:
+                          fields.append(k)
+              fields = fields[:8]
+              lines = ['| ' + ' | '.join(_field_label(f) for f in fields) + ' |', '| ' + ' | '.join(['---: ' if f == 'order_count' else '---' for f in fields]) + ' |']
+              for r in flat[:limit]:
+                  vals = []
+                  for f in fields:
+                      val = r.get(f, '')
+                      vals.append('' if val is None else str(val))
+                  lines.append('| ' + ' | '.join(vals) + ' |')
+              return '\n'.join(lines)
+
+          def _answer_presentation_contract(plan, rows, chart_payload):
+              fm = plan.get('final_merge') if isinstance(plan, dict) and isinstance(plan.get('final_merge'), dict) else {}
+              attach_as = _plan_attach_as(plan)
+              has_attach = any(isinstance(r, dict) and attach_as in r and (r.get(attach_as) is None or isinstance(r.get(attach_as), dict)) for r in (rows or []))
+              has_numeric = any(isinstance(r, dict) and any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in r.values()) for r in (rows or []))
+              enriched = str(plan.get('execution_mode') or '') == 'multi_stage' and str(fm.get('merge_mode') or '') == 'enrich' and has_attach and has_numeric
+              return {
+                  'contract_version': 'answer_presentation_contract',
+                  'answer_type': 'query_with_optional_chart',
+                  'primary_result_type': 'enriched_aggregate_table' if enriched else 'table',
+                  'show_table': True,
+                  'table_mode': 'flatten_enriched_rows' if enriched else 'rows',
+                  'attach_as': attach_as,
+                  'chart_policy': {'requested': bool(chart_payload.get('enabled') if isinstance(chart_payload, dict) else False), 'enabled': bool(chart_payload.get('enabled') if isinstance(chart_payload, dict) else False), 'role': 'auxiliary'},
+              }
+
           def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = '', last_context_json: str = '{}', schema_runtime_context_json: str = '{}', selected_schema_context_ref_json: str = '{}', validator_result_json: str = '{}'):
               try:
                   semantic_plan = _loads_obj(semantic_plan_json)
@@ -377,6 +459,8 @@
                   chart_available = bool(chart_enabled and chart)
                   query_profile = _query_result_profile(query_result_json, result_rows, fields_json, row_count)
                   success = _query_success(query_result_json, execution_success)
+
+                  answer_presentation = _answer_presentation_contract(normalized_plan, result_rows, chart_payload if isinstance(chart_payload, dict) else {})
 
                   if not success:
                       err = _compiler_error(query_result_json, execution_error) or '执行阶段返回失败。'
@@ -399,7 +483,9 @@
                       summary_text = _summary(question, query_profile.get('preview_rows') or result_rows[:5], normalized_plan)
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True) if _needs_analysis(question, mode) else ''
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
-                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else ''))[:4000]
+                      table_md = _markdown_table(result_rows, answer_presentation.get('attach_as')) if answer_presentation.get('table_mode') == 'flatten_enriched_rows' else ''
+                      table_section = ('\n\n合并结果预览：\n\n' + table_md) if table_md else ''
+                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + table_section + '\n\n图表：')[:4000]
                       chart_markdown = chart
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
                   else:
@@ -411,7 +497,9 @@
                       if requested_chart and _plan_needs_chart(normalized_plan, semantic_plan, question):
                           warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or '图表字段未匹配或图表配置不可用'
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
-                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
+                      table_md = _markdown_table(result_rows, answer_presentation.get('attach_as')) if answer_presentation.get('table_mode') == 'flatten_enriched_rows' else ''
+                      table_section = ('\n\n合并结果预览：\n\n' + table_md) if table_md else ''
+                      answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + table_section + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
                       chart_markdown = ''
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
 
@@ -460,6 +548,7 @@
                   if '不对' in str(question or '') or '不再' in str(question or ''):
                       compact_context['last_turn_intent'] = {'turn_intent': 'refine_query', 'refine_type': 'requery'}
                   context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')) and answer_type != 'execution_error')
+                  compact_context['answer_presentation'] = answer_presentation
                   payload = _answer_payload(
                       answer_type,
                       answer_text=answer_text,
@@ -746,6 +835,32 @@
                   for k,v in labels.items(): rewritten=rewritten.replace(str(k), str(v))
                   return title if (rewritten != raw or re.search(r'[A-Za-z_]', raw)) else raw
               return title
+          def _aggregate_chart_rows_if_needed(rows, x_field, y_field):
+              if not isinstance(rows, list) or not x_field or not y_field:
+                  return rows, False
+              seen = {}
+              duplicate = False
+              ordered = []
+              for row in rows:
+                  if not isinstance(row, dict):
+                      continue
+                  x = row.get(x_field)
+                  y = row.get(y_field)
+                  if x is None:
+                      continue
+                  if _num(y) is None:
+                      return rows, False
+                  key = str(x)
+                  if key in seen:
+                      duplicate = True
+                      seen[key][y_field] += _num(y) or 0
+                  else:
+                      seen[key] = {x_field: x, y_field: _num(y) or 0}
+                      ordered.append(key)
+              if not duplicate:
+                  return rows, False
+              return [seen[k] for k in ordered], True
+
           def _payload(req, qr, chart_only=False):
               rows=qr.get('rows') if isinstance(qr.get('rows'),list) else []; fields=set(_fields(rows, qr.get('fields') if isinstance(qr.get('fields'),list) else []))
               p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':int(qr.get('row_count') or len(rows)),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{}}
@@ -763,6 +878,13 @@
               ctype=str(req.get('chart_type') or 'bar')
               if ctype not in {'bar','line','pie','scatter'}:
                   p['warning']='暂不支持该图表类型'; return p
+              if ctype in {'bar','line'}:
+                  chart_rows, aggregated = _aggregate_chart_rows_if_needed(rows, x, y)
+                  if aggregated:
+                      rows = chart_rows
+                      p['chart_debug'].update({'chart_aggregated_by_x_field': True, 'chart_aggregation_function': 'sum', 'chart_aggregation_x_field': x})
+                      p['data_profile']['preview_rows'] = rows[:5]
+                      p['data_profile']['row_count'] = len(rows)
               labels=req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {}
               title=_title(req); series=labels.get(req.get('series_name')) or labels.get(y) or req.get('series_name') or y
               x_label=labels.get(x) or x; y_label=labels.get(y) or y
@@ -777,7 +899,8 @@
               else:
                   option={'title':{'text':title},'tooltip':{'trigger':'axis'},'xAxis':{'type':'category','name':x_label,'data':[str(r.get(x) if r.get(x) is not None else '未分类') for r in rows]},'yAxis':{'type':'value','name':y_label},'series':[{'name':series,'type':'line' if ctype=='line' else 'bar','data':[_num(r.get(y)) or 0 for r in rows]}]}
                   if ctype=='line' and not re.search(r'date|time|day|month|year|日期|时间|日|月|年',x,re.I): p['warning']='折线图横轴不是明显时间或有序字段。'
-              p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':'已生成%s图表，共%s条数据。' % (ctype, len(rows))})
+              summary = ('已按 %s 汇总后生成%s图表，共%s个分组。' % (x, ctype, len(rows))) if p.get('chart_debug', {}).get('chart_aggregated_by_x_field') else ('已生成%s图表，共%s条数据。' % (ctype, len(rows)))
+              p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':summary})
               return p
 
           def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str='', schema_runtime_context_json: str='', schema_metadata_json: str='', schema_alias_index_json: str=''):
