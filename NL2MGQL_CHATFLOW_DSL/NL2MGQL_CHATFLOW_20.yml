@@ -221,7 +221,14 @@
           def main(base_schema_runtime_context_json='{}', hydrated_schema_runtime_context_json='{}'):
               base = _loads(base_schema_runtime_context_json, {}) or {}
               hydrated = _loads(hydrated_schema_runtime_context_json, {}) or {}
-              ctx = hydrated if hydrated.get('schema_context_ready') else base
+              base_ready = bool(base.get('schema_context_ready') and base.get('validator_schema_context_ready', base.get('schema_context_ready')) and not base.get('schema_hydration_needed'))
+              hydrated_ready = bool(hydrated.get('schema_context_ready') and hydrated.get('validator_schema_context_ready', hydrated.get('schema_context_ready')))
+              if base_ready:
+                  ctx = base
+              elif hydrated_ready:
+                  ctx = hydrated
+              else:
+                  ctx = base if base else hydrated
               warnings = ctx.get('warnings') if isinstance(ctx.get('warnings'), list) else []
               meta = _loads(ctx.get('schema_metadata_json'), {}) or {}
               if isinstance(ctx.get('schema_context_ref'), dict):

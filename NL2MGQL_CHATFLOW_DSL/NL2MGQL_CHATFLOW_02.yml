@@ -147,6 +147,11 @@
                   'schema_alias_index_json': json.dumps(alias, ensure_ascii=False),
                   'collection_catalog_json': json.dumps(cat, ensure_ascii=False),
                   'schema_context_ref_json': json.dumps(context_ref, ensure_ascii=False),
+                  'schema_digest': meta.get('schema_digest', ''),
+                  'schema_version': schema_version,
+                  'catalog_digest': cat.get('catalog_digest', ''),
+                  'schema_context_ready': bool(collections),
+                  'validator_schema_context_ready': bool(collections),
                   'candidate_schema_collections_json': json.dumps(list(collections.keys()), ensure_ascii=False),
                   'parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
                   'catalog_parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
@@ -170,6 +175,21 @@
           schema_context_ref_json:
             children:
             type: string
+          schema_digest:
+            children:
+            type: string
+          schema_version:
+            children:
+            type: string
+          catalog_digest:
+            children:
+            type: string
+          schema_context_ready:
+            children:
+            type: boolean
+          validator_schema_context_ready:
+            children:
+            type: boolean
           candidate_schema_collections_json:
             children:
             type: string

@@ -63,6 +63,16 @@
           - guard_error
           value_type: string
           variable: guard_error
+        - value_selector:
+          - '1777100000000'
+          - schema_metadata_json
+          value_type: string
+          variable: full_schema_metadata_json
+        - value_selector:
+          - '1777100000000'
+          - schema_alias_index_json
+          value_type: string
+          variable: full_schema_alias_index_json
       height: 80
       id: '1776000000024'
       position:
@@ -171,26 +181,54 @@
               return out
 
 
-          def _schema_info(schema_raw: Any) -> Tuple[Dict[str, Any], bool, str]:
-              schema = _loads(schema_raw, {})
+          def _loads_with_error(v: Any, default: Any = None) -> Tuple[Any, str]:
+              if default is None:
+                  default = {}
+              if isinstance(v, (dict, list)):
+                  return v, ""
+              if isinstance(v, str):
+                  if not v.strip():
+                      return default, ""
+                  try:
+                      return json.loads(v), ""
+                  except Exception:
+                      return default, "schema_metadata_parse_failed"
+              return default, ""
+
+
+          def _schema_info(schema_raw: Any) -> Tuple[Dict[str, Any], bool, str, bool]:
+              schema, parse_error = _loads_with_error(schema_raw, {})
+              if parse_error:
+                  return {}, False, parse_error, True
               if not isinstance(schema, dict) or not schema:
-                  return {}, False, "empty_schema_metadata"
+                  return {}, False, "empty_schema_metadata", False
               collections = schema.get("collections")
               if not isinstance(collections, dict) or not collections:
-                  return schema, False, "missing_schema_metadata_collections"
-              return schema, True, ""
+                  return schema, False, "missing_schema_metadata_collections", False
+              return schema, True, "", False
 
 
-          def _alias_ready(alias_raw: Any) -> Tuple[Dict[str, Any], bool, str]:
+          def _alias_index(alias_raw: Any) -> Dict[str, Any]:
               alias_index = _loads(alias_raw, {})
-              if not isinstance(alias_index, dict) or not alias_index:
-                  return {}, False, "empty_schema_alias_index"
-              return alias_index, True, ""
+              return alias_index if isinstance(alias_index, dict) else {}
+
+
+          def _schema_collections(schema: Dict[str, Any]) -> List[str]:
+              if not isinstance(schema, dict):
+                  return []
+              collections = schema.get("collections")
+              if isinstance(collections, dict):
+                  return [str(k).strip() for k in collections.keys() if str(k).strip()]
+              return []
+
+
+          def _missing_collections(required: List[str], available: List[str]) -> List[str]:
+              available_set = {str(x).strip() for x in available if str(x).strip()}
+              return [str(x).strip() for x in required if str(x).strip() and str(x).strip() not in available_set]
 
 
           def _parsed_collection_names(schema: Dict[str, Any]) -> List[str]:
-              collections = schema.get("collections") if isinstance(schema, dict) else {}
-              return [str(k).strip() for k in collections.keys() if str(k).strip()] if isinstance(collections, dict) else []
+              return _schema_collections(schema)
 
 
           def _prune_ref_to_parsed(collections: List[str], schema: Dict[str, Any], warnings: List[Any]) -> List[str]:
@@ -208,13 +246,6 @@
               return kept
 
 
-          def _primary_in_schema(schema: Dict[str, Any], primary: str) -> bool:
-              if not primary:
-                  return True
-              collections = schema.get("collections") if isinstance(schema, dict) else {}
-              return isinstance(collections, dict) and primary in collections
-
-
           def _ref(compact: Dict[str, Any]) -> Dict[str, Any]:
               return compact.get("schema_context_ref") if isinstance(compact.get("schema_context_ref"), dict) else {}
 
@@ -223,6 +254,7 @@
               base = {
                   "contract_version": CONTRACT_VERSION,
                   "schema_context_ready": False,
+                  "validator_schema_context_ready": False,
                   "schema_hydration_needed": False,
                   "schema_hydration_reason": "",
                   "schema_hydration_collections": [],
@@ -237,6 +269,8 @@
                   "errors": [],
               }
               base.update(kwargs)
+              base["schema_context_ready"] = bool(base.get("schema_context_ready"))
+              base["validator_schema_context_ready"] = bool(base.get("validator_schema_context_ready", base["schema_context_ready"]))
               if not isinstance(base.get("schema_context_ref"), dict):
                   base["schema_context_ref"] = {
                       "collections": base.get("schema_hydration_collections") or [],
@@ -244,7 +278,6 @@
                       "schema_version": base.get("schema_version") or "",
                       "catalog_digest": base.get("catalog_digest") or "",
                   }
-              base["validator_schema_context_ready"] = bool(base["schema_context_ready"])
               base["schema_runtime_context_json"] = _dumps({k: v for k, v in base.items() if k not in {"schema_runtime_context_json"}})
               return base
 
@@ -271,14 +304,17 @@
                   compact = {}
               ref = _ref(compact)
 
-              plan_cols, primary = _collections_from_plan(plan)
-              collections: List[str] = []
-              for source in (plan_cols, _collections_from_selection(selection), _collections_from_compact(compact)):
+              plan_cols, _primary = _collections_from_plan(plan)
+              fallback_cols: List[str] = []
+              for source in (_collections_from_selection(selection), _collections_from_compact(compact)):
                   for c in source:
-                      _add(collections, c)
+                      _add(fallback_cols, c)
+              required = plan_cols or fallback_cols
 
-              schema, schema_ok, schema_reason = _schema_info(schema_metadata_json)
-              alias_index, alias_ok, alias_reason = _alias_ready(schema_alias_index_json)
+              schema, schema_ok, schema_reason, schema_parse_failed = _schema_info(schema_metadata_json)
+              alias_index = _alias_index(schema_alias_index_json)
+              available = _schema_collections(schema)
+              missing = _missing_collections(required, available)
               digest = _str(schema.get("schema_digest")) if isinstance(schema, dict) else ""
               version = _str(schema.get("schema_version")) if isinstance(schema, dict) else ""
               catalog_digest = _str(schema.get("catalog_digest") or ref.get("catalog_digest")) if isinstance(schema, dict) else _str(ref.get("catalog_digest"))
@@ -289,21 +325,13 @@
                   warnings.append("schema_digest_mismatch_between_runtime_and_compact_ref")
               if ref_version and version and ref_version != version:
                   warnings.append("schema_version_mismatch_between_runtime_and_compact_ref")
+              if schema_ok and not alias_index:
+                  warnings.append("schema_alias_index_missing_but_schema_reused")
 
-              needs_reasons: List[str] = []
-              if not schema_ok:
-                  needs_reasons.append(schema_reason)
-              if not alias_ok:
-                  needs_reasons.append(alias_reason)
-              if schema_ok and primary and not _primary_in_schema(schema, primary):
-                  needs_reasons.append("schema_metadata_missing_plan_primary_collection")
-              if ref_digest and not digest:
-                  needs_reasons.append("compact_ref_has_schema_digest_but_runtime_digest_missing")
-
-              if schema_ok and alias_ok and _primary_in_schema(schema, primary):
-                  collections = _prune_ref_to_parsed(collections, schema, warnings)
+              if schema_ok and required and not missing:
                   return _result(
                       schema_context_ready=True,
+                      validator_schema_context_ready=True,
                       schema_hydration_needed=False,
                       schema_hydration_reason="",
                       schema_hydration_collections=[],
@@ -312,19 +340,23 @@
                       schema_digest=digest,
                       schema_version=version,
                       catalog_digest=catalog_digest,
-                      schema_source="current_runtime",
-                      schema_context_ref={"collections": collections, "schema_digest": digest, "schema_version": version, "catalog_digest": catalog_digest},
+                      schema_source="candidate_runtime_reuse",
+                      schema_context_ref={"collections": available, "schema_digest": digest, "schema_version": version, "catalog_digest": catalog_digest},
                       warnings=warnings,
                       errors=[],
                   )
 
-              legacy_schema, legacy_schema_ok, _ = _schema_info(legacy_schema_metadata_json)
-              legacy_alias, legacy_alias_ok, _ = _alias_ready(legacy_schema_alias_index_json)
-              if legacy_schema_ok and legacy_alias_ok and _primary_in_schema(legacy_schema, primary):
+              legacy_schema, legacy_schema_ok, _legacy_reason, _ = _schema_info(legacy_schema_metadata_json)
+              legacy_alias = _alias_index(legacy_schema_alias_index_json)
+              legacy_available = _schema_collections(legacy_schema)
+              legacy_missing = _missing_collections(required, legacy_available)
+              if legacy_schema_ok and required and not legacy_missing:
+                  if not legacy_alias:
+                      warnings.append("legacy_schema_alias_index_missing_but_schema_reused")
                   warnings.append("legacy_conversation_schema_fallback_used_runtime_only")
-                  collections = _prune_ref_to_parsed(collections, legacy_schema, warnings)
                   return _result(
                       schema_context_ready=True,
+                      validator_schema_context_ready=True,
                       schema_hydration_needed=False,
                       schema_hydration_reason="legacy_conversation_compat",
                       schema_hydration_collections=[],
@@ -334,15 +366,16 @@
                       schema_version=_str(legacy_schema.get("schema_version") or version or ref_version),
                       catalog_digest=_str(legacy_schema.get("catalog_digest") or catalog_digest),
                       schema_source="legacy_conversation_compat",
-                      schema_context_ref={"collections": collections, "schema_digest": _str(legacy_schema.get("schema_digest") or digest or ref_digest), "schema_version": _str(legacy_schema.get("schema_version") or version or ref_version), "catalog_digest": _str(legacy_schema.get("catalog_digest") or catalog_digest)},
+                      schema_context_ref={"collections": legacy_available, "schema_digest": _str(legacy_schema.get("schema_digest") or digest or ref_digest), "schema_version": _str(legacy_schema.get("schema_version") or version or ref_version), "catalog_digest": _str(legacy_schema.get("catalog_digest") or catalog_digest)},
                       warnings=warnings,
                       errors=[],
                   )
 
-              if not collections:
+              if not required:
                   errors.append("missing_collections_for_schema_hydration")
                   return _result(
                       schema_context_ready=False,
+                      validator_schema_context_ready=False,
                       schema_hydration_needed=False,
                       schema_hydration_reason="missing_collections_for_schema_hydration",
                       schema_hydration_collections=[],
@@ -350,24 +383,35 @@
                       schema_version=version or ref_version,
                       catalog_digest=catalog_digest,
                       schema_source="invalid" if schema_metadata_json and schema_metadata_json != "{}" else "missing",
-                      schema_context_ref={"collections": [], "schema_digest": digest or ref_digest, "schema_version": version or ref_version, "catalog_digest": catalog_digest},
+                      schema_context_ref={"collections": available, "schema_digest": digest or ref_digest, "schema_version": version or ref_version, "catalog_digest": catalog_digest},
                       warnings=warnings,
                       errors=errors,
                   )
 
-              reason = ";".join(dict.fromkeys([r for r in needs_reasons if r])) or "runtime_schema_context_not_ready"
-              if schema_ok:
-                  collections = _prune_ref_to_parsed(collections, schema, warnings)
+              if schema_parse_failed:
+                  hydration_reason = "schema_metadata_parse_failed"
+                  hydration_collections = required
+                  schema_source = "invalid"
+              elif schema_ok:
+                  hydration_reason = "missing_required_collections" if missing else "runtime_schema_context_not_ready"
+                  hydration_collections = missing or required
+                  schema_source = "candidate_runtime_incomplete"
+              else:
+                  hydration_reason = schema_reason or "runtime_schema_context_not_ready"
+                  hydration_collections = required
+                  schema_source = "missing" if schema_metadata_json in (None, "", "{}") else "invalid"
+
               return _result(
                   schema_context_ready=False,
+                  validator_schema_context_ready=False,
                   schema_hydration_needed=True,
-                  schema_hydration_reason=reason,
-                  schema_hydration_collections=collections,
+                  schema_hydration_reason=hydration_reason,
+                  schema_hydration_collections=hydration_collections,
                   schema_digest=digest or ref_digest,
                   schema_version=version or ref_version,
                   catalog_digest=catalog_digest,
-                  schema_source="invalid" if schema_metadata_json and schema_metadata_json != "{}" else "missing",
-                  schema_context_ref={"collections": collections, "schema_digest": digest or ref_digest, "schema_version": version or ref_version, "catalog_digest": catalog_digest},
+                  schema_source=schema_source,
+                  schema_context_ref={"collections": available, "schema_digest": digest or ref_digest, "schema_version": version or ref_version, "catalog_digest": catalog_digest},
                   warnings=warnings,
                   errors=errors,
               )
