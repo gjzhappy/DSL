@@ -544,7 +544,7 @@
                   plan['visualization'].update({'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''})
               return plan
 
-          def main(full_status_code, full_body, local_status_code, local_body, question=''):
+          def main(full_status_code, full_body, local_status_code, local_body, question='', full_fallback_reason=''):
               code, body, source = _pick_response(full_status_code, full_body, local_status_code, local_body)
               payload = None
               result = ''
@@ -571,7 +571,7 @@
               except Exception as e:
                   parse_error = str(e)
               parsed_keys = list(parsed.keys()) if isinstance(parsed, dict) else []
-              semantic_source = 'fallback' if source == 'local_llm' else 'planner'
+              semantic_source = 'local_fallback' if source == 'local_llm' else 'full_llm'
               normalized, plan_valid, normalizer_route, normalizer_error, normalizer_warnings, semantic_source = semantic_plan_normalizer(parsed if isinstance(parsed, dict) else {}, semantic_source)
               if not json_parse_ok:
                   normalized = {}
@@ -635,6 +635,11 @@
                   'normalizer_error': normalizer_error,
                   'normalizer_warnings_json': json.dumps(normalizer_warnings, ensure_ascii=False),
                   'semantic_plan_source': semantic_source,
+                  'selected_plan_source': semantic_source,
+                  'selected_status_code': code,
+                  'fallback_used': semantic_source == 'local_fallback',
+                  'fallback_reason': str(full_fallback_reason or '') if semantic_source == 'local_fallback' else '',
+                  'planner_debug_json': json.dumps({'selected_plan_source': semantic_source, 'selected_status_code': code, 'fallback_used': semantic_source == 'local_fallback', 'fallback_reason': str(full_fallback_reason or '') if semantic_source == 'local_fallback' else ''}, ensure_ascii=False),
                   'parse_error': parse_error,
                   'debug_summary_json': json.dumps(debug_summary, ensure_ascii=False),
                   'answer_mode': answer_mode,
@@ -663,6 +668,21 @@
             children:
             type: string
           semantic_plan_source:
+            children:
+            type: string
+          selected_plan_source:
+            children:
+            type: string
+          selected_status_code:
+            children:
+            type: number
+          fallback_used:
+            children:
+            type: boolean
+          fallback_reason:
+            children:
+            type: string
+          planner_debug_json:
             children:
             type: string
           plan_valid:
@@ -724,6 +744,11 @@
           - query
           value_type: string
           variable: question
+        - value_selector:
+          - '1775000000016'
+          - full_http_error
+          value_type: string
+          variable: full_fallback_reason
       height: 96
       id: '1775000000013'
       position:
@@ -849,18 +874,67 @@
       width: 242
     - data:
         code: |
+          import json
+          import re
+
           def _truncate_text(text, limit=1200):
               text = '' if text is None else str(text)
               return text if len(text) <= limit else text[:limit] + '...'
 
+          def _loads(value):
+              if isinstance(value, dict):
+                  return value
+              if isinstance(value, str) and value.strip():
+                  return json.loads(value)
+              return {}
+
+          def _extract_chat_text(resp):
+              if not isinstance(resp, dict):
+                  return ''
+              choices = resp.get('choices')
+              if isinstance(choices, list) and choices:
+                  msg = choices[0].get('message') if isinstance(choices[0], dict) else {}
+                  if isinstance(msg, dict):
+                      return str(msg.get('content') or '').strip()
+              return str(resp.get('text') or resp.get('content') or '').strip()
+
+          def _extract_json_object_text(text):
+              raw = re.sub(r'<think>.*?</think>', ' ', str(text or ''), flags=re.I | re.S).strip()
+              raw = re.sub(r'^```(?:json)?\s*|\s*```$', '', raw, flags=re.I | re.S).strip()
+              if not raw:
+                  raise ValueError('empty content')
+              decoder = json.JSONDecoder()
+              obj, end = decoder.raw_decode(raw)
+              if not isinstance(obj, dict):
+                  raise ValueError('content is not JSON object')
+              return raw[:end]
+
+          def _check_semantic_plan(body_text):
+              resp = _loads(body_text)
+              content = _extract_chat_text(resp) or str(body_text or '')
+              plan = json.loads(_extract_json_object_text(content))
+              if plan.get('contract_version') != 'semantic_plan_contract':
+                  return False, 'full_llm_invalid: missing contract_version'
+              stages = plan.get('stages')
+              if not isinstance(stages, list) or not stages:
+                  return False, 'full_llm_invalid: stages empty'
+              return True, ''
 
           def main(status_code, body):
               code = int(status_code or 0)
               body_text = '' if body is None else str(body).strip()
-              ok = 200 <= code < 300 and bool(body_text)
+              if code < 200 or code >= 300 or not body_text:
+                  return {
+                      'full_http_ok': 'false',
+                      'full_http_error': f"full_llm_failed: status={code}, body={_truncate_text(body, 1200)}",
+                  }
+              try:
+                  ok, reason = _check_semantic_plan(body_text)
+              except Exception as exc:
+                  ok, reason = False, 'full_llm_parse_failed: ' + str(exc)
               return {
                   'full_http_ok': 'true' if ok else 'false',
-                  'full_http_error': '' if ok else f"status={code}, body={_truncate_text(body, 1200)}",
+                  'full_http_error': '' if ok else reason + '; preview=' + _truncate_text(body_text, 1200),
               }
         code_language: python3
         desc: 根据满血LLM HTTP状态决定是否�退本地LLM
@@ -1075,8 +1149,8 @@
           import json
 
 
-          def main(text: str):
-              raw = str(text or '').strip()
+          def main(text: str, structured_output=None):
+              raw = json.dumps(structured_output, ensure_ascii=False) if isinstance(structured_output, dict) and structured_output else str(text or '').strip()
               if not raw:
                   raise ValueError('本地LLM返�为空')
               body = {
@@ -1110,6 +1184,11 @@
           - text
           value_type: string
           variable: text
+        - value_selector:
+          - '1775000000018'
+          - structured_output
+          value_type: object
+          variable: structured_output
       height: 96
       id: '1775000000019'
       position:

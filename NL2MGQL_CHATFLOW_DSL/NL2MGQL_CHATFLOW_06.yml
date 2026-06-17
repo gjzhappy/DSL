@@ -449,7 +449,7 @@
                       request_body['response_format'] = {
                           'type': 'json_schema',
                           'json_schema': {
-                              'name': 'semantic_execution_plan',
+                              'name': 'semantic_plan_contract',
                               'strict': False,
                               'schema': sanitized_schema,
                           }
@@ -467,8 +467,8 @@
                           'body_keys': list(request_body.keys()),
                           'response_format_enabled': rf_enabled,
                           'response_format_type': 'json_schema' if rf_enabled else '',
-                          'schema_name': 'semantic_execution_plan' if rf_enabled else '',
-                          'schema_required': ['execution_plan'],
+                          'schema_name': 'semantic_plan_contract' if rf_enabled else '',
+                          'schema_required': ['contract_version','primary_collection','stages'],
                           'prompt_preview': _truncate_text(prompt, 1000),
                       }, ensure_ascii=False),
                       'chat_url': chat_url,
