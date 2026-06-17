@@ -110,6 +110,36 @@
           def _as_list(value):
               return value if isinstance(value, list) else []
 
+          def _message_to_text(value):
+              if value is None:
+                  return ""
+              if isinstance(value, str):
+                  return value
+              try:
+                  return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+              except Exception:
+                  return str(value)
+
+          def _safe_join_messages(values, sep="\n"):
+              if values is None:
+                  return ""
+              if not isinstance(values, list):
+                  values = [values]
+              parts = []
+              for item in values:
+                  text = _message_to_text(item)
+                  if text:
+                      parts.append(text)
+              return sep.join(parts)
+
+          def _normalize_merge_mode(value):
+              mode = str(value or "").strip().lower()
+              if mode in ("enrich", "enrich_join", "join", "lookup", "left_join", "left_enrich", "enrichment"):
+                  return "enrich"
+              if mode in ("", "none", "no_merge", "null"):
+                  return "none"
+              return mode
+
           def _as_dict(value):
               return value if isinstance(value, dict) else {}
 
@@ -218,7 +248,7 @@
                   needs_chart = bool(plan.get('needs_chart')) or bool(chart_request.get('enabled'))
                   chart_request['enabled'] = bool(chart_request.get('enabled')) or needs_chart
                   final_merge = plan.get('final_merge') if isinstance(plan.get('final_merge'), dict) else {'merge_mode': 'none'}
-                  final_merge.setdefault('merge_mode', 'none')
+                  final_merge['merge_mode'] = _normalize_merge_mode(final_merge.get('merge_mode'))
                   normalizer_warnings = _as_list(plan.get('normalizer_warnings')) + warnings
                   primary_stages = [s for s in stages if isinstance(s, dict) and str(s.get('stage_type') or '').strip() == 'primary_query']
                   if not primary_stages and primary_collection:
@@ -236,15 +266,19 @@
                                   normalizer_warnings.append({'type': 'enrich_related_depends_on_fill_from_final_merge', 'stage_name': enrich_stage.get('stage_name'), 'depends_on': enrich_stage.get('depends_on')})
                       if str(final_merge.get('merge_mode') or '').strip() == 'enrich':
                           enrich_stage = enrich_stages[0]
+                          merge_keys = final_merge.get('merge_keys')
+                          merge_key = final_merge.get('merge_key')
+                          if not merge_key and isinstance(merge_keys, list) and merge_keys:
+                              merge_key = str(merge_keys[0] or '').strip()
                           changed = False
                           if not str(final_merge.get('right_stage') or '').strip():
                               final_merge['right_stage'] = str(final_merge.get('merge_stage_name') or enrich_stage.get('stage_name') or '').strip(); changed = True
                           if not str(final_merge.get('left_stage') or '').strip() and str(enrich_stage.get('depends_on') or '').strip():
                               final_merge['left_stage'] = str(enrich_stage.get('depends_on') or '').strip(); changed = True
                           if not str(final_merge.get('left_field') or '').strip():
-                              final_merge['left_field'] = str(enrich_stage.get('join_source_field') or final_merge.get('merge_key') or '').strip(); changed = True
+                              final_merge['left_field'] = str(enrich_stage.get('join_source_field') or merge_key or '').strip(); changed = True
                           if not str(final_merge.get('right_field') or '').strip():
-                              final_merge['right_field'] = str(enrich_stage.get('join_target_field') or final_merge.get('merge_key') or '').strip(); changed = True
+                              final_merge['right_field'] = str(enrich_stage.get('join_target_field') or merge_key or '').strip(); changed = True
                           if not str(final_merge.get('attach_as') or '').strip():
                               final_merge['attach_as'] = str(enrich_stage.get('attach_as') or 'product_info').strip(); changed = True
                           if changed:
@@ -304,7 +338,7 @@
                   plan_valid = False
                   normalizer_route = 'invalid'
                   normalizer_error = parse_error or 'LLM返回内容不是合法JSON对象'
-              warning = ';'.join(normalizer_warnings)
+              warning = _safe_join_messages(normalizer_warnings, ';')
               stages = (normalized.get('stages') or []) if isinstance(normalized, dict) else []
               content_preview = str(semantic_plan_raw_text or '')[:1000]
               debug_summary = {
