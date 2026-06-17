@@ -693,7 +693,34 @@
         title: 初始化多轮意图识别汇合变量_输出默认值
         type: code
         code: |
-          def main(**kwargs):
+          import base64, json, uuid
+          def _to_int(v, default):
+              try: return int(v)
+              except Exception: return default
+          def _to_float(v, default):
+              try: return float(v)
+              except Exception: return default
+          def _to_bool(v):
+              return str(v or '').strip().lower() in {'1','true','yes','y','on'}
+          def main(llm_token_url='', llm_chat_url='', llm_app_id='', llm_static_token='', llm_model='', llm_user='', llm_basic_auth='', llm_timeout_ms=600000, llm_temperature=0, llm_top_p=1, llm_max_completion_tokens=12288, llm_stream='', **kwargs):
+              llm_config = {
+                  'tokenUrl': str(llm_token_url or '').strip(),
+                  'chatUrl': str(llm_chat_url or '').strip(),
+                  'appId': str(llm_app_id or '').strip(),
+                  'staticToken': str(llm_static_token or ''),
+                  'model': str(llm_model or '').strip(),
+                  'user': str(llm_user or '').strip(),
+                  'basic_auth': str(llm_basic_auth or '').strip(),
+                  'timeout-millis': _to_int(llm_timeout_ms, 600000),
+                  'temperature': _to_float(llm_temperature, 0),
+                  'top_p': _to_float(llm_top_p, 1),
+                  'max_completion_tokens': _to_int(llm_max_completion_tokens, 12288),
+                  'stream': _to_bool(llm_stream),
+              }
+              token_request_body = {
+                  'appId': llm_config['appId'],
+                  'credential': base64.b64encode(str(llm_config.get('staticToken') or '').encode('utf-8')).decode('utf-8'),
+              }
               return {
                   'selected_intent_text': '',
                   'selected_intent_structured_json': '{}',
@@ -703,6 +730,11 @@
                   'full_intent_status_code': 0,
                   'full_intent_error_message': '',
                   'intent_debug_json': '{}',
+                  'token_url': llm_config['tokenUrl'],
+                  'chat_url': llm_config['chatUrl'],
+                  'llm_config_json': json.dumps(llm_config, ensure_ascii=False),
+                  'token_request_body_json': json.dumps(token_request_body, ensure_ascii=False),
+                  'request_id': 'intent_' + uuid.uuid4().hex,
               }
         code_language: python3
         outputs: &1
@@ -730,15 +762,90 @@
           intent_debug_json:
             children:
             type: string
-        variables: []
+          token_url:
+            children:
+            type: string
+          chat_url:
+            children:
+            type: string
+          llm_config_json:
+            children:
+            type: string
+          token_request_body_json:
+            children:
+            type: string
+          request_id:
+            children:
+            type: string
+        variables:
+        - value_selector:
+          - env
+          - LLM_TOKEN_URL
+          value_type: string
+          variable: llm_token_url
+        - value_selector:
+          - env
+          - LLM_CHAT_URL
+          value_type: string
+          variable: llm_chat_url
+        - value_selector:
+          - env
+          - LLM_APP_ID
+          value_type: string
+          variable: llm_app_id
+        - value_selector:
+          - env
+          - LLM_STATIC_TOKEN
+          value_type: string
+          variable: llm_static_token
+        - value_selector:
+          - env
+          - LLM_MODEL
+          value_type: string
+          variable: llm_model
+        - value_selector:
+          - env
+          - LLM_USER
+          value_type: string
+          variable: llm_user
+        - value_selector:
+          - env
+          - LLM_BASIC_AUTH
+          value_type: string
+          variable: llm_basic_auth
+        - value_selector:
+          - env
+          - LLM_TIMEOUT_MS
+          value_type: number
+          variable: llm_timeout_ms
+        - value_selector:
+          - env
+          - LLM_TEMPERATURE
+          value_type: number
+          variable: llm_temperature
+        - value_selector:
+          - env
+          - LLM_TOP_P
+          value_type: number
+          variable: llm_top_p
+        - value_selector:
+          - env
+          - LLM_MAX_COMPLETION_TOKENS
+          value_type: number
+          variable: llm_max_completion_tokens
+        - value_selector:
+          - env
+          - LLM_STREAM
+          value_type: string
+          variable: llm_stream
       height: 80
       id: '1776100000001'
       position:
-        x: 1200
-        "y": -260
+        x: 920
+        "y": -1200
       positionAbsolute:
-        x: 1200
-        "y": -260
+        x: 920
+        "y": -1200
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -827,11 +934,11 @@
       height: 80
       id: '1776100000002'
       position:
-        x: 1460
-        "y": -260
+        x: 1260
+        "y": -1200
       positionAbsolute:
-        x: 1460
-        "y": -260
+        x: 1260
+        "y": -1200
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -857,11 +964,11 @@
       height: 80
       id: '1776100000003'
       position:
-        x: 1720
-        "y": -260
+        x: 1600
+        "y": -1200
       positionAbsolute:
-        x: 1720
-        "y": -260
+        x: 1600
+        "y": -1200
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -873,24 +980,24 @@
         title: HTTP请求_获取动态Token_意图识别
         type: http-request
         method: post
-        url: "{{#1775000000005.token_url#}}"
+        url: "{{#1776100000001.token_url#}}"
         headers: Content-Type:application/json
         body:
           data:
           - id: intent-token-body
             key: ''
             type: text
-            value: "{{#1775000000005.token_request_body_json#}}"
+            value: "{{#1776100000001.token_request_body_json#}}"
           type: json
         variables: []
       height: 80
       id: '1776100000004'
       position:
-        x: 1980
-        "y": -520
+        x: 1940
+        "y": -1500
       positionAbsolute:
-        x: 1980
-        "y": -520
+        x: 1940
+        "y": -1500
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -917,9 +1024,11 @@
               try:
                   code=int(status_code or 0)
                   if code < 200 or code >= 300: raise ValueError('token_http_failed')
+                  if not str(chat_url or '').strip(): raise ValueError('missing_chat_url')
+                  cfg=_loads(llm_config_json) or {}
+                  if not isinstance(cfg, dict): raise ValueError('missing_llm_config')
                   token=(_loads(body) or {}).get('result')
                   if not isinstance(token,str) or not token.strip(): raise ValueError('TOKEN_RESULT_EMPTY')
-                  cfg=_loads(llm_config_json) or {}
                   model=str(cfg.get('model') or 'DeepSeek-V4-Flash')
                   schema={"type":"object","additionalProperties":False,"required":["turn_intent","need_previous_context","need_requery","need_rechart","need_analysis","can_answer_directly","reason","missing_info","chart_modification","query_refinement","analysis_focus"],"properties":{"turn_intent":{"type":"string","enum":["new_query","modify_chart","refine_query","explain_result","reanalyze_result","fix_result","continue_previous","clarify"]},"need_previous_context":{"type":"boolean"},"need_requery":{"type":"boolean"},"need_rechart":{"type":"boolean"},"need_analysis":{"type":"boolean"},"can_answer_directly":{"type":"boolean"},"reason":{"type":"string"},"missing_info":{"type":"array","items":{"type":"string"}},"chart_modification":{"type":"object","additionalProperties":True},"query_refinement":{"type":"object","additionalProperties":True},"analysis_focus":{"type":"string"}}}
                   prompt=(intent_prompt or '')+'\n\n只输出 JSON object，不要 markdown，不要解释文字，不要代码块，不要 schema 外字段，必须满足当前 turn_intent JSON schema。'
@@ -969,17 +1078,17 @@
           value_type: string
           variable: intent_prompt
         - value_selector:
-          - '1775000000005'
+          - '1776100000001'
           - chat_url
           value_type: string
           variable: chat_url
         - value_selector:
-          - '1775000000005'
+          - '1776100000001'
           - llm_config_json
           value_type: string
           variable: llm_config_json
         - value_selector:
-          - '1775000000005'
+          - '1776100000001'
           - request_id
           value_type: string
           variable: request_id
@@ -991,11 +1100,11 @@
       height: 80
       id: '1776100000005'
       position:
-        x: 2240
-        "y": -520
+        x: 2280
+        "y": -1500
       positionAbsolute:
-        x: 2240
-        "y": -520
+        x: 2280
+        "y": -1500
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1021,11 +1130,11 @@
       height: 80
       id: '1776100000006'
       position:
-        x: 2500
-        "y": -520
+        x: 2620
+        "y": -1500
       positionAbsolute:
-        x: 2500
-        "y": -520
+        x: 2620
+        "y": -1500
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1124,11 +1233,11 @@
       height: 80
       id: '1776100000007'
       position:
-        x: 2760
-        "y": -720
+        x: 2960
+        "y": -1680
       positionAbsolute:
-        x: 2760
-        "y": -720
+        x: 2960
+        "y": -1680
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1217,11 +1326,11 @@
       height: 80
       id: '1776100000008'
       position:
-        x: 3020
-        "y": -720
+        x: 3300
+        "y": -1680
       positionAbsolute:
-        x: 3020
-        "y": -720
+        x: 3300
+        "y": -1680
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1247,11 +1356,11 @@
       height: 80
       id: '1776100000009'
       position:
-        x: 3280
-        "y": -720
+        x: 3640
+        "y": -1680
       positionAbsolute:
-        x: 3280
-        "y": -720
+        x: 3640
+        "y": -1680
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1296,11 +1405,11 @@
       height: 80
       id: '1776100000010'
       position:
-        x: 3540
-        "y": -900
+        x: 3980
+        "y": -1860
       positionAbsolute:
-        x: 3540
-        "y": -900
+        x: 3980
+        "y": -1860
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1389,11 +1498,11 @@
       height: 80
       id: '1776100000011'
       position:
-        x: 3800
-        "y": -900
+        x: 4320
+        "y": -1860
       positionAbsolute:
-        x: 3800
-        "y": -900
+        x: 4320
+        "y": -1860
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1419,11 +1528,11 @@
       height: 80
       id: '1776100000018'
       position:
-        x: 2500
-        "y": 20
+        x: 1940
+        "y": -900
       positionAbsolute:
-        x: 2500
-        "y": 20
+        x: 1940
+        "y": -900
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1469,11 +1578,11 @@
       height: 80
       id: '1776100000012'
       position:
-        x: 2760
-        "y": 20
+        x: 2280
+        "y": -900
       positionAbsolute:
-        x: 2760
-        "y": 20
+        x: 2280
+        "y": -900
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1562,11 +1671,11 @@
       height: 80
       id: '1776100000013'
       position:
-        x: 3020
-        "y": 20
+        x: 2620
+        "y": -900
       positionAbsolute:
-        x: 3020
-        "y": 20
+        x: 2620
+        "y": -900
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1654,11 +1763,11 @@
       height: 98
       id: '1776100000014'
       position:
-        x: 3020
-        "y": -420
+        x: 2960
+        "y": -1240
       positionAbsolute:
-        x: 3020
-        "y": -420
+        x: 2960
+        "y": -1240
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1684,11 +1793,11 @@
       height: 80
       id: '1776100000019'
       position:
-        x: 3020
-        "y": -240
+        x: 3300
+        "y": -1240
       positionAbsolute:
-        x: 3020
-        "y": -240
+        x: 3300
+        "y": -1240
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1734,11 +1843,11 @@
       height: 80
       id: '1776100000016'
       position:
-        x: 3280
-        "y": -420
+        x: 3640
+        "y": -1240
       positionAbsolute:
-        x: 3280
-        "y": -420
+        x: 3640
+        "y": -1240
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1827,11 +1936,11 @@
       height: 80
       id: '1776100000017'
       position:
-        x: 3540
-        "y": -420
+        x: 3980
+        "y": -1240
       positionAbsolute:
-        x: 3540
-        "y": -420
+        x: 3980
+        "y": -1240
       selected: false
       sourcePosition: right
       targetPosition: left
