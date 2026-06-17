@@ -315,6 +315,70 @@ workflow:
     - ENABLE_FULL_LLM
     value: 'true'
     value_type: string
+  - description: 本轮选定意图文本（满血LLM或本地兜底汇合）
+    id: 98b8f330-3f3b-4e1d-8b21-111111111001
+    name: selected_intent_text
+    selector:
+    - conversation
+    - selected_intent_text
+    value: ''
+    value_type: string
+  - description: 本轮选定意图结构化 JSON（满血LLM或本地兜底汇合）
+    id: 98b8f330-3f3b-4e1d-8b21-111111111002
+    name: selected_intent_structured_json
+    selector:
+    - conversation
+    - selected_intent_structured_json
+    value: '{}'
+    value_type: string
+  - description: 本轮选定意图来源
+    id: 98b8f330-3f3b-4e1d-8b21-111111111003
+    name: selected_intent_source
+    selector:
+    - conversation
+    - selected_intent_source
+    value: ''
+    value_type: string
+  - description: 本轮意图是否使用满血失败后的本地兜底
+    id: 98b8f330-3f3b-4e1d-8b21-111111111004
+    name: intent_fallback_used
+    selector:
+    - conversation
+    - intent_fallback_used
+    value: 'false'
+    value_type: string
+  - description: 本轮意图兜底原因
+    id: 98b8f330-3f3b-4e1d-8b21-111111111005
+    name: intent_fallback_reason
+    selector:
+    - conversation
+    - intent_fallback_reason
+    value: ''
+    value_type: string
+  - description: 满血意图识别 HTTP 状态码
+    id: 98b8f330-3f3b-4e1d-8b21-111111111006
+    name: full_intent_status_code
+    selector:
+    - conversation
+    - full_intent_status_code
+    value: 0
+    value_type: number
+  - description: 满血意图识别错误信息
+    id: 98b8f330-3f3b-4e1d-8b21-111111111007
+    name: full_intent_error_message
+    selector:
+    - conversation
+    - full_intent_error_message
+    value: ''
+    value_type: string
+  - description: 满血/本地意图识别调试 JSON
+    id: 98b8f330-3f3b-4e1d-8b21-111111111008
+    name: intent_debug_json
+    selector:
+    - conversation
+    - intent_debug_json
+    value: '{}'
+    value_type: string
   features:
     file_upload:
       allowed_file_extensions:
@@ -364,6 +428,259 @@ workflow:
       voice: ''
   graph:
     edges:
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776000000002-source-1776100000001-target
+      source: '1776000000002'
+      sourceHandle: source
+      target: '1776100000001'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: assigner
+      id: 1776100000001-source-1776100000002-target
+      source: '1776100000001'
+      sourceHandle: source
+      target: '1776100000002'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: assigner
+        targetType: if-else
+      id: 1776100000002-source-1776100000003-target
+      source: '1776100000002'
+      sourceHandle: source
+      target: '1776100000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: http-request
+      id: 1776100000003-true-1776100000004-target
+      source: '1776100000003'
+      sourceHandle: 'true'
+      target: '1776100000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776100000003-false-1776000000003-target
+      source: '1776100000003'
+      sourceHandle: 'false'
+      target: '1776000000003'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: 1776100000004-source-1776100000005-target
+      source: '1776100000004'
+      sourceHandle: source
+      target: '1776100000005'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1776100000005-source-1776100000006-target
+      source: '1776100000005'
+      sourceHandle: source
+      target: '1776100000006'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776100000006-true-1776100000007-target
+      source: '1776100000006'
+      sourceHandle: 'true'
+      target: '1776100000007'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776100000006-false-1776100000014-target
+      source: '1776100000006'
+      sourceHandle: 'false'
+      target: '1776100000014'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776100000007-source-1776100000008-target
+      source: '1776100000007'
+      sourceHandle: source
+      target: '1776100000008'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1776100000008-source-1776100000009-target
+      source: '1776100000008'
+      sourceHandle: source
+      target: '1776100000009'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1776100000009-true-1776100000010-target
+      source: '1776100000009'
+      sourceHandle: 'true'
+      target: '1776100000010'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1776100000009-false-1776100000014-target
+      source: '1776100000009'
+      sourceHandle: 'false'
+      target: '1776100000014'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: assigner
+      id: 1776100000010-source-1776100000011-target
+      source: '1776100000010'
+      sourceHandle: source
+      target: '1776100000011'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: assigner
+        targetType: code
+      id: 1776100000011-source-1776000000004-target
+      source: '1776100000011'
+      sourceHandle: source
+      target: '1776000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1776000000003-source-1776100000018-target
+      source: '1776000000003'
+      sourceHandle: source
+      target: '1776100000018'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776100000018-source-1776100000012-target
+      source: '1776100000018'
+      sourceHandle: source
+      target: '1776100000012'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: assigner
+      id: 1776100000012-source-1776100000013-target
+      source: '1776100000012'
+      sourceHandle: source
+      target: '1776100000013'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: assigner
+        targetType: code
+      id: 1776100000013-source-1776000000004-target
+      source: '1776100000013'
+      sourceHandle: source
+      target: '1776000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: code
+      id: 1776100000014-source-1776100000019-target
+      source: '1776100000014'
+      sourceHandle: source
+      target: '1776100000019'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1776100000019-source-1776100000016-target
+      source: '1776100000019'
+      sourceHandle: source
+      target: '1776100000016'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: assigner
+      id: 1776100000016-source-1776100000017-target
+      source: '1776100000016'
+      sourceHandle: source
+      target: '1776100000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: assigner
+        targetType: code
+      id: 1776100000017-source-1776000000004-target
+      source: '1776100000017'
+      sourceHandle: source
+      target: '1776000000004'
+      targetHandle: target
+      type: custom
+      zIndex: 0
     - data:
         isInLoop: false
         sourceType: code
@@ -676,28 +993,6 @@ workflow:
       source: '1776000000001'
       sourceHandle: source
       target: '1776000000002'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: code
-        targetType: llm
-      id: 1776000000002-source-1776000000003-target
-      source: '1776000000002'
-      sourceHandle: source
-      target: '1776000000003'
-      targetHandle: target
-      type: custom
-      zIndex: 0
-    - data:
-        isInLoop: false
-        sourceType: llm
-        targetType: code
-      id: 1776000000003-source-1776000000004-target
-      source: '1776000000003'
-      sourceHandle: source
-      target: '1776000000004'
       targetHandle: target
       type: custom
       zIndex: 0
