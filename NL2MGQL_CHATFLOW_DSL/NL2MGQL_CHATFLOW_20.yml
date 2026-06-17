@@ -1511,27 +1511,36 @@
     - data:
         desc: ''
         selected: false
-        title: 代码执行_标记本地意图包装模式
+        title: 设置本地意图识别上下文_满血关闭
         type: code
         code: |
           def main(**kwargs):
-              return {'fallback_used':'false','fallback_reason':''}
+              return {'intent_fallback_used':'false','intent_fallback_reason':'','full_intent_status_code':0,'full_intent_error_message':'','intent_debug_json':'{}'}
         code_language: python3
-        outputs:
-          fallback_used:
+        outputs: &intent_context_outputs
+          intent_fallback_used:
             children:
             type: string
-          fallback_reason:
+          intent_fallback_reason:
+            children:
+            type: string
+          full_intent_status_code:
+            children:
+            type: number
+          full_intent_error_message:
+            children:
+            type: string
+          intent_debug_json:
             children:
             type: string
         variables: []
       height: 80
       id: '1776100000018'
       position:
-        x: 1940
+        x: 920
         "y": -900
       positionAbsolute:
-        x: 1940
+        x: 920
         "y": -900
       selected: false
       sourcePosition: right
@@ -1541,17 +1550,83 @@
     - data:
         desc: ''
         selected: false
-        title: 包装本地意图识别结果_满血关闭_输出
+        title: 设置本地意图识别上下文_满血关闭_写入汇合变量
+        type: assigner
+        items:
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000018'
+          - intent_fallback_used
+          variable_selector:
+          - conversation
+          - intent_fallback_used
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000018'
+          - intent_fallback_reason
+          variable_selector:
+          - conversation
+          - intent_fallback_reason
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000018'
+          - full_intent_status_code
+          variable_selector:
+          - conversation
+          - full_intent_status_code
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000018'
+          - full_intent_error_message
+          variable_selector:
+          - conversation
+          - full_intent_error_message
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000018'
+          - intent_debug_json
+          variable_selector:
+          - conversation
+          - intent_debug_json
+          write_mode: over-write
+        version: '2'
+        write_mode: over-write
+      height: 80
+      id: '1776100000020'
+      position:
+        x: 1160
+        "y": -900
+      positionAbsolute:
+        x: 1160
+        "y": -900
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: ''
+        selected: false
+        title: 包装本地意图识别结果并写入汇合变量_输出
         type: code
         code: |
           import json
-          def main(intent_structured=None, intent_text='', fallback_used='false', fallback_reason='', **kwargs):
+          def main(intent_structured=None, intent_text='', intent_fallback_used='false', intent_fallback_reason='', full_intent_status_code=0, full_intent_error_message='', intent_debug_json='{}', **kwargs):
               txt='' if intent_text is None else str(intent_text)
               try:
                   js=json.dumps(intent_structured if isinstance(intent_structured,dict) else json.loads(txt), ensure_ascii=False)
               except Exception:
                   js=json.dumps(intent_structured if isinstance(intent_structured,dict) else {}, ensure_ascii=False)
-              return {'selected_intent_text': txt, 'selected_intent_structured_json': js, 'selected_intent_source':'local_fallback', 'intent_fallback_used':str(fallback_used).lower(), 'intent_fallback_reason':str(fallback_reason or ''), 'full_intent_status_code':0, 'full_intent_error_message':'', 'intent_debug_json':'{}'}
+              return {'selected_intent_text': txt, 'selected_intent_structured_json': js, 'selected_intent_source':'local_fallback', 'intent_fallback_used':str(intent_fallback_used).lower(), 'intent_fallback_reason':str(intent_fallback_reason or ''), 'full_intent_status_code':int(full_intent_status_code or 0), 'full_intent_error_message':str(full_intent_error_message or ''), 'intent_debug_json':str(intent_debug_json or '{}')}
         code_language: python3
         outputs: *1
         variables:
@@ -1566,23 +1641,38 @@
           value_type: string
           variable: intent_text
         - value_selector:
-          - '1776100000018'
-          - fallback_used
+          - conversation
+          - intent_fallback_used
           value_type: string
-          variable: fallback_used
+          variable: intent_fallback_used
         - value_selector:
-          - '1776100000018'
-          - fallback_reason
+          - conversation
+          - intent_fallback_reason
           value_type: string
-          variable: fallback_reason
+          variable: intent_fallback_reason
+        - value_selector:
+          - conversation
+          - full_intent_status_code
+          value_type: number
+          variable: full_intent_status_code
+        - value_selector:
+          - conversation
+          - full_intent_error_message
+          value_type: string
+          variable: full_intent_error_message
+        - value_selector:
+          - conversation
+          - intent_debug_json
+          value_type: string
+          variable: intent_debug_json
       height: 80
       id: '1776100000012'
       position:
-        x: 2280
-        "y": -900
+        x: 1720
+        "y": -1080
       positionAbsolute:
-        x: 2280
-        "y": -900
+        x: 1720
+        "y": -1080
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1591,36 +1681,9 @@
     - data:
         desc: ''
         selected: false
-        title: 包装本地意图识别结果_满血关闭
+        title: 包装本地意图识别结果并写入汇合变量
         type: assigner
         items:
-        - input_type: variable
-          operation: over-write
-          value:
-          - '1776100000012'
-          - selected_intent_text
-          variable_selector:
-          - conversation
-          - selected_intent_text
-          write_mode: over-write
-        - input_type: variable
-          operation: over-write
-          value:
-          - '1776100000012'
-          - selected_intent_structured_json
-          variable_selector:
-          - conversation
-          - selected_intent_structured_json
-          write_mode: over-write
-        - input_type: variable
-          operation: over-write
-          value:
-          - '1776100000012'
-          - selected_intent_source
-          variable_selector:
-          - conversation
-          - selected_intent_source
-          write_mode: over-write
         - input_type: variable
           operation: over-write
           value:
@@ -1671,103 +1734,11 @@
       height: 80
       id: '1776100000013'
       position:
-        x: 2620
-        "y": -900
+        x: 2060
+        "y": -1080
       positionAbsolute:
-        x: 2620
-        "y": -900
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-          variable_selector: []
-        model:
-          completion_params:
-            num_ctx: 16384
-            num_predict: 8192
-            temperature: 0
-            think: false
-          mode: chat
-          name: qwen3.5:35b
-          provider: langgenius/ollama/ollama
-        prompt_template:
-        - id: intent-system
-          role: system
-          text: 你是多轮数据查询 Chatflow 的意图识别器。必须只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema
-            之外的字段。
-        - id: intent-user
-          role: user
-          text: "{{#1776000000002.intent_prompt#}}"
-        selected: false
-        structured_output:
-          schema:
-            type: object
-            additionalProperties: false
-            required:
-            - turn_intent
-            - need_previous_context
-            - need_requery
-            - need_rechart
-            - need_analysis
-            - can_answer_directly
-            - reason
-            - missing_info
-            - chart_modification
-            - query_refinement
-            - analysis_focus
-            properties:
-              turn_intent:
-                type: string
-                enum:
-                - new_query
-                - modify_chart
-                - refine_query
-                - explain_result
-                - reanalyze_result
-                - fix_result
-                - continue_previous
-                - clarify
-              need_previous_context:
-                type: boolean
-              need_requery:
-                type: boolean
-              need_rechart:
-                type: boolean
-              need_analysis:
-                type: boolean
-              can_answer_directly:
-                type: boolean
-              reason:
-                type: string
-              missing_info:
-                type: array
-                items:
-                  type: string
-              chart_modification:
-                type: object
-                additionalProperties: true
-              query_refinement:
-                type: object
-                additionalProperties: true
-              analysis_focus:
-                type: string
-        structured_output_enabled: true
-        title: LLM_多轮意图识别_满血失败兜底
-        type: llm
-        vision:
-          enabled: false
-      height: 98
-      id: '1776100000014'
-      position:
-        x: 2960
-        "y": -1240
-      positionAbsolute:
-        x: 2960
-        "y": -1240
+        x: 2060
+        "y": -1080
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1776,78 +1747,33 @@
     - data:
         desc: ''
         selected: false
-        title: 代码执行_标记满血失败本地兜底
-        type: code
-        code: |
-          def main(**kwargs):
-              return {'fallback_used':'true','fallback_reason':'full_llm_fallback'}
-        code_language: python3
-        outputs:
-          fallback_used:
-            children:
-            type: string
-          fallback_reason:
-            children:
-            type: string
-        variables: []
-      height: 80
-      id: '1776100000019'
-      position:
-        x: 3300
-        "y": -1240
-      positionAbsolute:
-        x: 3300
-        "y": -1240
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        desc: ''
-        selected: false
-        title: 包装本地意图识别结果_满血失败_输出
+        title: 设置本地意图识别上下文_满血请求不可用
         type: code
         code: |
           import json
-          def main(intent_structured=None, intent_text='', fallback_used='false', fallback_reason='', **kwargs):
-              txt='' if intent_text is None else str(intent_text)
-              try:
-                  js=json.dumps(intent_structured if isinstance(intent_structured,dict) else json.loads(txt), ensure_ascii=False)
-              except Exception:
-                  js=json.dumps(intent_structured if isinstance(intent_structured,dict) else {}, ensure_ascii=False)
-              return {'selected_intent_text': txt, 'selected_intent_structured_json': js, 'selected_intent_source':'local_fallback', 'intent_fallback_used':str(fallback_used).lower(), 'intent_fallback_reason':str(fallback_reason or ''), 'full_intent_status_code':0, 'full_intent_error_message':'', 'intent_debug_json':'{}'}
+          def main(status_code=0, debug_summary='', **kwargs):
+              return {'intent_fallback_used':'true','intent_fallback_reason':'full_intent_request_unavailable','full_intent_status_code':int(status_code or 0),'full_intent_error_message':str(debug_summary or ''),'intent_debug_json':json.dumps({'request_enabled':False,'debug_summary':str(debug_summary or '')}, ensure_ascii=False)}
         code_language: python3
-        outputs: *1
+        outputs: *intent_context_outputs
         variables:
         - value_selector:
-          - '1776100000014'
-          - structured_output
-          value_type: object
-          variable: intent_structured
+          - '1776100000004'
+          - status_code
+          value_type: number
+          variable: status_code
         - value_selector:
-          - '1776100000014'
-          - text
+          - '1776100000005'
+          - debug_summary
           value_type: string
-          variable: intent_text
-        - value_selector:
-          - '1776100000019'
-          - fallback_used
-          value_type: string
-          variable: fallback_used
-        - value_selector:
-          - '1776100000019'
-          - fallback_reason
-          value_type: string
-          variable: fallback_reason
+          variable: debug_summary
       height: 80
-      id: '1776100000016'
+      id: '1776100000019'
       position:
-        x: 3640
-        "y": -1240
+        x: 2960
+        "y": -1320
       positionAbsolute:
-        x: 3640
-        "y": -1240
+        x: 2960
+        "y": -1320
       selected: false
       sourcePosition: right
       targetPosition: left
@@ -1856,36 +1782,114 @@
     - data:
         desc: ''
         selected: false
-        title: 包装本地意图识别结果_满血失败
+        title: 设置本地意图识别上下文_满血请求不可用_写入汇合变量
         type: assigner
         items:
         - input_type: variable
           operation: over-write
           value:
-          - '1776100000016'
-          - selected_intent_text
+          - '1776100000019'
+          - intent_fallback_used
           variable_selector:
           - conversation
-          - selected_intent_text
+          - intent_fallback_used
           write_mode: over-write
         - input_type: variable
           operation: over-write
           value:
-          - '1776100000016'
-          - selected_intent_structured_json
+          - '1776100000019'
+          - intent_fallback_reason
           variable_selector:
           - conversation
-          - selected_intent_structured_json
+          - intent_fallback_reason
           write_mode: over-write
         - input_type: variable
           operation: over-write
           value:
-          - '1776100000016'
-          - selected_intent_source
+          - '1776100000019'
+          - full_intent_status_code
           variable_selector:
           - conversation
-          - selected_intent_source
+          - full_intent_status_code
           write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000019'
+          - full_intent_error_message
+          variable_selector:
+          - conversation
+          - full_intent_error_message
+          write_mode: over-write
+        - input_type: variable
+          operation: over-write
+          value:
+          - '1776100000019'
+          - intent_debug_json
+          variable_selector:
+          - conversation
+          - intent_debug_json
+          write_mode: over-write
+        version: '2'
+        write_mode: over-write
+      height: 80
+      id: '1776100000021'
+      position:
+        x: 3300
+        "y": -1320
+      positionAbsolute:
+        x: 3300
+        "y": -1320
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: ''
+        selected: false
+        title: 设置本地意图识别上下文_满血响应无效
+        type: code
+        code: |
+          def main(status_code=0, error_message='', debug_json='{}', **kwargs):
+              return {'intent_fallback_used':'true','intent_fallback_reason':'full_intent_check_failed','full_intent_status_code':int(status_code or 0),'full_intent_error_message':str(error_message or ''),'intent_debug_json':str(debug_json or '{}')}
+        code_language: python3
+        outputs: *intent_context_outputs
+        variables:
+        - value_selector:
+          - '1776100000008'
+          - full_intent_status_code
+          value_type: number
+          variable: status_code
+        - value_selector:
+          - '1776100000008'
+          - full_intent_error_message
+          value_type: string
+          variable: error_message
+        - value_selector:
+          - '1776100000008'
+          - full_intent_debug_json
+          value_type: string
+          variable: debug_json
+      height: 80
+      id: '1776100000016'
+      position:
+        x: 3980
+        "y": -1500
+      positionAbsolute:
+        x: 3980
+        "y": -1500
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: ''
+        selected: false
+        title: 设置本地意图识别上下文_满血响应无效_写入汇合变量
+        type: assigner
+        items:
         - input_type: variable
           operation: over-write
           value:
@@ -1936,11 +1940,11 @@
       height: 80
       id: '1776100000017'
       position:
-        x: 3980
-        "y": -1240
+        x: 4320
+        "y": -1500
       positionAbsolute:
-        x: 3980
-        "y": -1240
+        x: 4320
+        "y": -1500
       selected: false
       sourcePosition: right
       targetPosition: left
