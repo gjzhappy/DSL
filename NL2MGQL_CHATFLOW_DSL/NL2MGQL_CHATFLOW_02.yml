@@ -254,6 +254,50 @@
             输出 JSON contract:
             {"contract_version":"collection_selector_v1","primary_collection":"","related_collections":[],"schema_hydration_collections":[],"selection_confidence":"high|medium|low","requires_clarification":false,"clarification_question":"","reason":"","warnings":[]}
         selected: false
+        structured_output:
+          schema:
+            type: object
+            additionalProperties: false
+            required:
+            - contract_version
+            - primary_collection
+            - related_collections
+            - schema_hydration_collections
+            - selection_confidence
+            - requires_clarification
+            - clarification_question
+            - reason
+            - warnings
+            properties:
+              contract_version:
+                type: string
+                const: collection_selector_v1
+              primary_collection:
+                type: string
+              related_collections:
+                type: array
+                items:
+                  type: string
+              schema_hydration_collections:
+                type: array
+                items:
+                  type: string
+              selection_confidence:
+                type: string
+                enum:
+                - high
+                - medium
+                - low
+              requires_clarification:
+                type: boolean
+              clarification_question:
+                type: string
+              reason:
+                type: string
+              warnings:
+                type: array
+                items:
+                  type: string
         structured_output_enabled: true
         title: LLM_Collection选择规划
         type: llm
