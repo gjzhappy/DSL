@@ -262,10 +262,10 @@
       height: 88
       id: '1777000000100'
       position:
-        x: 3310
+        x: 5630
         "y": -820
       positionAbsolute:
-        x: 3310
+        x: 5630
         "y": -820
       selected: false
       sourcePosition: right
@@ -301,14 +301,23 @@
                   if str(rel.get('target_collection') or '').strip() == target: return True
               return False
           def _clarify(msg, warnings, collection_catalog_json='{}'):
-              return {'collection_selector_valid': False, 'collection_selector_route': 'clarify', 'primary_collection': '', 'selected_primary_collection': '', 'related_collections_json': '[]', 'selected_related_collections_json': '[]', 'selected_related_collections': [], 'schema_hydration_collections_json': '[]', 'schema_hydration_collections': [], 'query_text': '', 'collection_selector_result_json': '{}', 'collection_selection_json': '{}', 'collection_catalog_json': collection_catalog_json, 'candidate_collection_name': '', 'candidate_collection_names': [], 'candidate_collection_names_json': '[]', 'requires_clarification': True, 'clarification_question': msg, 'warnings_json': json.dumps(warnings, ensure_ascii=False)}
-          def main(question: str, collection_catalog_json: str = '{}', selector_text: str = '', registry_valid: bool = True, registry_error: str = ''):
+              return {'collection_selector_valid': False, 'collection_selector_route': 'clarify', 'primary_collection': '', 'selected_primary_collection': '', 'related_collections_json': '[]', 'selected_related_collections_json': '[]', 'selected_related_collections': [], 'schema_hydration_collections_json': '[]', 'schema_hydration_collections': [], 'query_text': '', 'collection_selector_result_json': '{}', 'collection_selection_json': '{}', 'collection_catalog_json': collection_catalog_json, 'candidate_collection_name': '', 'candidate_collection_names': [], 'candidate_collection_names_json': '[]', 'requires_clarification': True, 'clarification_question': msg, 'warnings_json': json.dumps(warnings, ensure_ascii=False), 'selected_collection_source': '', 'collection_fallback_used': False, 'full_collection_status_code': 0, 'full_collection_error_message': '', 'collection_selector_debug_json': '{}'}
+          def main(question: str, collection_catalog_json: str = '{}', selector_text: str = '', local_selector_structured=None, full_collection_ok: str = 'false', full_collection_text: str = '', full_collection_structured_json: str = '{}', full_collection_status_code=0, full_collection_error_message: str = '', full_collection_debug_json: str = '{}', enable_full_llm: str = 'false', registry_valid: bool = True, registry_error: str = ''):
               catalog = _loads(collection_catalog_json, {}) or {}
               collections = catalog.get('collections') if isinstance(catalog.get('collections'), list) else []
               names = [str(c.get('collection_name') or '').strip() for c in collections if isinstance(c, dict) and str(c.get('collection_name') or '').strip()]
               allowed, cmap, warnings = set(names), {str(c.get('collection_name') or '').strip(): c for c in collections if isinstance(c, dict)}, []
               if not registry_valid or not allowed: return _clarify('当前集合目录不可用，无法判断需要查询的数据集合。', [registry_error] if registry_error else [], collection_catalog_json)
-              raw = _loads(selector_text, {})
+              full_ok = str(full_collection_ok or '').strip().lower() == 'true'
+              if full_ok:
+                  selected_collection_source = 'full_llm'
+                  collection_fallback_used = False
+                  selected_payload = full_collection_structured_json or full_collection_text
+              else:
+                  selected_collection_source = 'local_fallback'
+                  collection_fallback_used = str(enable_full_llm or '').strip().lower() == 'true'
+                  selected_payload = local_selector_structured if isinstance(local_selector_structured, dict) and local_selector_structured else selector_text
+              raw = _loads(selected_payload, {})
               if not isinstance(raw, dict) or not raw: return _clarify('无法判断需要查询的数据集合，请补充说明要查询的数据对象。', ['collection selector output is empty or invalid json'], collection_catalog_json)
               primary = str(raw.get('primary_collection') or '').strip()
               related = _uniq(_list(raw.get('related_collections')))
@@ -333,7 +342,7 @@
               query_parts = ['用户问题：' + str(question or '').strip(), '请按以下 collection_name 分别检索完整 schema metadata：']
               for name in hydrate: query_parts.append('metadata_type: mongo_schema\ncollection_name: ' + name + '\n请返回该 collection 对应的完整 schema metadata。')
               selection = {'contract_version': 'collection_selection_contract', 'selected_primary_collection': primary, 'selected_related_collections': related, 'schema_hydration_collections': hydrate, 'requires_clarification': False, 'clarification_question': '', 'warnings': warnings, 'selector_result': raw}
-              return {'collection_selector_valid': True, 'collection_selector_route': 'ready', 'primary_collection': primary, 'selected_primary_collection': primary, 'related_collections_json': json.dumps(related, ensure_ascii=False), 'selected_related_collections_json': json.dumps(related, ensure_ascii=False), 'selected_related_collections': related, 'schema_hydration_collections_json': json.dumps(hydrate, ensure_ascii=False), 'schema_hydration_collections': hydrate, 'query_text': '\n\n'.join(query_parts), 'collection_selector_result_json': json.dumps(raw, ensure_ascii=False), 'collection_selection_json': json.dumps(selection, ensure_ascii=False), 'collection_catalog_json': collection_catalog_json, 'candidate_collection_name': primary, 'candidate_collection_names': hydrate, 'candidate_collection_names_json': json.dumps(hydrate, ensure_ascii=False), 'requires_clarification': False, 'clarification_question': '', 'warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              return {'collection_selector_valid': True, 'collection_selector_route': 'ready', 'primary_collection': primary, 'selected_primary_collection': primary, 'related_collections_json': json.dumps(related, ensure_ascii=False), 'selected_related_collections_json': json.dumps(related, ensure_ascii=False), 'selected_related_collections': related, 'schema_hydration_collections_json': json.dumps(hydrate, ensure_ascii=False), 'schema_hydration_collections': hydrate, 'query_text': '\n\n'.join(query_parts), 'collection_selector_result_json': json.dumps(raw, ensure_ascii=False), 'collection_selection_json': json.dumps(selection, ensure_ascii=False), 'collection_catalog_json': collection_catalog_json, 'candidate_collection_name': primary, 'candidate_collection_names': hydrate, 'candidate_collection_names_json': json.dumps(hydrate, ensure_ascii=False), 'requires_clarification': False, 'clarification_question': '', 'warnings_json': json.dumps(warnings, ensure_ascii=False), 'selected_collection_source': selected_collection_source, 'collection_fallback_used': collection_fallback_used, 'full_collection_status_code': int(full_collection_status_code or 0), 'full_collection_error_message': str(full_collection_error_message or ''), 'collection_selector_debug_json': str(full_collection_debug_json or '{}')}
         code_language: python3
         desc: 校验 LLM collection selector 输出，去除非法 collection，按 schema_hydration_collections 生成精确 schema retrieval 输入。
         outputs:
@@ -391,6 +400,21 @@
           warnings_json:
             children:
             type: string
+          selected_collection_source:
+            children:
+            type: string
+          collection_fallback_used:
+            children:
+            type: boolean
+          full_collection_status_code:
+            children:
+            type: number
+          full_collection_error_message:
+            children:
+            type: string
+          collection_selector_debug_json:
+            children:
+            type: string
         selected: false
         title: 代码执行_校验CollectionSelector输出
         type: code
@@ -411,6 +435,46 @@
           value_type: string
           variable: selector_text
         - value_selector:
+          - '1777000000100'
+          - structured_output
+          value_type: object
+          variable: local_selector_structured
+        - value_selector:
+          - '1777200000006'
+          - full_collection_ok
+          value_type: string
+          variable: full_collection_ok
+        - value_selector:
+          - '1777200000006'
+          - full_collection_text
+          value_type: string
+          variable: full_collection_text
+        - value_selector:
+          - '1777200000006'
+          - full_collection_structured_json
+          value_type: string
+          variable: full_collection_structured_json
+        - value_selector:
+          - '1777200000006'
+          - full_collection_status_code
+          value_type: number
+          variable: full_collection_status_code
+        - value_selector:
+          - '1777200000006'
+          - full_collection_error_message
+          value_type: string
+          variable: full_collection_error_message
+        - value_selector:
+          - '1777200000006'
+          - full_collection_debug_json
+          value_type: string
+          variable: full_collection_debug_json
+        - value_selector:
+          - env
+          - ENABLE_FULL_LLM
+          value_type: string
+          variable: enable_full_llm
+        - value_selector:
           - '1777099999998'
           - collection_registry_valid
           value_type: boolean
@@ -423,10 +487,10 @@
       height: 80
       id: '1777000000001'
       position:
-        x: 3710
+        x: 5970
         "y": -820
       positionAbsolute:
-        x: 3710
+        x: 5970
         "y": -820
       selected: false
       sourcePosition: right
