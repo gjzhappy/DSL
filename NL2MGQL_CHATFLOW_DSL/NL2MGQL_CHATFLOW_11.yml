@@ -147,6 +147,12 @@
               obj['query_refinement'] = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
               obj['analysis_focus'] = str(obj.get('analysis_focus') or '')
               obj['reason'] = str(obj.get('reason') or '')
+              obj['refine_route'] = str(obj.get('refine_route') or ('full_replan' if intent == 'refine_query' else 'none'))
+              obj['needed_collections'] = _list(obj.get('needed_collections')) if intent == 'refine_query' else []
+              obj['keep_previous_primary'] = _bool(obj.get('keep_previous_primary'), intent == 'refine_query')
+              obj['collection_switch'] = _bool(obj.get('collection_switch'), False) if intent == 'refine_query' else False
+              obj['collection_reason'] = str(obj.get('collection_reason') or '')
+              obj['unresolved_collection_terms'] = _list(obj.get('unresolved_collection_terms')) if intent == 'refine_query' else []
               obj['source'] = source
 
               q = str(question or '')
@@ -192,6 +198,12 @@
                   'query_refinement_json': json.dumps(obj.get('query_refinement') or {}, ensure_ascii=False),
                   'context_binding_json': json.dumps(cb, ensure_ascii=False),
                   'analysis_focus': str(obj.get('analysis_focus') or ''),
+                  'refine_route': obj.get('refine_route'),
+                  'needed_collections': obj.get('needed_collections') or [],
+                  'keep_previous_primary': bool(obj.get('keep_previous_primary')),
+                  'collection_switch': bool(obj.get('collection_switch')),
+                  'collection_reason': obj.get('collection_reason') or '',
+                  'unresolved_collection_terms': obj.get('unresolved_collection_terms') or [],
                   'selected_intent_source': source,
                   'intent_fallback_used': fallback_used,
                   'intent_fallback_reason': fallback_reason,
@@ -241,6 +253,22 @@
           analysis_focus:
             children:
             type: string
+          refine_route:
+            children:
+            type: string
+          needed_collections:
+            type: array[string]
+          keep_previous_primary:
+            children:
+            type: boolean
+          collection_switch:
+            children:
+            type: boolean
+          collection_reason:
+            children:
+            type: string
+          unresolved_collection_terms:
+            type: array[string]
           missing_info:
             children:
             type: string

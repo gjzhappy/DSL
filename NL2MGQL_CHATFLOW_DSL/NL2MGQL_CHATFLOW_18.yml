@@ -99,6 +99,31 @@
           value_type: string
           variable: schema_context_ref_json
         - value_selector:
+          - env
+          - COLLECTION_REGISTRY_JSON
+          value_type: string
+          variable: collection_registry_json
+        - value_selector:
+          - '1777300000001'
+          - needed_collections
+          value_type: array[string]
+          variable: needed_collections
+        - value_selector:
+          - '1777100000105'
+          - selected_schema_context_refine_json
+          value_type: string
+          variable: selected_schema_context_refine_json
+        - value_selector:
+          - '1776000000004'
+          - keep_previous_primary
+          value_type: boolean
+          variable: keep_previous_primary
+        - value_selector:
+          - '1776000000004'
+          - collection_switch
+          value_type: boolean
+          variable: collection_switch
+        - value_selector:
           - '1777100000105'
           - selected_schema_ready
           value_type: boolean
@@ -710,6 +735,26 @@
           value_type: string
           variable: collection_catalog_json
         - value_selector:
+          - '1777300000001'
+          - needed_collections
+          value_type: array[string]
+          variable: needed_collections
+        - value_selector:
+          - '1777300000001'
+          - schema_recall_summary_json
+          value_type: string
+          variable: schema_recall_summary_json
+        - value_selector:
+          - '1776000000004'
+          - keep_previous_primary
+          value_type: boolean
+          variable: keep_previous_primary
+        - value_selector:
+          - '1776000000004'
+          - collection_switch
+          value_type: boolean
+          variable: collection_switch
+        - value_selector:
           - '1776000000026'
           - schema_metadata_json
           value_type: string
@@ -840,7 +885,7 @@
               return '\n\n'.join(sections)
 
 
-          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}'):
+          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}', needed_collections=None, schema_recall_summary_json: str='{}', keep_previous_primary=True, collection_switch=False):
               warnings = []
               meta = _loads(schema_metadata_json, {}) or {}
               alias = _loads(schema_alias_index_json, {}) or {}
@@ -858,7 +903,8 @@
                   hydration_reason = 'selected_primary_collection_missing_from_candidate_schemas' if hydration_needed else ''
                   return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
               keep = []
-              for name in [primary] + _list(selected_related_collections):
+              requested = _list(needed_collections) or [primary] + _list(selected_related_collections)
+              for name in requested:
                   if name in collections and name not in keep:
                       keep.append(name)
                   elif name and name not in collections:
@@ -868,11 +914,22 @@
               selected['schema_digest'] = _digest(selected, 'schema_digest') if keep else ''
               selected_alias = _filter_alias(alias, set(keep))
               selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
-              return {'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'schema_hydration_needed': False, 'schema_hydration_reason': '', 'schema_hydration_collections': [], 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              missing = [x for x in requested if x not in keep]
+              context_obj = {'needed_collections': requested, 'selected_collections': keep, 'missing_collections': missing, 'primary_collection_hint': primary, 'keep_previous_primary': bool(keep_previous_primary), 'collection_switch': bool(collection_switch), 'schemas': [{'collection': name, 'source': 'candidate_retrieval_or_hydration', 'content': json.dumps(collections[name], ensure_ascii=False)} for name in keep], 'relation_evidence': [], 'warnings': warnings + (['missing schema: '+', '.join(missing)] if missing else [])}
+              return {'selected_schema_context_refine_json': json.dumps(context_obj, ensure_ascii=False), 'needed_collections': requested, 'selected_collections': keep, 'missing_collections': missing, 'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'schema_hydration_needed': False, 'schema_hydration_reason': '', 'schema_hydration_collections': [], 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
         code_language: python3
         desc: 按 refine selector 结果裁剪 CandidateSchemas，只保留 selected primary 与必要 related
           collections。
         outputs:
+          selected_schema_context_refine_json:
+            children:
+            type: string
+          needed_collections:
+            type: array[string]
+          selected_collections:
+            type: array[string]
+          missing_collections:
+            type: array[string]
           schema_context:
             children:
             type: string

@@ -928,12 +928,23 @@
               cb = _context_binding(qref, intent, old_plan)
               registry_names, scores = _registry_match(q, registry)
               old_primary = cb.get('base_primary_collection') or ''
-              explicit_switch = bool(registry_names and old_primary and registry_names[0] != old_primary and qref.get('collection_switch'))
+              requested = _as_list(intent.get('needed_collections'))
+              available = set()
+              for item in registry.get('collections') or []:
+                  if isinstance(item, dict):
+                      name = str(item.get('collection_name') or item.get('name') or '').strip()
+                      if name: available.add(name.lower())
+              requested = [x for x in requested if not available or x.lower() in available]
+              if old_primary and intent.get('keep_previous_primary', True) and old_primary not in requested:
+                  requested.insert(0, old_primary)
+              explicit_switch = bool(intent.get('collection_switch') or qref.get('collection_switch'))
               selected = str(qref.get('selected_primary_collection') or qref.get('target_collection') or qref.get('collection') or '').strip()
-              if explicit_switch:
+              if requested:
+                  names = list(dict.fromkeys(requested)); strategy = 'intent_needed_collections'; collection_switch = explicit_switch
+              elif explicit_switch and registry_names:
                   names = registry_names; strategy = 'explicit_switch_by_registry'; collection_switch = True
               elif old_primary:
-                  names = [old_primary]; strategy = 'inherit_previous'; collection_switch = False
+                  names = [old_primary] + [x for x in _as_list(old_plan.get('related_collections')) if x != old_primary]; strategy = 'inherit_previous'; collection_switch = False
               elif selected:
                   names = [selected]; strategy = 'selected_primary_collection'; collection_switch = False
               elif registry_names:
@@ -941,7 +952,7 @@
               else:
                   names = []; strategy = 'registry_no_match'; collection_switch = False
               ready = bool(names); primary = names[0] if names else ''
-              query = '\n'.join(['当前是 refine/full-replan。','metadata_type: mongo_schema','collection_name: '+primary,'只检索 candidate_collection_names 中 collection 对应的完整 schema metadata。','用户问题：'+q])
+              query = '\n'.join(['当前是 refine/full-replan。','本次 refine full_replan 需要补齐以下 collections 的 schema 和 relation:', *['- '+x for x in names], '请重点召回：每个 needed collection 的核心字段、过滤字段、分组字段、指标字段；needed collections 之间的 relation/join 规则；当前 refine 问题相关的指标和维度口径。','metadata_type: mongo_schema','用户问题：'+q])
               debug = {'candidate_collection_scores': scores, 'strategy': strategy, 'context_binding': cb}
               return {
                   'query_text': query,
@@ -953,6 +964,9 @@
                   'refine_retrieval_error': '' if ready else 'schema_missing',
                   'refine_query_debug_json': json.dumps(debug, ensure_ascii=False),
                   'context_binding_json': json.dumps(cb, ensure_ascii=False),
+                  'candidate_schema_refine_query': query,
+                  'needed_collections': names,
+                  'expected_collections': names,
                   'must_include_collections_json': json.dumps(names, ensure_ascii=False),
                   'preferred_collections_json': json.dumps(names, ensure_ascii=False),
                   'deprecated_fields_json': '[]',
@@ -1001,6 +1015,13 @@
           context_binding_json:
             children:
             type: string
+          candidate_schema_refine_query:
+            children:
+            type: string
+          needed_collections:
+            type: array[string]
+          expected_collections:
+            type: array[string]
           must_include_collections_json:
             children:
             type: string
