@@ -889,34 +889,89 @@
         type: code
         code: |
           import json
-          UNSUPPORTED_JSON_SCHEMA_KEYS={'uniqueItems'}
-          def _loads(v):
-              if isinstance(v,(dict,list)): return v
-              return json.loads(v) if isinstance(v,str) and v.strip() else None
-          def _bool(v):
-              return v if isinstance(v,bool) else str(v or '').strip().lower() in {'1','true','yes','y','on'}
-          def _clean(v):
-              if isinstance(v,dict): return {k:_clean(x) for k,x in v.items() if k not in UNSUPPORTED_JSON_SCHEMA_KEYS}
-              if isinstance(v,list): return [_clean(x) for x in v]
-              return v
+          UNSUPPORTED_JSON_SCHEMA_KEYS = {'uniqueItems'}
+          INTENT_SCHEMA = {"type":"object","additionalProperties":False,"required":["turn_intent","need_previous_context","need_requery","need_rechart","need_analysis","can_answer_directly","reason","missing_info","chart_modification","query_refinement","analysis_focus"],"properties":{"turn_intent":{"type":"string","enum":["new_query","modify_chart","refine_query","explain_result","reanalyze_result","fix_result","continue_previous","clarify"]},"need_previous_context":{"type":"boolean"},"need_requery":{"type":"boolean"},"need_rechart":{"type":"boolean"},"need_analysis":{"type":"boolean"},"can_answer_directly":{"type":"boolean"},"reason":{"type":"string"},"missing_info":{"type":"array","items":{"type":"string"}},"chart_modification":{"type":"object","additionalProperties":True},"query_refinement":{"type":"object","additionalProperties":True},"analysis_focus":{"type":"string"}}}
+
+          def _truncate_text(text, limit=2000):
+              text = '' if text is None else str(text)
+              return text if len(text) <= limit else text[:limit] + '...'
+
+          def _read_json_text(text):
+              if text is None:
+                  return None
+              if isinstance(text, (dict, list)):
+                  return text
+              raw = str(text).strip()
+              if not raw:
+                  return None
+              return json.loads(raw)
+
+          def _first_non_empty_string(*values):
+              for value in values:
+                  if isinstance(value, str) and value.strip():
+                      return value.strip()
+              return ''
+
+          def _sanitize_json_schema(value):
+              if isinstance(value, dict):
+                  return {key: _sanitize_json_schema(item) for key, item in value.items() if key not in UNSUPPORTED_JSON_SCHEMA_KEYS}
+              if isinstance(value, list):
+                  return [_sanitize_json_schema(item) for item in value]
+              return value
+
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              return str(value or '').strip().lower() in {'1','true','yes','y','on'}
+
           def main(status_code=0, body='', intent_prompt='', chat_url='', llm_config_json='{}', request_id='', full_llm_response_format_enabled='false', **kwargs):
               try:
-                  code=int(status_code or 0)
-                  if code < 200 or code >= 300: raise ValueError('token_http_failed')
-                  if not str(chat_url or '').strip(): raise ValueError('missing_chat_url')
-                  cfg=_loads(llm_config_json) or {}
-                  if not isinstance(cfg, dict): raise ValueError('missing_llm_config')
-                  token=(_loads(body) or {}).get('result')
-                  if not isinstance(token,str) or not token.strip(): raise ValueError('TOKEN_RESULT_EMPTY')
-                  model=str(cfg.get('model') or 'DeepSeek-V4-Flash')
-                  schema={"type":"object","additionalProperties":False,"required":["turn_intent","need_previous_context","need_requery","need_rechart","need_analysis","can_answer_directly","reason","missing_info","chart_modification","query_refinement","analysis_focus"],"properties":{"turn_intent":{"type":"string","enum":["new_query","modify_chart","refine_query","explain_result","reanalyze_result","fix_result","continue_previous","clarify"]},"need_previous_context":{"type":"boolean"},"need_requery":{"type":"boolean"},"need_rechart":{"type":"boolean"},"need_analysis":{"type":"boolean"},"can_answer_directly":{"type":"boolean"},"reason":{"type":"string"},"missing_info":{"type":"array","items":{"type":"string"}},"chart_modification":{"type":"object","additionalProperties":True},"query_refinement":{"type":"object","additionalProperties":True},"analysis_focus":{"type":"string"}}}
-                  prompt=(intent_prompt or '')+'\n\n只输出 JSON object，不要 markdown，不要解释文字，不要代码块，不要 schema 外字段，必须满足当前 turn_intent JSON schema。'
-                  req={'model':model,'messages':[{'role':'system','content':'你是多轮数据查询 Chatflow 的意图识别器。'},{'role':'user','content':prompt}],'stream':False,'temperature':0}
-                  if _bool(full_llm_response_format_enabled):
-                      req['response_format']={'type':'json_schema','json_schema':{'name':'turn_intent_schema','strict':True,'schema':_clean(schema)}}
-                  return {'request_enabled':'true','chat_url':str(chat_url or '').strip(),'authorization_value':token.strip(),'llm_request_body_json':json.dumps(req,ensure_ascii=False),'request_id':str(request_id or '').strip(),'intent_json_schema':json.dumps(schema,ensure_ascii=False),'debug_summary':json.dumps({'schema_name':'turn_intent_schema','response_format_enabled':_bool(full_llm_response_format_enabled)},ensure_ascii=False)}
+                  code = int(status_code or 0)
+                  if code < 200 or code >= 300:
+                      raise ValueError(f"动态token获取失败, status={code}, body={_truncate_text(body, 2000)}")
+                  token_body = _read_json_text(body)
+                  if not isinstance(token_body, dict):
+                      raise ValueError(f"动态token响应不是合法JSON: {_truncate_text(body, 1200)}")
+                  token_result = token_body.get('result')
+                  if token_result is None:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not isinstance(token_result, str):
+                      raise ValueError('TOKEN_RESULT_INVALID_TYPE')
+                  authorization_value = token_result.strip()
+                  if not authorization_value:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not authorization_value.startswith('Basic '):
+                      print('WARN:TOKEN_RESULT_UNEXPECTED_PREFIX')
+                  if not str(chat_url or '').strip():
+                      raise ValueError('missing_chat_url')
+                  llm_config = _read_json_text(llm_config_json)
+                  if not isinstance(llm_config, dict):
+                      raise ValueError('llm_config_json 不是合法JSON对象')
+                  schema = _sanitize_json_schema(INTENT_SCHEMA)
+                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
+                  prompt = str(intent_prompt or '') + '\n\n只输出 JSON object，不要 markdown、解释文字、代码块。不要输出 schema 外字段。array 字段必须输出数组，例如 []。object 字段必须输出对象，例如 {}。string 字段必须输出字符串，例如 ""。boolean 字段必须输出 true/false。不要输出 null。不要用空字符串代替 array/object。'
+                  request_body = {'model':model,'messages':[{'role':'system','content':'你是多轮数据查询 Chatflow 的意图识别器。'},{'role':'user','content':prompt}],'stream':False,'temperature':0}
+                  rf_enabled = _to_bool(full_llm_response_format_enabled)
+                  if rf_enabled:
+                      request_body['response_format'] = {'type':'json_schema','json_schema':{'name':'turn_intent_schema','strict':False,'schema':schema}}
+                  debug = {
+                      'request_url': str(chat_url or '').strip(),
+                      'model': model,
+                      'prompt_length': len(prompt),
+                      'auth_present': bool(authorization_value),
+                      'auth_from': 'token_response.result',
+                      'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
+                      'auth_len': len(authorization_value),
+                      'body_keys': list(request_body.keys()),
+                      'response_format_enabled': rf_enabled,
+                      'response_format_type': 'json_schema' if rf_enabled else '',
+                      'schema_name': 'turn_intent_schema' if rf_enabled else '',
+                      'schema_required': schema.get('required') or [],
+                      'prompt_preview': _truncate_text(prompt, 1000),
+                  }
+                  return {'request_enabled':'true','chat_url':str(chat_url or '').strip(),'authorization_value':authorization_value,'llm_request_body_json':json.dumps(request_body,ensure_ascii=False),'request_id':str(request_id or '').strip(),'intent_json_schema':json.dumps(INTENT_SCHEMA,ensure_ascii=False),'debug_summary':json.dumps(debug,ensure_ascii=False)}
               except Exception as e:
-                  return {'request_enabled':'false','chat_url':str(chat_url or '').strip(),'authorization_value':'','llm_request_body_json':'','request_id':str(request_id or '').strip(),'intent_json_schema':'{}','debug_summary':str(e)}
+                  return {'request_enabled':'false','chat_url':str(chat_url or '').strip(),'authorization_value':'','llm_request_body_json':'','request_id':str(request_id or '').strip(),'intent_json_schema':json.dumps(INTENT_SCHEMA,ensure_ascii=False),'debug_summary':_truncate_text(str(e),2000)}
         code_language: python3
         outputs:
           request_enabled:
@@ -1029,10 +1084,22 @@
           MAX_RETRY=2
           RETRYABLE={500,502,503,504}
           def _text(v): return '' if v is None else str(v)
+          def _prompt_length(messages):
+              if not isinstance(messages,list): return 0
+              return sum(len(_text(item.get('content'))) for item in messages if isinstance(item,dict))
           def _loads(v):
               if isinstance(v,dict): return v
               if isinstance(v,str) and v.strip(): return json.loads(v)
               raise ValueError('llm_request_body_json empty')
+          def _tracer_id(text, headers):
+              for key in ['x-trace-id','x-request-id','trace-id','request-id']:
+                  for actual,value in (headers or {}).items():
+                      if str(actual).lower()==key and value: return _text(value)
+              try:
+                  obj=json.loads(text)
+                  if isinstance(obj,dict): return _text(obj.get('tracer_id') or obj.get('trace_id') or obj.get('request_id'))
+              except Exception: pass
+              return ''
           def _post(url,data,auth,timeout=70):
               req=urllib.request.Request(url,data=data,headers={'Content-Type':'application/json','Authorization':auth},method='POST')
               try:
@@ -1047,16 +1114,20 @@
               try:
                   body=_loads(llm_request_body_json)
                   data=json.dumps(body,ensure_ascii=False).encode('utf-8')
-                  out['request_debug']={'url':_text(chat_url),'auth_present':bool(authorization_value),'body_keys':list(body.keys()),'request_id':str(request_id or '')}
+                  messages=body.get('messages') or []
+                  response_format=body.get('response_format') if isinstance(body.get('response_format'),dict) else {}
+                  json_schema=response_format.get('json_schema') if isinstance(response_format.get('json_schema'),dict) else {}
+                  auth=_text(authorization_value)
+                  out['request_debug']={'url':_text(chat_url),'auth_present':bool(auth),'auth_scheme':auth.split(' ',1)[0] if ' ' in auth else ('unknown' if auth else ''),'auth_len':len(auth),'model':body.get('model'),'body_keys':list(body.keys()),'messages_count':len(messages) if isinstance(messages,list) else 0,'prompt_length':_prompt_length(messages),'response_format_enabled':'response_format' in body,'response_format_type':response_format.get('type') if isinstance(response_format,dict) else None,'schema_name':_text(json_schema.get('name')) if isinstance(json_schema,dict) else '','timeout_sec':70,'request_id':str(request_id or '')}
                   last=(0,'',{},'')
                   retry=0
                   for i in range(MAX_RETRY+1):
-                      last=_post(_text(chat_url),data,_text(authorization_value))
+                      last=_post(_text(chat_url),data,auth)
                       code,text,headers,err=last
                       if 200 <= code < 300 or code not in RETRYABLE or i == MAX_RETRY: break
                       retry += 1; time.sleep([1,3][i])
                   code,text,headers,err=last
-                  out.update({'status_code':code,'ok':200<=code<300,'body':text,'body_preview':text[:4000],'headers_json':json.dumps(headers,ensure_ascii=False),'retry_count':retry,'last_status_code':code})
+                  out.update({'status_code':code,'ok':200<=code<300,'body':text,'body_preview':text[:4000],'headers_json':json.dumps(headers,ensure_ascii=False),'retry_count':retry,'tracer_id':_tracer_id(text,headers),'last_status_code':code})
                   if not out['ok']:
                       out['error_message']=err or ('HTTP_ERROR status=%s retry_count=%s'%(code,retry)); out['last_error_message']=out['error_message']
                   return out
@@ -1179,29 +1250,20 @@
 
           def _coerce_missing_info(value, normalized):
               if isinstance(value, list):
+                  if any(not isinstance(item, str) for item in value):
+                      raise ValueError('invalid_missing_info')
                   return value
-              if value == '':
+              if value is None or value == '':
                   normalized.append('missing_info')
                   return []
-              if isinstance(value, str) and value.strip():
-                  normalized.append('missing_info')
-                  return [value.strip()]
               raise ValueError('invalid_missing_info')
 
           def _coerce_object_field(value, field_name, normalized):
               if isinstance(value, dict):
                   return value
-              if value == '':
+              if value is None or value == '':
                   normalized.append(field_name)
                   return {}
-              if isinstance(value, str) and value.strip():
-                  try:
-                      parsed = json.loads(value)
-                  except Exception:
-                      parsed = None
-                  if isinstance(parsed, dict):
-                      normalized.append(field_name)
-                      return parsed
               raise ValueError('invalid_' + field_name)
 
           def _normalize_intent_object(obj):
@@ -1221,6 +1283,9 @@
               out['missing_info'] = _coerce_missing_info(out.get('missing_info'), normalized)
               out['chart_modification'] = _coerce_object_field(out.get('chart_modification'), 'chart_modification', normalized)
               out['query_refinement'] = _coerce_object_field(out.get('query_refinement'), 'query_refinement', normalized)
+              if out.get('analysis_focus') is None:
+                  out['analysis_focus'] = ''
+                  normalized.append('analysis_focus')
               if not isinstance(out.get('analysis_focus'), str):
                   raise ValueError('invalid_analysis_focus')
               return out, normalized
@@ -1337,8 +1402,3 @@
       targetPosition: left
       type: custom
       width: 242
-    viewport:
-      x: -120
-      y: 80
-      zoom: 0.55
-  rag_pipeline_variables: []
