@@ -137,33 +137,99 @@
         title: 代码执行_构造满血LLMCollection选择请求
         type: code
         code: |
-          import base64, json, uuid
+          import json, uuid
           SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['contract_version', 'primary_collection', 'related_collections', 'schema_hydration_collections', 'selection_confidence', 'requires_clarification', 'clarification_question', 'reason', 'warnings'], 'properties': {'contract_version': {'type': 'string', 'const': 'collection_selector_v1'}, 'primary_collection': {'type': 'string'}, 'related_collections': {'type': 'array', 'items': {'type': 'string'}}, 'schema_hydration_collections': {'type': 'array', 'items': {'type': 'string'}}, 'selection_confidence': {'type': 'string', 'enum': ['high', 'medium', 'low']}, 'requires_clarification': {'type': 'boolean'}, 'clarification_question': {'type': 'string'}, 'reason': {'type': 'string'}, 'warnings': {'type': 'array', 'items': {'type': 'string'}}}}
           SYSTEM_PROMPT = '你是 collection selector，不是 query planner。你的任务不是生成查询计划，而是判断需要检索哪些 collection 的完整 schema。\n只能从 collection_catalog_json.collections[].collection_name 中选择，不能编造 collection 或 field。\nprimary_collection 是用户主要查询、过滤、统计、分组、排序、展示的主体集合。\nrelated_collections 是用户要求关联、补充、带出、合并、join、lookup、enrich 的辅助集合。\nschema_hydration_collections 必须包含 primary_collection 和所有 related_collections，用于后续精确检索完整 schema metadata。\n如果不确定但有多个可能集合，宁可多放入 schema_hydration_collections，不要漏掉可能需要的 schema。\n只输出 JSON，不输出 Mongo pipeline、最终 semantic plan 或解释文本。'
-          def _bool(v): return v if isinstance(v,bool) else str(v or '').strip().lower() in {'1','true','yes','y','on'}
-          def _num(v, default):
-              try: return float(v)
-              except Exception: return default
+          UNSUPPORTED_JSON_SCHEMA_KEYS = {'uniqueItems'}
+
+          def _truncate_text(text, limit=2000):
+              text = '' if text is None else str(text)
+              return text if len(text) <= limit else text[:limit] + '...'
+
+          def _read_json_text(text):
+              if text is None:
+                  return None
+              if isinstance(text, (dict, list)):
+                  return text
+              raw = str(text).strip()
+              if not raw:
+                  return None
+              return json.loads(raw)
+
+          def _first_non_empty_string(*values):
+              for value in values:
+                  if isinstance(value, str) and value.strip():
+                      return value.strip()
+              return ''
+
+          def _sanitize_json_schema(value):
+              if isinstance(value, dict):
+                  return {key: _sanitize_json_schema(item) for key, item in value.items() if key not in UNSUPPORTED_JSON_SCHEMA_KEYS}
+              if isinstance(value, list):
+                  return [_sanitize_json_schema(item) for item in value]
+              return value
+
+          def _to_bool(value):
+              if isinstance(value, bool):
+                  return value
+              return str(value or '').strip().lower() in {'1','true','yes','y','on'}
+
+          def _to_number(value, default):
+              try:
+                  return float(value)
+              except Exception:
+                  return default
+
           def main(status_code=0, body='', collection_selector_prompt='', chat_url='', llm_config_json='{}', config_request_id='', full_llm_response_format_enabled='false', **kwargs):
               request_id=str(config_request_id or '') or 'collection_'+uuid.uuid4().hex
-              debug={'request_id':request_id,'response_format_enabled':_bool(full_llm_response_format_enabled)}
               try:
-                  code=int(status_code or 0)
-                  if code < 200 or code >= 300: raise ValueError('token_http_failed')
-                  if not str(chat_url or '').strip(): raise ValueError('missing_chat_url')
-                  token_body=json.loads(body) if isinstance(body,str) and body.strip() else (body or {})
-                  token=token_body.get('result') if isinstance(token_body,dict) else ''
-                  if not isinstance(token,str) or not token.strip(): raise ValueError('TOKEN_RESULT_EMPTY')
-                  cfg=json.loads(llm_config_json) if isinstance(llm_config_json,str) and llm_config_json.strip() else {}
-                  model=str(cfg.get('model') or '').strip()
-                  if not model: raise ValueError('missing_llm_config_json:model')
-                  user_prompt=str(collection_selector_prompt or '').strip()+'\n\n输出 JSON contract:\n'+json.dumps({"contract_version":"collection_selector_v1","primary_collection":"","related_collections":[],"schema_hydration_collections":[],"selection_confidence":"high","requires_clarification":False,"clarification_question":"","reason":"","warnings":[]},ensure_ascii=False)+'\n只输出 JSON object，不要 markdown、解释文字、代码块或 schema 外字段。'
-                  req={'model':model,'messages':[{'role':'system','content':SYSTEM_PROMPT},{'role':'user','content':user_prompt}],'stream':False,'temperature':_num(cfg.get('temperature'),0)}
-                  if _bool(full_llm_response_format_enabled): req['response_format']={'type':'json_schema','json_schema':{'name':'collection_selector_schema','strict':True,'schema':SCHEMA}}
-                  debug.update({'schema_name':'collection_selector_schema','model':model,'chat_url_present':True})
-                  return {'chat_url':str(chat_url).strip(),'authorization_value':token.strip(),'llm_request_body_json':json.dumps(req,ensure_ascii=False),'request_enabled':'true','request_id':request_id,'full_collection_request_debug_json':json.dumps(debug,ensure_ascii=False),'full_collection_error_message':''}
+                  code = int(status_code or 0)
+                  if code < 200 or code >= 300:
+                      raise ValueError(f"动态token获取失败, status={code}, body={_truncate_text(body, 2000)}")
+                  token_body = _read_json_text(body)
+                  if not isinstance(token_body, dict):
+                      raise ValueError(f"动态token响应不是合法JSON: {_truncate_text(body, 1200)}")
+                  token_result = token_body.get('result')
+                  if token_result is None:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not isinstance(token_result, str):
+                      raise ValueError('TOKEN_RESULT_INVALID_TYPE')
+                  authorization_value = token_result.strip()
+                  if not authorization_value:
+                      raise ValueError('TOKEN_RESULT_EMPTY')
+                  if not authorization_value.startswith('Basic '):
+                      print('WARN:TOKEN_RESULT_UNEXPECTED_PREFIX')
+                  if not str(chat_url or '').strip():
+                      raise ValueError('missing_chat_url')
+                  llm_config = _read_json_text(llm_config_json)
+                  if not isinstance(llm_config, dict):
+                      raise ValueError('llm_config_json 不是合法JSON对象')
+                  schema = _sanitize_json_schema(SCHEMA)
+                  model = _first_non_empty_string(str(llm_config.get('model') or '').strip(), 'DeepSeek-V4-Flash')
+                  user_prompt = str(collection_selector_prompt or '').strip() + '\n\n输出 JSON contract:\n' + json.dumps({"contract_version":"collection_selector_v1","primary_collection":"","related_collections":[],"schema_hydration_collections":[],"selection_confidence":"high","requires_clarification":False,"clarification_question":"","reason":"","warnings":[]},ensure_ascii=False) + '\n只输出 JSON object，不要 markdown、解释文字、代码块。不要输出 schema 外字段。array 字段必须输出数组，例如 []。object 字段必须输出对象，例如 {}。string 字段必须输出字符串，例如 ""。boolean 字段必须输出 true/false。不要输出 null。不要用空字符串代替 array/object。'
+                  request_body = {'model':model,'messages':[{'role':'system','content':SYSTEM_PROMPT},{'role':'user','content':user_prompt}],'stream':False,'temperature':_to_number(llm_config.get('temperature'),0)}
+                  rf_enabled = _to_bool(full_llm_response_format_enabled)
+                  if rf_enabled:
+                      request_body['response_format'] = {'type':'json_schema','json_schema':{'name':'collection_selector_schema','strict':False,'schema':schema}}
+                  debug = {
+                      'request_url': str(chat_url or '').strip(),
+                      'model': model,
+                      'prompt_length': len(user_prompt),
+                      'auth_present': bool(authorization_value),
+                      'auth_from': 'token_response.result',
+                      'auth_scheme': 'Basic' if authorization_value.startswith('Basic ') else '',
+                      'auth_len': len(authorization_value),
+                      'body_keys': list(request_body.keys()),
+                      'response_format_enabled': rf_enabled,
+                      'response_format_type': 'json_schema' if rf_enabled else '',
+                      'schema_name': 'collection_selector_schema' if rf_enabled else '',
+                      'schema_required': schema.get('required') or [],
+                      'prompt_preview': _truncate_text(user_prompt, 1000),
+                      'request_id': request_id,
+                  }
+                  return {'chat_url':str(chat_url).strip(),'authorization_value':authorization_value,'llm_request_body_json':json.dumps(request_body,ensure_ascii=False),'request_enabled':'true','request_id':request_id,'full_collection_request_debug_json':json.dumps(debug,ensure_ascii=False),'full_collection_error_message':''}
               except Exception as e:
-                  debug['error']=str(e)
+                  debug={'request_id':request_id,'error':_truncate_text(str(e),2000),'request_url':str(chat_url or '').strip()}
                   return {'chat_url':str(chat_url or '').strip(),'authorization_value':'','llm_request_body_json':'','request_enabled':'false','request_id':request_id,'full_collection_request_debug_json':json.dumps(debug,ensure_ascii=False),'full_collection_error_message':str(e)}
         code_language: python3
         desc: 复用本地 Collection Selector prompt/contract 构造满血请求。
@@ -275,28 +341,48 @@
           import json, time, traceback, urllib.error, urllib.request
           MAX_RETRY=2
           RETRYABLE={500,502,503,504}
+          def _text(value): return '' if value is None else str(value)
+          def _prompt_length(messages):
+              if not isinstance(messages,list): return 0
+              return sum(len(_text(item.get('content'))) for item in messages if isinstance(item,dict))
+          def _tracer_id(text,headers):
+              for key in ['x-trace-id','x-request-id','trace-id','request-id']:
+                  for actual,value in (headers or {}).items():
+                      if str(actual).lower()==key and value: return _text(value)
+              try:
+                  obj=json.loads(text)
+                  if isinstance(obj,dict): return _text(obj.get('tracer_id') or obj.get('trace_id') or obj.get('request_id'))
+              except Exception: pass
+              return ''
           def _post(url,data,auth,timeout=70):
               req=urllib.request.Request(str(url),data=data,headers={'Content-Type':'application/json','Authorization':str(auth)},method='POST')
               try:
                   with urllib.request.urlopen(req,timeout=timeout) as r: return int(getattr(r,'status',0) or 0),r.read().decode('utf-8','replace'),dict(r.headers.items()),''
-              except urllib.error.HTTPError as e: return int(getattr(e,'code',0) or 0),e.read().decode('utf-8','replace'),dict(e.headers.items()) if getattr(e,'headers',None) else {{}},''
+              except urllib.error.HTTPError as e: return int(getattr(e,'code',0) or 0),e.read().decode('utf-8','replace'),dict(e.headers.items()) if getattr(e,'headers',None) else {},''
               except Exception as e: return 0,'',{},str(e)
           def main(chat_url='', authorization_value='', llm_request_body_json='', request_id='', **kwargs):
-              out={'status_code':0,'ok':False,'body':'','body_preview':'','headers_json':'{}','error_message':'','request_debug':{},'retry_count':0,'request_id':str(request_id or '')}
+              timeout_sec=70
+              out={'status_code':0,'ok':False,'body':'','body_preview':'','headers_json':'{}','error_message':'','request_debug':{},'retry_count':0,'tracer_id':'','last_status_code':0,'last_error_message':'','request_id':str(request_id or '')}
               try:
                   body=json.loads(llm_request_body_json)
                   data=json.dumps(body,ensure_ascii=False).encode('utf-8')
-                  out['request_debug']={'url':str(chat_url or ''),'auth_present':bool(authorization_value),'body_keys':list(body.keys()),'request_id':out['request_id']}
+                  messages=body.get('messages') or []
+                  response_format=body.get('response_format') if isinstance(body.get('response_format'),dict) else {}
+                  json_schema=response_format.get('json_schema') if isinstance(response_format.get('json_schema'),dict) else {}
+                  auth=_text(authorization_value)
+                  out['request_debug']={'url':_text(chat_url),'auth_present':bool(auth),'auth_scheme':auth.split(' ',1)[0] if ' ' in auth else ('unknown' if auth else ''),'auth_len':len(auth),'model':body.get('model'),'body_keys':list(body.keys()),'messages_count':len(messages) if isinstance(messages,list) else 0,'prompt_length':_prompt_length(messages),'response_format_enabled':'response_format' in body,'response_format_type':response_format.get('type') if isinstance(response_format,dict) else None,'schema_name':_text(json_schema.get('name')) if isinstance(json_schema,dict) else '','timeout_sec':timeout_sec,'request_id':out['request_id']}
                   last=(0,'',{},''); retry=0
                   for i in range(MAX_RETRY+1):
-                      last=_post(chat_url,data,authorization_value); code,text,headers,err=last
+                      last=_post(chat_url,data,auth,timeout_sec); code,text,headers,err=last
                       if 200 <= code < 300 or code not in RETRYABLE or i == MAX_RETRY: break
                       retry += 1; time.sleep([1,3][i])
                   code,text,headers,err=last
-                  out.update({'status_code':code,'ok':200<=code<300,'body':text,'body_preview':text[:4000],'headers_json':json.dumps(headers,ensure_ascii=False),'retry_count':retry})
-                  if not out['ok']: out['error_message']=err or 'HTTP_ERROR status=%s retry_count=%s'%(code,retry)
+                  out.update({'status_code':code,'ok':200<=code<300,'body':text,'body_preview':text[:4000],'headers_json':json.dumps(headers,ensure_ascii=False),'retry_count':retry,'tracer_id':_tracer_id(text,headers),'last_status_code':code})
+                  if not out['ok']:
+                      out['error_message']=err or 'HTTP_ERROR status=%s retry_count=%s'%(code,retry)
+                      out['last_error_message']=out['error_message']
               except Exception as e:
-                  out['error_message']='REQUEST_FAILED: '+str(e); out['body_preview']=traceback.format_exc()[:4000]
+                  out['error_message']='REQUEST_FAILED: '+str(e); out['last_error_message']=out['error_message']; out['body_preview']=traceback.format_exc()[:4000]
               return out
         code_language: python3
         desc: 真实 HTTP POST 调用满血 Collection Selector，并保留非 2xx 响应。
@@ -324,6 +410,15 @@
           retry_count:
             children:
             type: number
+          tracer_id:
+            children:
+            type: string
+          last_status_code:
+            children:
+            type: number
+          last_error_message:
+            children:
+            type: string
           request_id:
             children:
             type: string
@@ -377,30 +472,37 @@
           def _object(text):
               raw=re.sub(r'<think>.*?</think>',' ',str(text or ''),flags=re.I|re.S).strip()
               raw=re.sub(r'^```(?:json)?\s*|\s*```$','',raw,flags=re.I|re.S).strip()
+              if not raw: raise ValueError('empty_content')
               obj,end=json.JSONDecoder().raw_decode(raw)
               if not isinstance(obj,dict): raise ValueError('content is not JSON object')
               return obj
           def _string_list(v,name):
-              if v == '': return []
+              if v is None or v == '': return []
               if not isinstance(v,list) or any(not isinstance(x,str) for x in v): raise ValueError('invalid_'+name)
               return v
           def main(status_code=0, body='', error_message='', request_debug=None, **kwargs):
-              code=int(status_code or 0); debug={'status_code':code,'error_message':str(error_message or ''),'request_debug':request_debug or {},'body_preview':str(body or '')[:1200],'checker_error':''}
+              code=int(status_code or 0); debug={'status_code':code,'error_message':str(error_message or ''),'request_debug':request_debug or {},'body_preview':str(body or '')[:1200],'content_preview':'','normalized_fields':[],'checker_error':''}
               try:
                   if code < 200 or code >= 300: raise ValueError('http_status_not_2xx')
+                  if not str(body or '').strip(): raise ValueError('empty_body')
                   resp=json.loads(body) if isinstance(body,str) else body
                   content=_chat_text(resp) or str(body or '')
+                  debug['content_preview']=str(content or '')[:1200]
                   obj=_object(content)
                   missing=[k for k in REQ if k not in obj]
                   if missing: raise ValueError('missing_required:'+','.join(missing))
                   if obj.get('contract_version')!='collection_selector_v1': raise ValueError('invalid_contract_version')
                   if not isinstance(obj.get('primary_collection'),str): raise ValueError('invalid_primary_collection')
+                  for key in ['related_collections','schema_hydration_collections','warnings']:
+                      if obj.get(key) is None or obj.get(key) == '': debug['normalized_fields'].append(key)
                   obj['related_collections']=_string_list(obj.get('related_collections'),'related_collections')
                   obj['schema_hydration_collections']=_string_list(obj.get('schema_hydration_collections'),'schema_hydration_collections')
                   obj['warnings']=_string_list(obj.get('warnings'),'warnings')
                   if obj.get('selection_confidence') not in {'high','medium','low'}: raise ValueError('invalid_selection_confidence')
                   if not isinstance(obj.get('requires_clarification'),bool): raise ValueError('invalid_requires_clarification')
                   for k in ['clarification_question','reason']:
+                      if obj.get(k) is None:
+                          obj[k]=''; debug['normalized_fields'].append(k)
                       if not isinstance(obj.get(k),str): raise ValueError('invalid_'+k)
                   text=json.dumps(obj,ensure_ascii=False)
                   return {'full_collection_ok':'true','full_collection_status_code':code,'full_collection_text':text,'full_collection_structured_json':text,'full_collection_error_message':'','full_collection_debug_json':json.dumps(debug,ensure_ascii=False)}
