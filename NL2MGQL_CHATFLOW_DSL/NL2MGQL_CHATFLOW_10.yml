@@ -661,10 +661,12 @@
               question: str = '',
               last_context_json: str = '',
               old_normalized_semantic_plan_json: str = '',
+              collection_registry_json: str = '',
               **kwargs
           ):
               ctx = _loads(last_context_json)
               old_plan = _loads(old_normalized_semantic_plan_json)
+              registry = _loads(collection_registry_json)
               slim = {
                   'has_last_context': bool(ctx.get('has_last_context')),
                   'last_question': str(ctx.get('last_question') or ''),
@@ -675,13 +677,15 @@
                   'result_fields': ctx.get('result_fields') if isinstance(ctx.get('result_fields'), list) else [],
                   'result_preview': (ctx.get('result_preview') if isinstance(ctx.get('result_preview'), list) else [])[:5],
                   'old_primary_collection': str(old_plan.get('primary_collection') or ''),
+                  'collection_registry_json': json.dumps(registry, ensure_ascii=False)[:6000],
                   'old_stage_collection': str((((old_plan.get('execution_plan') or {}).get('stages') or old_plan.get('stages') or [{}])[0] or {}).get('collection') or '') if isinstance(((old_plan.get('execution_plan') or {}).get('stages') or old_plan.get('stages') or [{}]), list) else '',
               }
               prompt = (
                   '你是多轮数据查询 Chatflow 的意图识别器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n'
                   '允许的 turn_intent：new_query, modify_chart, refine_query, explain_result, reanalyze_result, fix_result, continue_previous, clarify。\n'
-                  '输出字段必须完整：turn_intent, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, reason, missing_info, chart_modification, query_refinement, analysis_focus。\n'
+                  '输出字段必须完整：turn_intent, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, reason, missing_info, chart_modification, query_refinement, analysis_focus, refine_route, needed_collections, keep_previous_primary, collection_switch, collection_reason, unresolved_collection_terms。\n'
                   '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；纠错 fix_result 必须根据用户修改内容设置 need_requery/need_rechart/need_analysis；continue_previous 也必须根据 flags 动态判断；没有上下文却要求改图/继续/解释 => clarify。\n'
+                  f'refine collection 规则：仅 refine_query 重点生成 needed_collections；名称只能来自 COLLECTION_REGISTRY_JSON。默认包含上一轮 primary_collection，提到厂商/客户/产品/区域/组织/人员等实体时按 registry 追加对应 collection。提到新实体不等于切换 primary；除非用户明确说不看旧根对象、改查其他对象，否则 keep_previous_primary=true、collection_switch=false。无法映射的词放 unresolved_collection_terms。排序/topN/图表小改不得无故扩 collection。new_query 仍按原意图逻辑，且不依赖 needed_collections。\nCOLLECTION_REGISTRY_JSON：{json.dumps(registry, ensure_ascii=False)}\n\n'
                   '重要规则：如果上一轮上下文 has_last_context=true，且当前用户只表达图表展示偏好，例如“饼图/柱状图/折线图/换成/改成/标题/标签/TopN/排序”，必须判定为 modify_chart，need_previous_context=true，need_requery=false，need_rechart=true。不得因为用户本轮未重复查询主题、指标、维度而进入 clarify。\n\n'
                   f'当前用户问题：{question}\n\n上一轮上下文（已裁剪，不含原始大文档）：\n{json.dumps(slim, ensure_ascii=False)}\n\n上一轮归一化语义计划摘要（可选，可能为空或无效；仅用于多轮继承参考）：\n{json.dumps({"primary_collection": slim.get("old_primary_collection"), "stage_collection": slim.get("old_stage_collection")}, ensure_ascii=False)}'
               )
@@ -714,6 +718,11 @@
           - last_context_json
           value_type: string
           variable: last_context_json
+        - value_selector:
+          - env
+          - COLLECTION_REGISTRY_JSON
+          value_type: string
+          variable: collection_registry_json
       height: 80
       id: '1776000000002'
       position:
@@ -765,6 +774,12 @@
             - chart_modification
             - query_refinement
             - analysis_focus
+            - refine_route
+            - needed_collections
+            - keep_previous_primary
+            - collection_switch
+            - collection_reason
+            - unresolved_collection_terms
             properties:
               turn_intent:
                 type: string
@@ -801,6 +816,23 @@
                 additionalProperties: true
               analysis_focus:
                 type: string
+              refine_route:
+                type: string
+                enum: [patch, full_replan, none]
+              needed_collections:
+                type: array
+                items:
+                  type: string
+              keep_previous_primary:
+                type: boolean
+              collection_switch:
+                type: boolean
+              collection_reason:
+                type: string
+              unresolved_collection_terms:
+                type: array
+                items:
+                  type: string
         structured_output_enabled: true
         title: LLM_多轮意图识别
         type: llm

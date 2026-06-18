@@ -369,15 +369,73 @@
       data:
         sourceType: code
         targetType: knowledge-retrieval
-    - id: 1776000000032-source-1776000000026-target
+    - id: 1776000000032-source-1777300000001-target
       source: '1776000000032'
       sourceHandle: source
-      target: '1776000000026'
+      target: '1777300000001'
       targetHandle: target
       type: custom
       data:
         sourceType: knowledge-retrieval
         targetType: code
+    - id: 1777300000001-source-1777300000002-target
+      source: '1777300000001'
+      sourceHandle: source
+      target: '1777300000002'
+      targetHandle: target
+      type: custom
+      data: {sourceType: code, targetType: if-else}
+    - id: 1777300000002-complete-1776000000026-target
+      source: '1777300000002'
+      sourceHandle: complete
+      target: '1777300000008'
+      targetHandle: target
+      type: custom
+      data: {sourceType: if-else, targetType: code}
+    - id: 1777300000002-missing-1777300000003-target
+      source: '1777300000002'
+      sourceHandle: missing
+      target: '1777300000003'
+      targetHandle: target
+      type: custom
+      data: {sourceType: if-else, targetType: code}
+    - id: 1777300000003-source-1777300000004-target
+      source: '1777300000003'
+      sourceHandle: source
+      target: '1777300000004'
+      targetHandle: target
+      type: custom
+      data: {sourceType: code, targetType: iteration}
+    - id: 1777300000004-source-1777300000008-target
+      source: '1777300000004'
+      sourceHandle: source
+      target: '1777300000008'
+      targetHandle: target
+      type: custom
+      data: {sourceType: iteration, targetType: code}
+    - id: 1777300000008-source-1776000000026-target
+      source: '1777300000008'
+      sourceHandle: source
+      target: '1776000000026'
+      targetHandle: target
+      type: custom
+      data: {sourceType: code, targetType: code}
+    - id: 1777300000004start-source-1777300000005-target
+      source: 1777300000004start
+      sourceHandle: source
+      target: '1777300000005'
+      targetHandle: target
+      type: custom
+      data: {isInIteration: true, iteration_id: '1777300000004', sourceType: iteration-start, targetType: code}
+      zIndex: 1002
+    - id: 1777300000005-source-1777300000006-target
+      source: '1777300000005'
+      sourceHandle: source
+      target: '1777300000006'
+      targetHandle: target
+      type: custom
+      data: {isInIteration: true, iteration_id: '1777300000004', sourceType: code, targetType: knowledge-retrieval}
+      zIndex: 1002
     - id: 1776000000026-source-1777000000002-target
       source: '1776000000026'
       sourceHandle: source
