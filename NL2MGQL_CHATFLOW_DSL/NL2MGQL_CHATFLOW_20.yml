@@ -890,7 +890,7 @@
         code: |
           import json
           UNSUPPORTED_JSON_SCHEMA_KEYS = {'uniqueItems'}
-          INTENT_SCHEMA = {"type":"object","additionalProperties":False,"required":["turn_intent","need_previous_context","need_requery","need_rechart","need_analysis","can_answer_directly","reason","missing_info","chart_modification","query_refinement","analysis_focus"],"properties":{"turn_intent":{"type":"string","enum":["new_query","modify_chart","refine_query","explain_result","reanalyze_result","fix_result","continue_previous","clarify"]},"need_previous_context":{"type":"boolean"},"need_requery":{"type":"boolean"},"need_rechart":{"type":"boolean"},"need_analysis":{"type":"boolean"},"can_answer_directly":{"type":"boolean"},"reason":{"type":"string"},"missing_info":{"type":"array","items":{"type":"string"}},"chart_modification":{"type":"object","additionalProperties":True},"query_refinement":{"type":"object","additionalProperties":True},"analysis_focus":{"type":"string"}}}
+          INTENT_SCHEMA = {"type":"object","additionalProperties":False,"required":["turn_intent","need_previous_context","need_requery","need_rechart","need_analysis","can_answer_directly","reason","missing_info","chart_modification","query_refinement","analysis_focus"],"properties":{"turn_intent":{"type":"string","enum":["new_query","modify_chart","refine_query","explain_result","reanalyze_result","fix_result","continue_previous","clarify"]},"need_previous_context":{"type":"boolean"},"need_requery":{"type":"boolean"},"need_rechart":{"type":"boolean"},"need_analysis":{"type":"boolean"},"can_answer_directly":{"type":"boolean"},"reason":{"type":"string"},"missing_info":{"type":"array","items":{"type":"string"}},"chart_modification":{"type":"object","additionalProperties":True},"query_refinement":{"type":"object","additionalProperties":True},"analysis_focus":{"type":"string"},"refine_route":{"type":"string","enum":["patch","full_replan","none"]},"needed_collections":{"type":"array","items":{"type":"string"}},"keep_previous_primary":{"type":"boolean"},"collection_switch":{"type":"boolean"},"collection_reason":{"type":"string"},"unresolved_collection_terms":{"type":"array","items":{"type":"string"}}}}
 
           def _truncate_text(text, limit=2000):
               text = '' if text is None else str(text)
@@ -1266,6 +1266,33 @@
                   return {}
               raise ValueError('invalid_' + field_name)
 
+          def _coerce_chart_modification(value, normalized):
+              if isinstance(value, dict):
+                  return value
+              if value is None or value == '':
+                  normalized.append('chart_modification')
+                  return {}
+              if isinstance(value, str):
+                  chart_type = {
+                      '柱状图': 'bar', '条形图': 'bar', 'bar': 'bar', 'bar chart': 'bar', 'bar_chart': 'bar',
+                      '折线图': 'line', 'line': 'line', 'line chart': 'line', 'line_chart': 'line',
+                      '饼图': 'pie', 'pie': 'pie', 'pie chart': 'pie', 'pie_chart': 'pie',
+                      '散点图': 'scatter', 'scatter': 'scatter', 'scatter chart': 'scatter',
+                      'scatter plot': 'scatter', 'scatter_plot': 'scatter'
+                  }.get(value.strip().lower())
+                  if chart_type:
+                      normalized.append('chart_modification')
+                      return {'chart_type': chart_type}
+              raise ValueError('invalid_chart_modification')
+
+          def _normalize_refine_route(value, turn_intent, normalized):
+              route = str(value or '').strip()
+              allowed = {'patch','full_replan','none'}
+              if route in allowed and (turn_intent == 'refine_query' or route == 'none'):
+                  return route
+              normalized.append('refine_route')
+              return 'full_replan' if turn_intent == 'refine_query' else 'none'
+
           def _normalize_intent_object(obj):
               if not isinstance(obj, dict):
                   raise ValueError('content is not JSON object')
@@ -1281,7 +1308,8 @@
               if not isinstance(out.get('reason'), str):
                   raise ValueError('invalid_reason')
               out['missing_info'] = _coerce_missing_info(out.get('missing_info'), normalized)
-              out['chart_modification'] = _coerce_object_field(out.get('chart_modification'), 'chart_modification', normalized)
+              out['chart_modification'] = _coerce_chart_modification(out.get('chart_modification'), normalized)
+              out['refine_route'] = _normalize_refine_route(out.get('refine_route'), out.get('turn_intent'), normalized)
               out['query_refinement'] = _coerce_object_field(out.get('query_refinement'), 'query_refinement', normalized)
               if out.get('analysis_focus') is None:
                   out['analysis_focus'] = ''

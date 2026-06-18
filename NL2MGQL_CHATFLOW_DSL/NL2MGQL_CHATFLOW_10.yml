@@ -684,6 +684,8 @@
                   '你是多轮数据查询 Chatflow 的意图识别器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n'
                   '允许的 turn_intent：new_query, modify_chart, refine_query, explain_result, reanalyze_result, fix_result, continue_previous, clarify。\n'
                   '输出字段必须完整：turn_intent, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, reason, missing_info, chart_modification, query_refinement, analysis_focus, refine_route, needed_collections, keep_previous_primary, collection_switch, collection_reason, unresolved_collection_terms。\n'
+                  'chart_modification 必须是 JSON object；没有图表修改时输出 {}。柱状图或条形图输出 {"chart_type":"bar"}，折线图输出 {"chart_type":"line"}，饼图输出 {"chart_type":"pie"}，散点图输出 {"chart_type":"scatter"}；禁止输出 "柱状图"、"bar"、"line" 等字符串。refine_query 且 need_rechart=true 时也可以填写 chart_modification object，这不等于 modify_chart。\n'
+                  'refine_route 只能是 patch、full_replan、none：refine_query 根据是否可安全 patch 选择 patch 或 full_replan；非 refine_query 输出 none。不得输出 refine_query 等其他值。\n'
                   '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；纠错 fix_result 必须根据用户修改内容设置 need_requery/need_rechart/need_analysis；continue_previous 也必须根据 flags 动态判断；没有上下文却要求改图/继续/解释 => clarify。\n'
                   f'refine collection 规则：仅 refine_query 重点生成 needed_collections；名称只能来自 COLLECTION_REGISTRY_JSON。默认包含上一轮 primary_collection，提到厂商/客户/产品/区域/组织/人员等实体时按 registry 追加对应 collection。提到新实体不等于切换 primary；除非用户明确说不看旧根对象、改查其他对象，否则 keep_previous_primary=true、collection_switch=false。无法映射的词放 unresolved_collection_terms。排序/topN/图表小改不得无故扩 collection。new_query 仍按原意图逻辑，且不依赖 needed_collections。\nCOLLECTION_REGISTRY_JSON：{json.dumps(registry, ensure_ascii=False)}\n\n'
                   '重要规则：如果上一轮上下文 has_last_context=true，且当前用户只表达图表展示偏好，例如“饼图/柱状图/折线图/换成/改成/标题/标签/TopN/排序”，必须判定为 modify_chart，need_previous_context=true，need_requery=false，need_rechart=true。不得因为用户本轮未重复查询主题、指标、维度而进入 clarify。\n\n'
@@ -857,7 +859,7 @@
           import re
 
           ALLOWED = {'new_query','modify_chart','refine_query','explain_result','reanalyze_result','fix_result','continue_previous','clarify'}
-          SCHEMA_KEYS = {'turn_intent','need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly','reason','missing_info','chart_modification','query_refinement','analysis_focus'}
+          SCHEMA_KEYS = {'turn_intent','need_previous_context','need_requery','need_rechart','need_analysis','can_answer_directly','reason','missing_info','chart_modification','query_refinement','analysis_focus','refine_route','needed_collections','keep_previous_primary','collection_switch','collection_reason','unresolved_collection_terms'}
 
 
           def _strip_code_block(text):

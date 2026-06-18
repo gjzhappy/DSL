@@ -344,7 +344,7 @@
           100,\n        'allowed_operations': ['find', 'aggregate'],\n        'aggregate_required_when':
           [],\n        'find_allowed_when': [],\n        'sensitive_field_policy': 'deny_return_group_sort',\n
           \       'default_limit': 100,\n        'max_time_range_days': 366,\n    }\n\n\ndef
-          _strip_quotes(v):\n    v = str(v or '').strip()\n    if len(v) >= 2 and v[0]
+          _list(value):\n    if value is None:\n        return []\n    if isinstance(value, list):\n        return value\n    if isinstance(value, (tuple, set)):\n        return list(value)\n    if isinstance(value, dict):\n        return [value]\n    if isinstance(value, str):\n        raw = value.strip()\n        if not raw:\n            return []\n        try:\n            parsed = json.loads(raw)\n            if isinstance(parsed, list):\n                return parsed\n            if isinstance(parsed, dict):\n                return [parsed]\n        except Exception:\n            pass\n        return [value]\n    return [value]\n\n\ndef _strip_quotes(v):\n    v = str(v or '').strip()\n    if len(v) >= 2 and v[0]
           == v[-1] and v[0] in {'\"', \"'\"}:\n        return v[1:-1]\n    return v\n\n\ndef
           _split_inline_list(body):\n    # Simple comma split that keeps quoted Chinese/ASCII
           aliases intact for the schema docs used here.\n    return [_strip_quotes(x.strip())
