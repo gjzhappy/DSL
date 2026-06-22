@@ -203,16 +203,32 @@
     - data:
         code: |
           import base64, json, uuid
-          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
-          def _int(v,d):
+          def _to_int(v, default):
               try: return int(v)
-              except Exception: return d
+              except Exception: return default
+          def _to_float(v, default):
+              try: return float(v)
+              except Exception: return default
+          def _to_bool(v):
+              return str(v or '').strip().lower() in {'1','true','yes','y','on'}
           def main(enable_full_llm: str='', token_url: str='', chat_url: str='', app_id: str='', static_token: str='', model: str='', timeout_ms: str='', temperature: str='', response_format_enabled: str='false', **kwargs):
-              enabled=_truthy(enable_full_llm) and bool(str(token_url or '').strip()) and bool(str(chat_url or '').strip()) and bool(str(app_id or '').strip()) and bool(str(static_token or ''))
-              rf_enabled=_truthy(response_format_enabled)
-              token_request_body={'appId':str(app_id or '').strip(),'credential':base64.b64encode(str(static_token or '').encode('utf-8')).decode('utf-8')}
-              debug={'enable_full_llm':_truthy(enable_full_llm),'token_url_present':bool(str(token_url or '').strip()),'chat_url_present':bool(str(chat_url or '').strip()),'app_id_present':bool(str(app_id or '').strip()),'static_token_present':bool(str(static_token or '')),'model':model or '','timeout_ms':timeout_ms or '','temperature':temperature or '','response_format_enabled':rf_enabled,'response_format_type':'json_schema' if rf_enabled else None,'schema_name':'semantic_plan_contract' if rf_enabled else ''}
-              return {'full_refine_plan_request_enabled':'true' if enabled else 'false','full_refine_plan_token_url':str(token_url or '').strip(),'full_refine_plan_token_request_body_json':json.dumps(token_request_body,ensure_ascii=False),'full_refine_plan_chat_url':str(chat_url or ''),'full_refine_plan_model':str(model or ''),'full_refine_plan_timeout_sec':str(max(1, int(_int(timeout_ms,600000)/1000))),'full_refine_plan_temperature':str(temperature or '0'),'full_refine_plan_response_format_enabled':'true' if rf_enabled else 'false','full_refine_plan_schema_name':'semantic_plan_contract' if rf_enabled else '','full_refine_plan_request_id':'refine_plan_'+uuid.uuid4().hex,'full_refine_plan_debug_summary':json.dumps(debug,ensure_ascii=False)}
+              llm_config = {
+                  'tokenUrl': str(token_url or '').strip(),
+                  'chatUrl': str(chat_url or '').strip(),
+                  'appId': str(app_id or '').strip(),
+                  'staticToken': str(static_token or ''),
+                  'model': str(model or '').strip(),
+                  'timeout-millis': _to_int(timeout_ms, 600000),
+                  'temperature': _to_float(temperature, 0),
+              }
+              enabled = _to_bool(enable_full_llm) and bool(llm_config['tokenUrl']) and bool(llm_config['chatUrl']) and bool(llm_config['appId']) and bool(llm_config['staticToken'])
+              rf_enabled = _to_bool(response_format_enabled)
+              token_request_body = {
+                  'appId': llm_config['appId'],
+                  'credential': base64.b64encode(str(llm_config.get('staticToken') or '').encode('utf-8')).decode('utf-8'),
+              }
+              debug = {'enable_full_llm':_to_bool(enable_full_llm),'token_url_present':bool(llm_config['tokenUrl']),'chat_url_present':bool(llm_config['chatUrl']),'app_id_present':bool(llm_config['appId']),'static_token_present':bool(llm_config['staticToken']),'model':llm_config['model'],'timeout_ms':llm_config['timeout-millis'],'temperature':llm_config['temperature'],'response_format_enabled':rf_enabled,'response_format_type':'json_schema' if rf_enabled else None,'schema_name':'semantic_plan_contract' if rf_enabled else ''}
+              return {'full_refine_plan_request_enabled':'true' if enabled else 'false','full_refine_plan_token_url':llm_config['tokenUrl'],'full_refine_plan_token_request_body_json':json.dumps(token_request_body,ensure_ascii=False),'full_refine_plan_chat_url':llm_config['chatUrl'],'full_refine_plan_model':llm_config['model'],'full_refine_plan_timeout_sec':str(max(1, int(llm_config['timeout-millis']/1000))),'full_refine_plan_temperature':str(llm_config['temperature']),'full_refine_plan_response_format_enabled':'true' if rf_enabled else 'false','full_refine_plan_schema_name':'semantic_plan_contract' if rf_enabled else '','full_refine_plan_llm_config_json':json.dumps(llm_config,ensure_ascii=False),'full_refine_plan_request_id':'refine_plan_'+uuid.uuid4().hex,'full_refine_plan_debug_summary':json.dumps(debug,ensure_ascii=False)}
         code_language: python3
         desc: 使用统一 ENABLE_FULL_LLM 构造 Refine full_replan 满血 planner 配置，不新增独立开关。
         outputs:
@@ -225,6 +241,7 @@
           full_refine_plan_temperature: {type: string}
           full_refine_plan_response_format_enabled: {type: string}
           full_refine_plan_schema_name: {type: string}
+          full_refine_plan_llm_config_json: {type: string}
           full_refine_plan_request_id: {type: string}
           full_refine_plan_debug_summary: {type: string}
         selected: false
@@ -310,8 +327,18 @@
                   code=int(token_status_code or 0)
                   if code<200 or code>=300: raise ValueError('token_http_non_2xx:%s'%code)
                   token_json=_loads(token_body,{})
-                  authorization_value=str(token_json.get('result') or '').strip()
-                  if not authorization_value: raise ValueError('TOKEN_RESULT_EMPTY')
+                  status = token_json.get('status') if isinstance(token_json.get('status'), dict) else {}
+                  token_result = token_json.get('result')
+                  authorization_value=str(token_result or '').strip()
+                  safe_debug.update({'token_status_code_field':str(status.get('statusCode') or ''),'token_error_code':str(status.get('errorCode') or ''),'token_error_msg':str(status.get('errorMsg') or ''),'token_result_present':bool(authorization_value)})
+                  if not authorization_value:
+                      detail = 'TOKEN_RESULT_EMPTY'
+                      parts = []
+                      if status.get('statusCode'): parts.append('statusCode=%s' % status.get('statusCode'))
+                      if status.get('errorCode'): parts.append('errorCode=%s' % status.get('errorCode'))
+                      if status.get('errorMsg'): parts.append('errorMsg=%s' % status.get('errorMsg'))
+                      if parts: detail += ': ' + ' '.join(parts)
+                      raise ValueError(detail)
                   schema=_loads(schema_json,{})
                   contract_hint='\n\n输出 JSON contract/schema:\n'+json.dumps(schema,ensure_ascii=False)+'\n只输出 JSON object，不要 markdown、解释文字、代码块。'
                   body={'model':model or None,'messages':[{'role':'system','content':system_prompt},{'role':'user','content':str(user_prompt or '')+contract_hint}], 'stream':False, 'temperature':float(temperature or 0)}
