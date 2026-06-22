@@ -260,6 +260,37 @@
                   return True
               return False
 
+          def _is_pseudo_merge_stage(stage):
+              if not isinstance(stage, dict):
+                  return False
+              stage_name = str(stage.get('stage_name') or stage.get('stage_id') or '').strip().lower()
+              stage_type = str(stage.get('stage_type') or '').strip().lower()
+              intent_type = str(stage.get('intent_type') or '').strip().lower()
+              operation_type = str(stage.get('operation_type') or '').strip().lower()
+              pseudo_merge_types = {
+                  'final_merge',
+                  'merge_result',
+                  'merge_results',
+                  'result_merge',
+                  'final_result_merge',
+              }
+              if stage_name in pseudo_merge_types:
+                  return True
+              if stage_type in pseudo_merge_types:
+                  return True
+              if intent_type in pseudo_merge_types:
+                  return True
+              if operation_type in pseudo_merge_types:
+                  return True
+              if intent_type in {'none', 'null', 'n/a', 'na'}:
+                  if stage_name in pseudo_merge_types or stage_type in pseudo_merge_types or operation_type in pseudo_merge_types:
+                      return True
+                  if stage_name.startswith('final_') or 'merge' in stage_name:
+                      return True
+                  if stage_type.startswith('final_') or 'merge' in stage_type:
+                      return True
+              return False
+
           def _remove_chart_stages(raw_stages, warnings):
               if not isinstance(raw_stages, list):
                   return []
@@ -270,6 +301,9 @@
                       if isinstance(stage, dict):
                           name = stage.get('stage_name') or stage.get('stage_id') or stage.get('intent_type') or 'unknown'
                       warnings.append('removed_chart_stage:' + str(name))
+                  elif _is_pseudo_merge_stage(stage):
+                      name = stage.get('stage_name') or stage.get('stage_id') or stage.get('intent_type') or stage.get('stage_type') or 'unknown'
+                      warnings.append('removed_pseudo_stage:' + str(name))
                   else:
                       kept.append(stage)
               return kept
