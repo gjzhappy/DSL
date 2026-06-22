@@ -989,6 +989,8 @@
 
 
           def _stage_is_aggregate(stage: Dict[str, Any]) -> bool:
+              if _str(stage.get("stage_type")) == "enrich_related" or _str(stage.get("intent_type")) == "enrich_related":
+                  return False
               return bool(stage.get("group_fields") or stage.get("metric_alias") or stage.get("metric_function") or stage.get("metric_field") or canonicalize_intent_type(stage.get("intent_type"), stage) in {"aggregate_summary"} or _str(stage.get("intent_type")) in {"ranking", "trend"})
 
 

@@ -23,18 +23,26 @@
                   coll_meta = collections.get(coll) or {}
                   rules = coll_meta.get("query_rules") or {}
 
+                  stage_type = _str(stage.get("stage_type"))
                   raw_intent_type = _str(stage.get("intent_type"))
-                  canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
+                  if stage_type == "enrich_related":
+                      canonical_intent_type = "enrich_related"
+                  else:
+                      canonical_intent_type = canonicalize_intent_type(raw_intent_type, stage)
                   if canonical_intent_type != raw_intent_type:
                       stage["intent_type"] = canonical_intent_type
                       autofixes.append({
                           "type": "intent_type_canonicalize",
                           "from": raw_intent_type,
                           "to": canonical_intent_type,
-                          "reason": "canonicalized generic aggregate intent for compiler compatibility",
+                          "reason": "stage_type=enrich_related must use enrich_related intent for compiler routing" if stage_type == "enrich_related" else "canonicalized generic aggregate intent for compiler compatibility",
                       })
                   elif raw_intent_type not in COMPILER_SUPPORTED_INTENT_TYPES:
                       errors.append(f"intent_type={raw_intent_type or '<empty>'} 不是 compiler 支持的 canonical intent_type。")
+                  is_enrich_related_stage = stage_type == "enrich_related" or _str(stage.get("intent_type")) == "enrich_related"
+                  if is_enrich_related_stage and _list(stage.get("group_fields")):
+                      stage["group_fields"] = []
+                      autofixes.append({"type": "enrich_related_group_fields_clear", "stage_name": _str(stage.get("stage_name") or i), "reason": "enrich_related stage does not aggregate"})
 
                   top_keywords = ("top", "topn", "前", "排名", "排行", "榜单", "最高", "最低", "最多", "最少", "第一", "最大", "最小")
                   has_top_semantics = any(k in _str(question).lower() for k in top_keywords)
@@ -205,7 +213,10 @@
                   stage["projection_fields"] = projections
 
                   tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
-                  if _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
+                  if is_enrich_related_stage and not any(_str(tr.get(k)) for k in ("field", "mode", "start", "end", "relative_days")):
+                      tr = {}
+                      stage["time_range"] = {}
+                  if (not is_enrich_related_stage) and _stage_is_aggregate(stage) and bool(rules.get("require_time_range_for_aggregate")) and not tr:
                       return _finalize(_result("requires_clarification", plan, ["聚合查询按 query_rules 要求必须提供 time_range。"], clarification="我需要确认一下：这个聚合查询要统计哪个时间范围？", debug=debug))
                   if tr:
                       tf = _str(tr.get("field"))
