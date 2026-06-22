@@ -687,17 +687,53 @@
     - data:
         code: |
           import json, re
+          SUPPORTED={'bar','line','pie','scatter'}
+          ALIASES={'pie':'pie','pie chart':'pie','饼图':'pie','bar':'bar','bar chart':'bar','柱状图':'bar','柱状':'bar','条形图':'bar','条形':'bar','line':'line','line chart':'line','折线图':'line','折线':'line','scatter':'scatter','scatter chart':'scatter','散点图':'scatter','散点':'scatter'}
+          FIELDS=('chart_type','x_field','y_field','series_name','title','field_labels')
           def _strip(s):
-              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); return m.group(1).strip() if m else s
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); s=m.group(1).strip() if m else s; a,b=s.find('{'),s.rfind('}'); return s[a:b+1] if a>=0 and b>=a else s
           def _loads(v):
               if isinstance(v,dict): return v
               try: return json.loads(_strip(v)) if isinstance(v,str) and v.strip() else {}
               except Exception: return {}
+          def _norm_type(v):
+              raw=str(v or '').strip().lower()
+              if raw in ALIASES: return ALIASES[raw]
+              for k,val in ALIASES.items():
+                  if k in raw: return val
+              return raw if raw in SUPPORTED else ''
+          def _non_empty(v):
+              if v is None: return False
+              if isinstance(v,str): return bool(v.strip())
+              if isinstance(v,(list,dict)): return bool(v)
+              return True
+          def _extract_delta(obj, raw_text=''):
+              src=obj if isinstance(obj,dict) else {}
+              delta={}
+              req=src.get('chart_request') if isinstance(src.get('chart_request'),dict) else {}
+              for part in (req, src):
+                  for k in FIELDS:
+                      if k in part: delta[k]=part.get(k)
+              if 'chart_type' in delta:
+                  nt=_norm_type(delta.get('chart_type'))
+                  if not nt: return {}, 'invalid_chart_type'
+                  delta['chart_type']=nt
+              elif raw_text:
+                  nt=_norm_type(raw_text)
+                  if nt: delta['chart_type']=nt
+              meaningful=any((k=='chart_type' and bool(delta.get(k))) or (k!='chart_type' and _non_empty(delta.get(k))) for k in FIELDS if k in delta)
+              if not meaningful: return {}, 'empty_chart_delta'
+              out={'chart_only': True}
+              for k in FIELDS:
+                  if k in delta: out[k]=delta.get(k)
+              return out, ''
           def main(ok: str='false', status_code=0, text: str='', structured_json: str='{}', error_message: str='', debug_json: str='{}'):
-              debug=_loads(debug_json); obj=_loads(structured_json or text); valid=str(ok or '').lower()=='true' and bool(str(text or '').strip()) and isinstance(obj,dict) and isinstance(obj.get('chart_request'),dict) and all(k in obj for k in ['user_message','recommended_chart_type','warning'])
-              if not valid: debug['checker_error']=error_message or 'invalid_chart_modify_contract'
-              sj=json.dumps(obj,ensure_ascii=False) if valid else '{}'
-              return {'full_chart_modify_ok':'true' if valid else 'false','full_chart_modify_text':sj if valid else '','full_chart_modify_structured_json':sj,'full_chart_modify_error_message':'' if valid else (error_message or 'invalid_chart_modify_contract'),'full_chart_modify_debug_json':json.dumps(debug,ensure_ascii=False)}
+              debug=_loads(debug_json); obj=_loads(structured_json) or _loads(text); code=int(status_code or 0); delta,err=_extract_delta(obj, text)
+              valid=str(ok or '').lower()=='true' and 200<=code<300 and bool(delta)
+              if not valid: debug['checker_error']=error_message or err or 'invalid_chart_modify_contract'
+              debug['normalized_contract']='chart_delta' if valid else ''
+              sj=json.dumps(delta,ensure_ascii=False) if valid else '{}'
+              return {'full_chart_modify_ok':'true' if valid else 'false','full_chart_modify_text':sj if valid else '','full_chart_modify_structured_json':sj,'full_chart_modify_error_message':'' if valid else (error_message or debug.get('checker_error') or 'invalid_chart_modify_contract'),'full_chart_modify_debug_json':json.dumps(debug,ensure_ascii=False)}
         code_language: python3
         desc: 校验满血图表修改规划响应符合原本地 LLM JSON contract。
         outputs:
@@ -745,16 +781,62 @@
       width: 242
     - data:
         code: |
-          import json
+          import json, re
+          SUPPORTED={'bar','line','pie','scatter'}
+          ALIASES={'pie':'pie','pie chart':'pie','饼图':'pie','bar':'bar','bar chart':'bar','柱状图':'bar','柱状':'bar','条形图':'bar','条形':'bar','line':'line','line chart':'line','折线图':'line','折线':'line','scatter':'scatter','scatter chart':'scatter','散点图':'scatter','散点':'scatter'}
+          FIELDS=('chart_type','x_field','y_field','series_name','title')
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); s=m.group(1).strip() if m else s; a,b=s.find('{'),s.rfind('}'); return s[a:b+1] if a>=0 and b>=a else s
           def _loads(v):
               if isinstance(v,dict): return v
-              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              try: return json.loads(_strip(v)) if isinstance(v,str) and v.strip() else {}
               except Exception: return {}
-          def _text(v):
-              if isinstance(v,dict) and v: return json.dumps(v,ensure_ascii=False)
-              obj=_loads(v); return json.dumps(obj,ensure_ascii=False) if obj else (str(v or '').strip() or '{}')
-          def main(full_chart_modify_ok: str='false', full_chart_modify_text: str='', full_chart_modify_structured_json: str='{}', full_chart_modify_error_message: str='', local_structured_output=None, local_text: str='', **kwargs):
-              use_full=str(full_chart_modify_ok or '').lower()=='true'; source='full_llm' if use_full else 'local_llm_fallback'; out=_text(full_chart_modify_structured_json or full_chart_modify_text) if use_full else (_text(local_structured_output) if isinstance(local_structured_output,dict) and local_structured_output else _text(local_text)); debug={'source':source,'has_text':bool(out and out!='{}'),'full_chart_modify_ok':str(full_chart_modify_ok or ''),'full_chart_modify_error_message':str(full_chart_modify_error_message or ''),'local_text_present':bool(local_text),'local_structured_output_present':isinstance(local_structured_output,dict) and bool(local_structured_output)}; return {'text':out,'structured_json':out,'structured_output':{},'plan_source':source,'merge_debug_json':json.dumps(debug,ensure_ascii=False)}
+          def _norm_type(v):
+              raw=str(v or '').strip().lower()
+              if raw in ALIASES: return ALIASES[raw]
+              for k,val in ALIASES.items():
+                  if k in raw: return val
+              return raw if raw in SUPPORTED else ''
+          def _non_empty(v):
+              if v is None: return False
+              if isinstance(v,str): return bool(v.strip())
+              if isinstance(v,(list,dict)): return bool(v)
+              return True
+          def _base(last_chart_request_json, last_semantic_plan_json):
+              base=_loads(last_chart_request_json)
+              if not base:
+                  plan=_loads(last_semantic_plan_json); base=plan.get('chart_request') if isinstance(plan.get('chart_request'),dict) else {}
+              return dict(base or {})
+          def _delta(v):
+              obj=_loads(v)
+              if not obj: return {}
+              out={}; req=obj.get('chart_request') if isinstance(obj.get('chart_request'),dict) else {}
+              for part in (req,obj):
+                  for k in FIELDS+('field_labels',):
+                      if k in part: out[k]=part.get(k)
+              return out
+          def _merge(base, patch):
+              merged=dict(base or {})
+              for k in FIELDS:
+                  if k not in patch: continue
+                  v=patch.get(k)
+                  if k=='chart_type':
+                      nt=_norm_type(v)
+                      if nt: merged[k]=nt
+                  elif _non_empty(v): merged[k]=v.strip() if isinstance(v,str) else v
+              fl=patch.get('field_labels')
+              if isinstance(fl,dict) and fl:
+                  cur=merged.get('field_labels') if isinstance(merged.get('field_labels'),dict) else {}
+                  cur.update(fl); merged['field_labels']=cur
+              merged['enabled']=True if 'enabled' not in merged else bool(merged.get('enabled'))
+              if not isinstance(merged.get('field_labels'),dict): merged['field_labels']={}
+              return merged
+          def main(full_chart_modify_ok: str='false', full_chart_modify_text: str='', full_chart_modify_structured_json: str='{}', full_chart_modify_error_message: str='', local_structured_output=None, local_text: str='', last_chart_request_json: str='', last_semantic_plan_json: str='', **kwargs):
+              use_full=str(full_chart_modify_ok or '').lower()=='true'; source='full_llm' if use_full else 'local_llm_fallback'
+              src=(full_chart_modify_structured_json or full_chart_modify_text) if use_full else (local_structured_output if isinstance(local_structured_output,dict) and local_structured_output else local_text)
+              merged=_merge(_base(last_chart_request_json,last_semantic_plan_json), _delta(src)); out=json.dumps(merged,ensure_ascii=False)
+              debug={'source':source,'has_text':bool(out and out!='{}'),'full_chart_modify_ok':str(full_chart_modify_ok or ''),'full_chart_modify_error_message':str(full_chart_modify_error_message or ''),'local_text_present':bool(local_text),'local_structured_output_present':isinstance(local_structured_output,dict) and bool(local_structured_output)}
+              return {'text':out,'structured_json':out,'structured_output':{},'plan_source':source,'merge_debug_json':json.dumps(debug,ensure_ascii=False)}
         code_language: python3
         desc: 合并满血或本地图表修改规划结果，输出浅层 structured_output 避免 depth limit。
         outputs:
@@ -773,6 +855,8 @@
         - {variable: full_chart_modify_error_message, value_type: string, value_selector: ['1779000000203', full_chart_modify_error_message]}
         - {variable: local_structured_output, value_type: object, value_selector: ['1776000000014', structured_output]}
         - {variable: local_text, value_type: string, value_selector: ['1776000000014', text]}
+        - {variable: last_chart_request_json, value_type: string, value_selector: [conversation, last_chart_request_json]}
+        - {variable: last_semantic_plan_json, value_type: string, value_selector: [conversation, last_normalized_semantic_plan_json]}
       height: 110
       id: '1779000000204'
       position: {x: 5140, y: 900}
@@ -956,11 +1040,32 @@
               if isinstance(v,dict): return v
               try: return json.loads(_strip(v)) if isinstance(v,str) and v.strip() else {}
               except Exception: return {}
+          def _as_text(v):
+              if isinstance(v,list): return '\n'.join(str(x).strip() for x in v if str(x).strip())
+              return str(v or '').strip()
+          def _normalize(obj, raw):
+              if isinstance(obj,dict) and obj:
+                  for key in ('analysis_markdown','answer_text','analysis','summary','conclusion'):
+                      txt=_as_text(obj.get(key))
+                      if txt:
+                          extra=_as_text(obj.get('insights') or obj.get('recommendations'))
+                          return (txt+('\n'+extra if extra and key in ('summary','conclusion') else ''), key)
+                  extra=_as_text(obj.get('insights') or obj.get('recommendations'))
+                  if extra: return extra, 'summary_insights'
+                  return '', 'empty_json'
+              return _as_text(raw), 'raw_text'
           def main(ok: str='false', status_code=0, text: str='', structured_json: str='{}', error_message: str='', debug_json: str='{}'):
-              debug=_loads(debug_json); obj=_loads(structured_json or text); valid=str(ok or '').lower()=='true' and bool(str(text or '').strip()) and isinstance(obj,dict) and bool(str(obj.get('analysis_markdown') or '').strip()) and isinstance(obj.get('analysis_debug_json'),dict)
+              debug=_loads(debug_json); obj=_loads(structured_json) or _loads(text); code=int(status_code or 0); analysis,src=_normalize(obj, text)
+              valid=str(ok or '').lower()=='true' and 200<=code<300 and bool(analysis)
+              llm_debug=obj.get('analysis_debug_json') if isinstance(obj,dict) else None
+              if isinstance(llm_debug,dict): dbg=json.dumps(llm_debug,ensure_ascii=False)
+              elif isinstance(llm_debug,str) and llm_debug.strip(): dbg=llm_debug.strip()
+              else: dbg=json.dumps({'source':'full_llm','normalized_from':src,'warnings':[]},ensure_ascii=False)
+              out={'analysis_markdown':analysis,'analysis_debug_json':dbg} if valid else {}
               if not valid: debug['checker_error']=error_message or 'invalid_continue_analysis_contract'
-              sj=json.dumps(obj,ensure_ascii=False) if valid else '{}'
-              return {'full_continue_analysis_ok':'true' if valid else 'false','full_continue_analysis_text':sj if valid else '','full_continue_analysis_structured_json':sj,'full_continue_analysis_error_message':'' if valid else (error_message or 'invalid_continue_analysis_contract'),'full_continue_analysis_debug_json':json.dumps(debug,ensure_ascii=False)}
+              debug['normalized_from']=src if valid else ''
+              sj=json.dumps(out,ensure_ascii=False) if valid else '{}'
+              return {'full_continue_analysis_ok':'true' if valid else 'false','full_continue_analysis_text':analysis if valid else '','full_continue_analysis_structured_json':sj,'full_continue_analysis_error_message':'' if valid else (error_message or debug.get('checker_error') or 'invalid_continue_analysis_contract'),'full_continue_analysis_debug_json':json.dumps(debug,ensure_ascii=False)}
         code_language: python3
         desc: 校验满血继续分析响应符合原本地 LLM JSON contract。
         outputs:
@@ -1008,16 +1113,26 @@
       width: 242
     - data:
         code: |
-          import json
+          import json, re
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); return m.group(1).strip() if m else s
           def _loads(v):
               if isinstance(v,dict): return v
-              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              try: return json.loads(_strip(v)) if isinstance(v,str) and v.strip() else {}
               except Exception: return {}
-          def _text(v):
-              if isinstance(v,dict) and v: return json.dumps(v,ensure_ascii=False)
-              obj=_loads(v); return json.dumps(obj,ensure_ascii=False) if obj else (str(v or '').strip() or '{}')
+          def _contract(v, source):
+              obj=_loads(v); raw=str(v or '').strip() if not isinstance(v,dict) else ''
+              text=str(obj.get('analysis_markdown') or obj.get('answer_text') or obj.get('analysis') or obj.get('summary') or obj.get('conclusion') or raw).strip() if isinstance(obj,dict) else raw
+              dbg=obj.get('analysis_debug_json') if isinstance(obj,dict) else None
+              if isinstance(dbg,dict): dbg=json.dumps(dbg,ensure_ascii=False)
+              elif not isinstance(dbg,str) or not dbg.strip(): dbg=json.dumps({'source':source,'normalized_from':'merge','warnings':[]},ensure_ascii=False)
+              return {'analysis_markdown':text,'analysis_debug_json':dbg.strip() if isinstance(dbg,str) else dbg}
           def main(full_continue_analysis_ok: str='false', full_continue_analysis_text: str='', full_continue_analysis_structured_json: str='{}', full_continue_analysis_error_message: str='', local_structured_output=None, local_text: str='', **kwargs):
-              use_full=str(full_continue_analysis_ok or '').lower()=='true'; source='full_llm' if use_full else 'local_llm_fallback'; out=_text(full_continue_analysis_structured_json or full_continue_analysis_text) if use_full else (_text(local_structured_output) if isinstance(local_structured_output,dict) and local_structured_output else _text(local_text)); debug={'source':source,'has_text':bool(out and out!='{}'),'full_continue_analysis_ok':str(full_continue_analysis_ok or ''),'full_continue_analysis_error_message':str(full_continue_analysis_error_message or ''),'local_text_present':bool(local_text),'local_structured_output_present':isinstance(local_structured_output,dict) and bool(local_structured_output)}; return {'text':out,'structured_json':out,'structured_output':{},'plan_source':source,'merge_debug_json':json.dumps(debug,ensure_ascii=False)}
+              use_full=str(full_continue_analysis_ok or '').lower()=='true'; source='full_llm' if use_full else 'local_llm_fallback'
+              src=(full_continue_analysis_structured_json or full_continue_analysis_text) if use_full else (local_structured_output if isinstance(local_structured_output,dict) and local_structured_output else local_text)
+              contract=_contract(src, source); sj=json.dumps(contract,ensure_ascii=False); text=contract.get('analysis_markdown') or ''
+              debug={'source':source,'has_text':bool(text),'full_continue_analysis_ok':str(full_continue_analysis_ok or ''),'full_continue_analysis_error_message':str(full_continue_analysis_error_message or ''),'local_text_present':bool(local_text),'local_structured_output_present':isinstance(local_structured_output,dict) and bool(local_structured_output)}
+              return {'text':text,'structured_json':sj,'structured_output':{},'plan_source':source,'merge_debug_json':json.dumps(debug,ensure_ascii=False)}
         code_language: python3
         desc: 合并满血或本地继续分析结果，输出浅层 structured_output 避免 depth limit。
         outputs:
