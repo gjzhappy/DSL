@@ -429,18 +429,49 @@
     - data:
         code: |
           import json
+
           def _loads(v):
-              if isinstance(v,dict): return v
-              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
-              except Exception: return {}
-          def main(full_refine_plan_ok: str='false', full_refine_plan_text: str='', full_refine_plan_structured_json: str='{}', full_refine_plan_debug_json: str='{}', local_structured_output=None, local_text: str='', local_semantic_plan_contract_json: str='', **kwargs):
-              use_full=str(full_refine_plan_ok or '').lower()=='true'
+              if isinstance(v, dict):
+                  return v
+              try:
+                  return json.loads(v) if isinstance(v, str) and v.strip() else {}
+              except Exception:
+                  return {}
+
+          def _plan_text_from(value):
+              if isinstance(value, dict) and value:
+                  return json.dumps(value, ensure_ascii=False)
+              if isinstance(value, str) and value.strip():
+                  parsed = _loads(value)
+                  if isinstance(parsed, dict) and parsed:
+                      return json.dumps(parsed, ensure_ascii=False)
+              return '{}'
+
+          def main(full_refine_plan_ok: str='false', full_refine_plan_text: str='', full_refine_plan_structured_json: str='{}', full_refine_plan_debug_json: str='{}', local_structured_output=None, local_text: str='', local_semantic_plan_contract_json: str='', full_refine_plan_error_message: str='', **kwargs):
+              use_full = str(full_refine_plan_ok or '').lower() == 'true'
+              source = 'full_llm' if use_full else 'local_llm_fallback'
               if use_full:
-                  obj=_loads(full_refine_plan_structured_json or full_refine_plan_text); source='full_llm'
+                  plan_text = _plan_text_from(full_refine_plan_structured_json or full_refine_plan_text)
+              elif isinstance(local_structured_output, dict) and local_structured_output:
+                  plan_text = _plan_text_from(local_structured_output)
               else:
-                  obj=local_structured_output if isinstance(local_structured_output,dict) and local_structured_output else _loads(local_semantic_plan_contract_json or local_text); source='local_llm_fallback'
-              text=json.dumps(obj,ensure_ascii=False) if isinstance(obj,dict) and obj else '{}'
-              return {'structured_output':obj if isinstance(obj,dict) else {},'text':text,'semantic_plan_contract_json':text,'plan_source':source,'plan_merge_debug_json':json.dumps({'source':source,'full_refine_plan_ok':full_refine_plan_ok,'full_debug':str(full_refine_plan_debug_json or '')[:1500]},ensure_ascii=False)}
+                  plan_text = _plan_text_from(local_semantic_plan_contract_json or local_text)
+              debug = {
+                  'source': source,
+                  'has_plan': bool(plan_text and plan_text != '{}'),
+                  'text_length': len(plan_text or ''),
+                  'full_refine_plan_ok': str(full_refine_plan_ok or ''),
+                  'full_refine_plan_error_message': str(full_refine_plan_error_message or ''),
+                  'local_text_present': bool(local_text),
+                  'local_structured_output_present': isinstance(local_structured_output, dict) and bool(local_structured_output),
+              }
+              return {
+                  'structured_output': {},
+                  'text': plan_text,
+                  'semantic_plan_contract_json': plan_text,
+                  'plan_source': source,
+                  'plan_merge_debug_json': json.dumps(debug, ensure_ascii=False),
+              }
         code_language: python3
         desc: 统一满血或本地 Refine 查询规划输出，保持下游 text/structured_output contract 稳定。
         outputs:
