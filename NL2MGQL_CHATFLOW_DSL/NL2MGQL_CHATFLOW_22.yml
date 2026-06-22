@@ -212,13 +212,14 @@
               rf_enabled=_truthy(response_format_enabled)
               token_request_body={'appId':str(app_id or '').strip(),'credential':base64.b64encode(str(static_token or '').encode('utf-8')).decode('utf-8')}
               debug={'enable_full_llm':_truthy(enable_full_llm),'token_url_present':bool(str(token_url or '').strip()),'chat_url_present':bool(str(chat_url or '').strip()),'app_id_present':bool(str(app_id or '').strip()),'static_token_present':bool(str(static_token or '')),'model':model or '','timeout_ms':timeout_ms or '','temperature':temperature or '','response_format_enabled':rf_enabled,'response_format_type':'json_schema' if rf_enabled else None,'schema_name':'semantic_plan_contract' if rf_enabled else ''}
-              return {'full_refine_plan_request_enabled':'true' if enabled else 'false','full_refine_plan_token_url':str(token_url or '').strip(),'full_refine_plan_token_request_body_json':json.dumps(token_request_body,ensure_ascii=False),'full_refine_plan_chat_url':str(chat_url or ''),'full_refine_plan_model':str(model or ''),'full_refine_plan_timeout_sec':str(max(1, int(_int(timeout_ms,600000)/1000))),'full_refine_plan_temperature':str(temperature or '0'),'full_refine_plan_response_format_enabled':'true' if rf_enabled else 'false','full_refine_plan_schema_name':'semantic_plan_contract' if rf_enabled else '','full_refine_plan_request_id':'refine_plan_'+uuid.uuid4().hex,'full_refine_plan_debug_summary':json.dumps(debug,ensure_ascii=False)}
+              return {'full_refine_plan_request_enabled':'true' if enabled else 'false','full_refine_plan_token_url':str(token_url or '').strip(),'full_refine_plan_token_request_body_json':json.dumps(token_request_body,ensure_ascii=False),'token_request_body_json':json.dumps(token_request_body,ensure_ascii=False),'full_refine_plan_chat_url':str(chat_url or ''),'full_refine_plan_model':str(model or ''),'full_refine_plan_timeout_sec':str(max(1, int(_int(timeout_ms,600000)/1000))),'full_refine_plan_temperature':str(temperature or '0'),'full_refine_plan_response_format_enabled':'true' if rf_enabled else 'false','full_refine_plan_schema_name':'semantic_plan_contract' if rf_enabled else '','full_refine_plan_request_id':'refine_plan_'+uuid.uuid4().hex,'full_refine_plan_debug_summary':json.dumps(debug,ensure_ascii=False)}
         code_language: python3
         desc: 使用统一 ENABLE_FULL_LLM 构造 Refine full_replan 满血 planner 配置，不新增独立开关。
         outputs:
           full_refine_plan_request_enabled: {type: string}
           full_refine_plan_token_url: {type: string}
           full_refine_plan_token_request_body_json: {type: string}
+          token_request_body_json: {type: string}
           full_refine_plan_chat_url: {type: string}
           full_refine_plan_model: {type: string}
           full_refine_plan_timeout_sec: {type: string}
@@ -276,7 +277,7 @@
           - id: refine-plan-token-body
             key: ''
             type: text
-            value: "{{#1779000000100.full_refine_plan_token_request_body_json#}}"
+            value: "{{#1779000000100.token_request_body_json#}}"
           type: json
         desc: 与满血意图识别一致，使用 appId + credential 获取动态 Basic token；仅 ENABLE_FULL_LLM=true 且配置可用时执行。
         headers: Content-Type:application/json
