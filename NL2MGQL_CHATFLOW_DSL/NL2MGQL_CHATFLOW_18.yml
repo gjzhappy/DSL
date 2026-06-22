@@ -226,6 +226,54 @@
                   relative_days = 0
               return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
 
+          def _is_chart_stage(stage):
+              if not isinstance(stage, dict):
+                  return False
+              stage_type = str(stage.get('stage_type') or '').strip().lower()
+              intent_type = str(stage.get('intent_type') or '').strip().lower()
+              operation_type = str(stage.get('operation_type') or '').strip().lower()
+              collection = str(stage.get('collection') or '').strip()
+              chart_stage_types = {
+                  'chart_generation',
+                  'chart_render',
+                  'render_chart',
+                  'visualization',
+                  'visualize',
+                  'chart',
+              }
+              chart_intent_types = {
+                  'render_chart',
+                  'chart_render',
+                  'chart_generation',
+                  'visualization',
+                  'visualize',
+                  'chart',
+              }
+              if stage_type in chart_stage_types:
+                  return True
+              if intent_type in chart_intent_types:
+                  return True
+              if operation_type in chart_intent_types:
+                  return True
+              stage_name = str(stage.get('stage_name') or stage.get('stage_id') or '').strip().lower()
+              if not collection and ('chart' in stage_name or 'visual' in stage_name):
+                  return True
+              return False
+
+          def _remove_chart_stages(raw_stages, warnings):
+              if not isinstance(raw_stages, list):
+                  return []
+              kept = []
+              for stage in raw_stages:
+                  if _is_chart_stage(stage):
+                      name = 'unknown'
+                      if isinstance(stage, dict):
+                          name = stage.get('stage_name') or stage.get('stage_id') or stage.get('intent_type') or 'unknown'
+                      warnings.append('removed_chart_stage:' + str(name))
+                  else:
+                      kept.append(stage)
+              return kept
+
           def _normalize_stage(raw_stage, idx, primary_collection):
               stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
               metric = _metric_from_metrics(stage)
@@ -281,6 +329,7 @@
                       plan['chart_request'] = top_chart if top_chart else {}
                   primary_collection = _pick_collection(plan)
                   raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+                  raw_stages = _remove_chart_stages(raw_stages, warnings)
                   if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
                       primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
                   stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
