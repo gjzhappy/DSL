@@ -222,11 +222,11 @@
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: llm
-      id: 1776000000005-chart-1776000000014-target
+        targetType: code
+      id: 1776000000005-chart-1779000000200-target
       source: '1776000000005'
       sourceHandle: chart
-      target: '1776000000014'
+      target: '1779000000200'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -234,8 +234,107 @@
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776000000014-source-1776000000015-target
+      id: 1776000000014-source-1779000000204-target
       source: '1776000000014'
+      sourceHandle: source
+      target: '1779000000204'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1779000000200-source-1779000000201-target
+      source: '1779000000200'
+      sourceHandle: source
+      target: '1779000000201'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: http-request
+      id: 1779000000201-true-1779000000206-target
+      source: '1779000000201'
+      sourceHandle: 'true'
+      target: '1779000000206'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1779000000201-false-1776000000014-target
+      source: '1779000000201'
+      sourceHandle: 'false'
+      target: '1776000000014'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: 1779000000206-source-1779000000202-target
+      source: '1779000000206'
+      sourceHandle: source
+      target: '1779000000202'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1779000000202-source-1779000000203-target
+      source: '1779000000202'
+      sourceHandle: source
+      target: '1779000000203'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1779000000203-source-1779000000205-target
+      source: '1779000000203'
+      sourceHandle: source
+      target: '1779000000205'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1779000000205-true-1779000000204-target
+      source: '1779000000205'
+      sourceHandle: 'true'
+      target: '1779000000204'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1779000000205-false-1776000000014-target
+      source: '1779000000205'
+      sourceHandle: 'false'
+      target: '1776000000014'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1779000000204-source-1776000000015-target
+      source: '1779000000204'
       sourceHandle: source
       target: '1776000000015'
       targetHandle: target
@@ -288,11 +387,11 @@
     - data:
         isInLoop: false
         sourceType: if-else
-        targetType: llm
-      id: 1776000000005-analysis-1776000000017-target
+        targetType: code
+      id: 1776000000005-analysis-1779000000300-target
       source: '1776000000005'
       sourceHandle: analysis
-      target: '1776000000017'
+      target: '1779000000300'
       targetHandle: target
       type: custom
       zIndex: 0
@@ -300,8 +399,107 @@
         isInLoop: false
         sourceType: llm
         targetType: code
-      id: 1776000000017-source-1776000000018-target
+      id: 1776000000017-source-1779000000304-target
       source: '1776000000017'
+      sourceHandle: source
+      target: '1779000000304'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1779000000300-source-1779000000301-target
+      source: '1779000000300'
+      sourceHandle: source
+      target: '1779000000301'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: http-request
+      id: 1779000000301-true-1779000000306-target
+      source: '1779000000301'
+      sourceHandle: 'true'
+      target: '1779000000306'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1779000000301-false-1776000000017-target
+      source: '1779000000301'
+      sourceHandle: 'false'
+      target: '1776000000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: 1779000000306-source-1779000000302-target
+      source: '1779000000306'
+      sourceHandle: source
+      target: '1779000000302'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1779000000302-source-1779000000303-target
+      source: '1779000000302'
+      sourceHandle: source
+      target: '1779000000303'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: 1779000000303-source-1779000000305-target
+      source: '1779000000303'
+      sourceHandle: source
+      target: '1779000000305'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: 1779000000305-true-1779000000304-target
+      source: '1779000000305'
+      sourceHandle: 'true'
+      target: '1779000000304'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1779000000305-false-1776000000017-target
+      source: '1779000000305'
+      sourceHandle: 'false'
+      target: '1776000000017'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: 1779000000304-source-1776000000018-target
+      source: '1779000000304'
       sourceHandle: source
       target: '1776000000018'
       targetHandle: target

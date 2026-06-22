@@ -518,6 +518,532 @@
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        code: |
+          import base64, json, uuid
+          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
+          def _int(v,d):
+              try: return int(v)
+              except Exception: return d
+          def main(enable_full_llm: str='', token_url: str='', chat_url: str='', app_id: str='', static_token: str='', model: str='', timeout_ms: str='', temperature: str='', response_format_enabled: str='false', **kwargs):
+              enabled=_truthy(enable_full_llm) and bool(str(token_url or '').strip()) and bool(str(chat_url or '').strip()) and bool(str(app_id or '').strip()) and bool(str(static_token or ''))
+              rf_enabled=_truthy(response_format_enabled)
+              token_request_body={'appId':str(app_id or '').strip(),'credential':base64.b64encode(str(static_token or '').encode('utf-8')).decode('utf-8')}
+              token_request_body_json=json.dumps(token_request_body,ensure_ascii=False)
+              debug={'enable_full_llm':_truthy(enable_full_llm),'token_url_present':bool(str(token_url or '').strip()),'chat_url_present':bool(str(chat_url or '').strip()),'app_id_present':bool(str(app_id or '').strip()),'static_token_present':bool(str(static_token or '')),'model':model or '','timeout_ms':timeout_ms or '','temperature':temperature or '','response_format_enabled':rf_enabled,'schema_name':'chart_modify_contract' if rf_enabled else ''}
+              return {'full_chart_modify_request_enabled':'true' if enabled else 'false','full_chart_modify_token_url':str(token_url or '').strip(),'full_chart_modify_chat_url':str(chat_url or '').strip(),'full_chart_modify_model':str(model or ''),'full_chart_modify_timeout_sec':str(max(1,int(_int(timeout_ms,600000)/1000))),'full_chart_modify_temperature':str(temperature or '0'),'full_chart_modify_response_format_enabled':'true' if rf_enabled else 'false','full_chart_modify_schema_name':'chart_modify_contract' if rf_enabled else '','full_chart_modify_token_request_body_json':token_request_body_json,'token_request_body_json':token_request_body_json,'full_chart_modify_request_id':'chart_modify_'+uuid.uuid4().hex,'full_chart_modify_debug_summary':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 使用统一 ENABLE_FULL_LLM 构造图表修改规划满血 LLM 配置。
+        outputs:
+          full_chart_modify_request_enabled: {type: string}
+          full_chart_modify_token_url: {type: string}
+          full_chart_modify_chat_url: {type: string}
+          full_chart_modify_model: {type: string}
+          full_chart_modify_timeout_sec: {type: string}
+          full_chart_modify_temperature: {type: string}
+          full_chart_modify_response_format_enabled: {type: string}
+          full_chart_modify_schema_name: {type: string}
+          full_chart_modify_token_request_body_json: {type: string}
+          token_request_body_json: {type: string}
+          full_chart_modify_request_id: {type: string}
+          full_chart_modify_debug_summary: {type: string}
+        selected: false
+        title: 代码执行_构造满血LLM_图表修改规划配置
+        type: code
+        variables:
+        - {variable: enable_full_llm, value_type: string, value_selector: [env, ENABLE_FULL_LLM]}
+        - {variable: token_url, value_type: string, value_selector: [env, LLM_TOKEN_URL]}
+        - {variable: chat_url, value_type: string, value_selector: [env, LLM_CHAT_URL]}
+        - {variable: app_id, value_type: string, value_selector: [env, LLM_APP_ID]}
+        - {variable: static_token, value_type: string, value_selector: [env, LLM_STATIC_TOKEN]}
+        - {variable: model, value_type: string, value_selector: [env, LLM_MODEL]}
+        - {variable: timeout_ms, value_type: string, value_selector: [env, LLM_TIMEOUT_MS]}
+        - {variable: temperature, value_type: string, value_selector: [env, LLM_TEMPERATURE]}
+        - {variable: response_format_enabled, value_type: string, value_selector: [env, FULL_LLM_RESPONSE_FORMAT_ENABLED]}
+      height: 100
+      id: '1779000000200'
+      position: {x: 3220, y: 920}
+      positionAbsolute: {x: 3220, y: 920}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - {comparison_operator: is, id: full-chart-modify-enable, value: 'true', varType: string, variable_selector: ['1779000000200', full_chart_modify_request_enabled]}
+          id: 'true'
+          logical_operator: and
+        desc: ENABLE_FULL_LLM=true 且配置齐全时优先进入图表修改规划满血 LLM，否则本地 fallback。
+        selected: false
+        title: 条件分支_是否启用满血LLM_图表修改规划
+        type: if-else
+      height: 124
+      id: '1779000000201'
+      position: {x: 3540, y: 920}
+      positionAbsolute: {x: 3540, y: 920}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: chart-modify-token-body
+            key: ''
+            type: text
+            value: "{{#1779000000200.token_request_body_json#}}"
+          type: json
+        desc: 使用短字段 token_request_body_json 绑定 body，避免 Dify HTTP Request 空 body。
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        selected: false
+        title: HTTP请求_获取动态Token_图表修改规划
+        type: http-request
+        url: "{{#1779000000200.full_chart_modify_token_url#}}"
+        variables: []
+      height: 80
+      id: '1779000000206'
+      position: {x: 3860, y: 780}
+      positionAbsolute: {x: 3860, y: 780}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error, re
+          def _loads(s,d):
+              try: return json.loads(s) if isinstance(s,str) and s.strip() else d
+              except Exception: return d
+          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
+          def _strip_json(text):
+              s=str(text or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); s=m.group(1).strip() if m else s; a,b=s.find('{'),s.rfind('}'); return s[a:b+1] if a>=0 and b>=a else s
+          def main(token_status_code=0, token_body: str='', chat_url: str='', model: str='', temperature: str='0', timeout_sec: str='600', user_query: str='', last_context_json: str='', last_chart_request_json: str='', chart_modification_json: str='', last_semantic_plan_json: str='', response_format_enabled: str='false', request_debug: str='{}', request_id: str=''):
+              safe_debug=_loads(request_debug,{})
+              try:
+                  code=int(token_status_code or 0)
+                  if code<200 or code>=300: raise ValueError('token_http_non_2xx:%s'%code)
+                  token_json=_loads(token_body,{})
+                  auth=str(token_json.get('result') or '').strip()
+                  if not auth:
+                      st=token_json.get('status') if isinstance(token_json.get('status'),dict) else {}
+                      raise ValueError('TOKEN_RESULT_EMPTY statusCode=%s errorCode=%s errorMsg=%s'%(st.get('statusCode',''),st.get('errorCode',''),st.get('errorMsg','')))
+                  system='你是图表修改规划器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段，不要输出 Mongo plan / Mongo pipeline。用户通常是在上一轮查询结果基础上修改图表展示方式。只修改 chart_type / title / style / 排序 / TopN / 标签 / 百分比等展示属性时，才属于 chart_only，不要修改查询条件，不要触发重新查询。若用户修改 x_field / y_field / group / metric / filter / time_range，则不是 chart_only，必须标记为 full_replan/需要重新查询，由语义计划链路重新生成 semantic_plan_contract。\n如果用户没有明确指定 x_field/y_field，请输出空字符串，表示沿用上一轮字段；空字符串表示“不修改”，不是“清空”。不得编造字段。支持 chart_type: bar, pie, line, area, scatter。bar/pie/line/area 通常需要一个类别或时间字段 + 一个数值字段；scatter 需要两个数值字段。'
+                  user='当前用户问题：%s\n上一轮结果摘要：%s\n上一轮图表请求（标准扁平 chart_request）：%s\n图表修改意图：%s\n上一轮语义计划：%s'%(user_query,last_context_json,last_chart_request_json,chart_modification_json,last_semantic_plan_json)
+                  schema={"type":"object","additionalProperties":False,"required":["chart_request","user_message","recommended_chart_type","warning"],"properties":{"chart_request":{"type":"object","additionalProperties":True},"user_message":{"type":"string"},"recommended_chart_type":{"type":"string"},"warning":{"type":"string"}}}
+                  body={'model':model or None,'messages':[{'role':'system','content':system},{'role':'user','content':user}], 'stream':False, 'temperature':float(temperature or 0)}
+                  if _truthy(response_format_enabled): body['response_format']={'type':'json_schema','json_schema':{'name':'chart_modify_contract','schema':schema,'strict':False}}
+                  body={k:v for k,v in body.items() if v is not None}
+                  safe_debug.update({'chat_url_present':bool(chat_url),'model':model,'auth_present':bool(auth),'auth_scheme':'Basic' if auth.startswith('Basic ') else (auth.split(' ',1)[0] if ' ' in auth else 'unknown'),'auth_len':len(auth),'body_keys':list(body.keys()),'response_format_enabled':_truthy(response_format_enabled),'schema_name':'chart_modify_contract' if _truthy(response_format_enabled) else '', 'request_id':request_id})
+                  req=urllib.request.Request(chat_url,data=json.dumps(body,ensure_ascii=False).encode('utf-8'),headers={'Content-Type':'application/json','Authorization':auth},method='POST')
+                  with urllib.request.urlopen(req,timeout=int(float(timeout_sec or 600))) as resp:
+                      raw=resp.read().decode('utf-8','replace'); root=_loads(raw,{}); content=(((root.get('choices') or [{}])[0].get('message') or {}).get('content') if isinstance(root,dict) else '') or raw; text=_strip_json(content)
+                      return {'ok':'true','status_code':resp.getcode(),'text':text,'structured_json':text,'error_message':'','debug_json':json.dumps(safe_debug,ensure_ascii=False)}
+              except urllib.error.HTTPError as e:
+                  msg=e.read().decode('utf-8','replace')[:1000] if hasattr(e,'read') else str(e); safe_debug['checker_error']='HTTPError'; return {'ok':'false','status_code':e.code,'text':'','structured_json':'{}','error_message':str(e)+' '+msg,'debug_json':json.dumps(safe_debug,ensure_ascii=False)}
+              except Exception as e:
+                  safe_debug['checker_error']=str(e); return {'ok':'false','status_code':0,'text':'','structured_json':'{}','error_message':str(e),'debug_json':json.dumps(safe_debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 调用满血 LLM 图表修改规划并保留安全错误响应。
+        outputs:
+          ok: {type: string}
+          status_code: {type: number}
+          text: {type: string}
+          structured_json: {type: string}
+          error_message: {type: string}
+          debug_json: {type: string}
+        selected: false
+        title: 代码执行_调用满血LLM_图表修改规划并保留错误响应
+        type: code
+        variables:
+        - {variable: token_status_code, value_type: number, value_selector: ['1779000000206', status_code]}
+        - {variable: token_body, value_type: string, value_selector: ['1779000000206', body]}
+        - {variable: chat_url, value_type: string, value_selector: ['1779000000200', full_chart_modify_chat_url]}
+        - {variable: model, value_type: string, value_selector: ['1779000000200', full_chart_modify_model]}
+        - {variable: temperature, value_type: string, value_selector: ['1779000000200', full_chart_modify_temperature]}
+        - {variable: timeout_sec, value_type: string, value_selector: ['1779000000200', full_chart_modify_timeout_sec]}
+        - {variable: user_query, value_type: string, value_selector: [sys, query]}
+        - {variable: last_context_json, value_type: string, value_selector: ['1776000000002', last_context_slim_json]}
+        - {variable: last_chart_request_json, value_type: string, value_selector: [conversation, last_chart_request_json]}
+        - {variable: chart_modification_json, value_type: string, value_selector: ['1776000000004', chart_modification_json]}
+        - {variable: last_semantic_plan_json, value_type: string, value_selector: [conversation, last_normalized_semantic_plan_json]}
+        - {variable: response_format_enabled, value_type: string, value_selector: ['1779000000200', full_chart_modify_response_format_enabled]}
+        - {variable: request_debug, value_type: string, value_selector: ['1779000000200', full_chart_modify_debug_summary]}
+        - {variable: request_id, value_type: string, value_selector: ['1779000000200', full_chart_modify_request_id]}
+      height: 120
+      id: '1779000000202'
+      position: {x: 4180, y: 780}
+      positionAbsolute: {x: 4180, y: 780}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); return m.group(1).strip() if m else s
+          def _loads(v):
+              if isinstance(v,dict): return v
+              try: return json.loads(_strip(v)) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def main(ok: str='false', status_code=0, text: str='', structured_json: str='{}', error_message: str='', debug_json: str='{}'):
+              debug=_loads(debug_json); obj=_loads(structured_json or text); valid=str(ok or '').lower()=='true' and bool(str(text or '').strip()) and isinstance(obj,dict) and isinstance(obj.get('chart_request'),dict) and all(k in obj for k in ['user_message','recommended_chart_type','warning'])
+              if not valid: debug['checker_error']=error_message or 'invalid_chart_modify_contract'
+              sj=json.dumps(obj,ensure_ascii=False) if valid else '{}'
+              return {'full_chart_modify_ok':'true' if valid else 'false','full_chart_modify_text':sj if valid else '','full_chart_modify_structured_json':sj,'full_chart_modify_error_message':'' if valid else (error_message or 'invalid_chart_modify_contract'),'full_chart_modify_debug_json':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 校验满血图表修改规划响应符合原本地 LLM JSON contract。
+        outputs:
+          full_chart_modify_ok: {type: string}
+          full_chart_modify_text: {type: string}
+          full_chart_modify_structured_json: {type: string}
+          full_chart_modify_error_message: {type: string}
+          full_chart_modify_debug_json: {type: string}
+        selected: false
+        title: 代码执行_判断满血LLM_图表修改规划状态
+        type: code
+        variables:
+        - {variable: ok, value_type: string, value_selector: ['1779000000202', ok]}
+        - {variable: status_code, value_type: number, value_selector: ['1779000000202', status_code]}
+        - {variable: text, value_type: string, value_selector: ['1779000000202', text]}
+        - {variable: structured_json, value_type: string, value_selector: ['1779000000202', structured_json]}
+        - {variable: error_message, value_type: string, value_selector: ['1779000000202', error_message]}
+        - {variable: debug_json, value_type: string, value_selector: ['1779000000202', debug_json]}
+      height: 120
+      id: '1779000000203'
+      position: {x: 4500, y: 780}
+      positionAbsolute: {x: 4500, y: 780}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - {comparison_operator: is, id: full-chart-modify-ok, value: 'true', varType: string, variable_selector: ['1779000000203', full_chart_modify_ok]}
+          id: 'true'
+          logical_operator: and
+        desc: 满血图表修改规划成功则跳过本地 LLM，否则回退本地 LLM_图表修改规划。
+        selected: false
+        title: 条件分支_满血图表修改规划是否成功
+        type: if-else
+      height: 124
+      id: '1779000000205'
+      position: {x: 4820, y: 780}
+      positionAbsolute: {x: 4820, y: 780}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v):
+              if isinstance(v,dict): return v
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def _text(v):
+              if isinstance(v,dict) and v: return json.dumps(v,ensure_ascii=False)
+              obj=_loads(v); return json.dumps(obj,ensure_ascii=False) if obj else (str(v or '').strip() or '{}')
+          def main(full_chart_modify_ok: str='false', full_chart_modify_text: str='', full_chart_modify_structured_json: str='{}', full_chart_modify_error_message: str='', local_structured_output=None, local_text: str='', **kwargs):
+              use_full=str(full_chart_modify_ok or '').lower()=='true'; source='full_llm' if use_full else 'local_llm_fallback'; out=_text(full_chart_modify_structured_json or full_chart_modify_text) if use_full else (_text(local_structured_output) if isinstance(local_structured_output,dict) and local_structured_output else _text(local_text)); debug={'source':source,'has_text':bool(out and out!='{}'),'full_chart_modify_ok':str(full_chart_modify_ok or ''),'full_chart_modify_error_message':str(full_chart_modify_error_message or ''),'local_text_present':bool(local_text),'local_structured_output_present':isinstance(local_structured_output,dict) and bool(local_structured_output)}; return {'text':out,'structured_json':out,'structured_output':{},'plan_source':source,'merge_debug_json':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 合并满血或本地图表修改规划结果，输出浅层 structured_output 避免 depth limit。
+        outputs:
+          text: {type: string}
+          structured_json: {type: string}
+          structured_output: {type: object}
+          plan_source: {type: string}
+          merge_debug_json: {type: string}
+        selected: false
+        title: 代码执行_合并满血或本地图表修改规划结果
+        type: code
+        variables:
+        - {variable: full_chart_modify_ok, value_type: string, value_selector: ['1779000000203', full_chart_modify_ok]}
+        - {variable: full_chart_modify_text, value_type: string, value_selector: ['1779000000203', full_chart_modify_text]}
+        - {variable: full_chart_modify_structured_json, value_type: string, value_selector: ['1779000000203', full_chart_modify_structured_json]}
+        - {variable: full_chart_modify_error_message, value_type: string, value_selector: ['1779000000203', full_chart_modify_error_message]}
+        - {variable: local_structured_output, value_type: object, value_selector: ['1776000000014', structured_output]}
+        - {variable: local_text, value_type: string, value_selector: ['1776000000014', text]}
+      height: 110
+      id: '1779000000204'
+      position: {x: 5140, y: 1040}
+      positionAbsolute: {x: 5140, y: 1040}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import base64, json, uuid
+          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
+          def _int(v,d):
+              try: return int(v)
+              except Exception: return d
+          def main(enable_full_llm: str='', token_url: str='', chat_url: str='', app_id: str='', static_token: str='', model: str='', timeout_ms: str='', temperature: str='', response_format_enabled: str='false', **kwargs):
+              enabled=_truthy(enable_full_llm) and bool(str(token_url or '').strip()) and bool(str(chat_url or '').strip()) and bool(str(app_id or '').strip()) and bool(str(static_token or ''))
+              rf_enabled=_truthy(response_format_enabled)
+              token_request_body={'appId':str(app_id or '').strip(),'credential':base64.b64encode(str(static_token or '').encode('utf-8')).decode('utf-8')}
+              token_request_body_json=json.dumps(token_request_body,ensure_ascii=False)
+              debug={'enable_full_llm':_truthy(enable_full_llm),'token_url_present':bool(str(token_url or '').strip()),'chat_url_present':bool(str(chat_url or '').strip()),'app_id_present':bool(str(app_id or '').strip()),'static_token_present':bool(str(static_token or '')),'model':model or '','timeout_ms':timeout_ms or '','temperature':temperature or '','response_format_enabled':rf_enabled,'schema_name':'continue_analysis_contract' if rf_enabled else ''}
+              return {'full_continue_analysis_request_enabled':'true' if enabled else 'false','full_continue_analysis_token_url':str(token_url or '').strip(),'full_continue_analysis_chat_url':str(chat_url or '').strip(),'full_continue_analysis_model':str(model or ''),'full_continue_analysis_timeout_sec':str(max(1,int(_int(timeout_ms,600000)/1000))),'full_continue_analysis_temperature':str(temperature or '0'),'full_continue_analysis_response_format_enabled':'true' if rf_enabled else 'false','full_continue_analysis_schema_name':'continue_analysis_contract' if rf_enabled else '','full_continue_analysis_token_request_body_json':token_request_body_json,'token_request_body_json':token_request_body_json,'full_continue_analysis_request_id':'continue_analysis_'+uuid.uuid4().hex,'full_continue_analysis_debug_summary':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 使用统一 ENABLE_FULL_LLM 构造继续分析满血 LLM 配置。
+        outputs:
+          full_continue_analysis_request_enabled: {type: string}
+          full_continue_analysis_token_url: {type: string}
+          full_continue_analysis_chat_url: {type: string}
+          full_continue_analysis_model: {type: string}
+          full_continue_analysis_timeout_sec: {type: string}
+          full_continue_analysis_temperature: {type: string}
+          full_continue_analysis_response_format_enabled: {type: string}
+          full_continue_analysis_schema_name: {type: string}
+          full_continue_analysis_token_request_body_json: {type: string}
+          token_request_body_json: {type: string}
+          full_continue_analysis_request_id: {type: string}
+          full_continue_analysis_debug_summary: {type: string}
+        selected: false
+        title: 代码执行_构造满血LLM_继续分析配置
+        type: code
+        variables:
+        - {variable: enable_full_llm, value_type: string, value_selector: [env, ENABLE_FULL_LLM]}
+        - {variable: token_url, value_type: string, value_selector: [env, LLM_TOKEN_URL]}
+        - {variable: chat_url, value_type: string, value_selector: [env, LLM_CHAT_URL]}
+        - {variable: app_id, value_type: string, value_selector: [env, LLM_APP_ID]}
+        - {variable: static_token, value_type: string, value_selector: [env, LLM_STATIC_TOKEN]}
+        - {variable: model, value_type: string, value_selector: [env, LLM_MODEL]}
+        - {variable: timeout_ms, value_type: string, value_selector: [env, LLM_TIMEOUT_MS]}
+        - {variable: temperature, value_type: string, value_selector: [env, LLM_TEMPERATURE]}
+        - {variable: response_format_enabled, value_type: string, value_selector: [env, FULL_LLM_RESPONSE_FORMAT_ENABLED]}
+      height: 100
+      id: '1779000000300'
+      position: {x: 3220, y: 1300}
+      positionAbsolute: {x: 3220, y: 1300}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - {comparison_operator: is, id: full-continue-analysis-enable, value: 'true', varType: string, variable_selector: ['1779000000300', full_continue_analysis_request_enabled]}
+          id: 'true'
+          logical_operator: and
+        desc: ENABLE_FULL_LLM=true 且配置齐全时优先进入继续分析满血 LLM，否则本地 fallback。
+        selected: false
+        title: 条件分支_是否启用满血LLM_继续分析
+        type: if-else
+      height: 124
+      id: '1779000000301'
+      position: {x: 3540, y: 1300}
+      positionAbsolute: {x: 3540, y: 1300}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+          type: no-auth
+        body:
+          data:
+          - id: continue-analysis-token-body
+            key: ''
+            type: text
+            value: "{{#1779000000300.token_request_body_json#}}"
+          type: json
+        desc: 使用短字段 token_request_body_json 绑定 body，避免 Dify HTTP Request 空 body。
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        selected: false
+        title: HTTP请求_获取动态Token_继续分析
+        type: http-request
+        url: "{{#1779000000300.full_continue_analysis_token_url#}}"
+        variables: []
+      height: 80
+      id: '1779000000306'
+      position: {x: 3860, y: 1300}
+      positionAbsolute: {x: 3860, y: 1300}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error, re
+          def _loads(s,d):
+              try: return json.loads(s) if isinstance(s,str) and s.strip() else d
+              except Exception: return d
+          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
+          def _strip_json(text):
+              s=str(text or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); s=m.group(1).strip() if m else s; a,b=s.find('{'),s.rfind('}'); return s[a:b+1] if a>=0 and b>=a else s
+          def main(token_status_code=0, token_body: str='', chat_url: str='', model: str='', temperature: str='0', timeout_sec: str='600', user_query: str='', last_context_json: str='', last_semantic_plan_json: str='', last_result_summary: str='', analysis_focus: str='', response_format_enabled: str='false', request_debug: str='{}', request_id: str=''):
+              safe_debug=_loads(request_debug,{})
+              try:
+                  code=int(token_status_code or 0)
+                  if code<200 or code>=300: raise ValueError('token_http_non_2xx:%s'%code)
+                  token_json=_loads(token_body,{})
+                  auth=str(token_json.get('result') or '').strip()
+                  if not auth:
+                      st=token_json.get('status') if isinstance(token_json.get('status'),dict) else {}
+                      raise ValueError('TOKEN_RESULT_EMPTY statusCode=%s errorCode=%s errorMsg=%s'%(st.get('statusCode',''),st.get('errorCode',''),st.get('errorMsg','')))
+                  system='你是一个基于上一轮查询结果的分析助手。必须基于已给出的结果行、字段、图表请求、用户本轮问题进行分析。必须输出 JSON，不要 markdown 代码块，不要解释 JSON 之外的内容，不要输出 schema 之外字段。不执行 Mongo；默认不重新画图。analysis_markdown 必须非空，作为最终给用户看的自然语言分析。analysis_debug_json 用于结构化调试，可包含 observations / insights / suggestions。不能只填 analysis_debug_json 而让 analysis_markdown 为空。涉及占比时必须计算准确，不要基于当前结果中不存在的字段做确定性归因。'
+                  user='当前用户问题：%s\n上一轮结果摘要：%s\n上一轮语义计划：%s\n上一轮最终摘要：%s\n分析关注点：%s'%(user_query,last_context_json,last_semantic_plan_json,last_result_summary,analysis_focus)
+                  schema={"type":"object","additionalProperties":False,"required":["analysis_markdown","analysis_debug_json"],"properties":{"analysis_markdown":{"type":"string"},"analysis_debug_json":{"type":"object","additionalProperties":True}}}
+                  body={'model':model or None,'messages':[{'role':'system','content':system},{'role':'user','content':user}], 'stream':False, 'temperature':float(temperature or 0)}
+                  if _truthy(response_format_enabled): body['response_format']={'type':'json_schema','json_schema':{'name':'continue_analysis_contract','schema':schema,'strict':False}}
+                  body={k:v for k,v in body.items() if v is not None}
+                  safe_debug.update({'chat_url_present':bool(chat_url),'model':model,'auth_present':bool(auth),'auth_scheme':'Basic' if auth.startswith('Basic ') else (auth.split(' ',1)[0] if ' ' in auth else 'unknown'),'auth_len':len(auth),'body_keys':list(body.keys()),'response_format_enabled':_truthy(response_format_enabled),'schema_name':'continue_analysis_contract' if _truthy(response_format_enabled) else '', 'request_id':request_id})
+                  req=urllib.request.Request(chat_url,data=json.dumps(body,ensure_ascii=False).encode('utf-8'),headers={'Content-Type':'application/json','Authorization':auth},method='POST')
+                  with urllib.request.urlopen(req,timeout=int(float(timeout_sec or 600))) as resp:
+                      raw=resp.read().decode('utf-8','replace'); root=_loads(raw,{}); content=(((root.get('choices') or [{}])[0].get('message') or {}).get('content') if isinstance(root,dict) else '') or raw; text=_strip_json(content)
+                      return {'ok':'true','status_code':resp.getcode(),'text':text,'structured_json':text,'error_message':'','debug_json':json.dumps(safe_debug,ensure_ascii=False)}
+              except urllib.error.HTTPError as e:
+                  msg=e.read().decode('utf-8','replace')[:1000] if hasattr(e,'read') else str(e); safe_debug['checker_error']='HTTPError'; return {'ok':'false','status_code':e.code,'text':'','structured_json':'{}','error_message':str(e)+' '+msg,'debug_json':json.dumps(safe_debug,ensure_ascii=False)}
+              except Exception as e:
+                  safe_debug['checker_error']=str(e); return {'ok':'false','status_code':0,'text':'','structured_json':'{}','error_message':str(e),'debug_json':json.dumps(safe_debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 调用满血 LLM 继续分析并保留安全错误响应。
+        outputs:
+          ok: {type: string}
+          status_code: {type: number}
+          text: {type: string}
+          structured_json: {type: string}
+          error_message: {type: string}
+          debug_json: {type: string}
+        selected: false
+        title: 代码执行_调用满血LLM_继续分析并保留错误响应
+        type: code
+        variables:
+        - {variable: token_status_code, value_type: number, value_selector: ['1779000000306', status_code]}
+        - {variable: token_body, value_type: string, value_selector: ['1779000000306', body]}
+        - {variable: chat_url, value_type: string, value_selector: ['1779000000300', full_continue_analysis_chat_url]}
+        - {variable: model, value_type: string, value_selector: ['1779000000300', full_continue_analysis_model]}
+        - {variable: temperature, value_type: string, value_selector: ['1779000000300', full_continue_analysis_temperature]}
+        - {variable: timeout_sec, value_type: string, value_selector: ['1779000000300', full_continue_analysis_timeout_sec]}
+        - {variable: user_query, value_type: string, value_selector: [sys, query]}
+        - {variable: last_context_json, value_type: string, value_selector: ['1776000000002', last_context_slim_json]}
+        - {variable: last_semantic_plan_json, value_type: string, value_selector: [conversation, last_normalized_semantic_plan_json]}
+        - {variable: last_result_summary, value_type: string, value_selector: [conversation, last_result_summary]}
+        - {variable: analysis_focus, value_type: string, value_selector: ['1776000000004', analysis_focus]}
+        - {variable: response_format_enabled, value_type: string, value_selector: ['1779000000300', full_continue_analysis_response_format_enabled]}
+        - {variable: request_debug, value_type: string, value_selector: ['1779000000300', full_continue_analysis_debug_summary]}
+        - {variable: request_id, value_type: string, value_selector: ['1779000000300', full_continue_analysis_request_id]}
+      height: 120
+      id: '1779000000302'
+      position: {x: 4180, y: 1300}
+      positionAbsolute: {x: 4180, y: 1300}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); return m.group(1).strip() if m else s
+          def _loads(v):
+              if isinstance(v,dict): return v
+              try: return json.loads(_strip(v)) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def main(ok: str='false', status_code=0, text: str='', structured_json: str='{}', error_message: str='', debug_json: str='{}'):
+              debug=_loads(debug_json); obj=_loads(structured_json or text); valid=str(ok or '').lower()=='true' and bool(str(text or '').strip()) and isinstance(obj,dict) and bool(str(obj.get('analysis_markdown') or '').strip()) and isinstance(obj.get('analysis_debug_json'),dict)
+              if not valid: debug['checker_error']=error_message or 'invalid_continue_analysis_contract'
+              sj=json.dumps(obj,ensure_ascii=False) if valid else '{}'
+              return {'full_continue_analysis_ok':'true' if valid else 'false','full_continue_analysis_text':sj if valid else '','full_continue_analysis_structured_json':sj,'full_continue_analysis_error_message':'' if valid else (error_message or 'invalid_continue_analysis_contract'),'full_continue_analysis_debug_json':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 校验满血继续分析响应符合原本地 LLM JSON contract。
+        outputs:
+          full_continue_analysis_ok: {type: string}
+          full_continue_analysis_text: {type: string}
+          full_continue_analysis_structured_json: {type: string}
+          full_continue_analysis_error_message: {type: string}
+          full_continue_analysis_debug_json: {type: string}
+        selected: false
+        title: 代码执行_判断满血LLM_继续分析状态
+        type: code
+        variables:
+        - {variable: ok, value_type: string, value_selector: ['1779000000302', ok]}
+        - {variable: status_code, value_type: number, value_selector: ['1779000000302', status_code]}
+        - {variable: text, value_type: string, value_selector: ['1779000000302', text]}
+        - {variable: structured_json, value_type: string, value_selector: ['1779000000302', structured_json]}
+        - {variable: error_message, value_type: string, value_selector: ['1779000000302', error_message]}
+        - {variable: debug_json, value_type: string, value_selector: ['1779000000302', debug_json]}
+      height: 120
+      id: '1779000000303'
+      position: {x: 4500, y: 1300}
+      positionAbsolute: {x: 4500, y: 1300}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - {comparison_operator: is, id: full-continue-analysis-ok, value: 'true', varType: string, variable_selector: ['1779000000303', full_continue_analysis_ok]}
+          id: 'true'
+          logical_operator: and
+        desc: 满血继续分析成功则跳过本地 LLM，否则回退本地 LLM_继续分析。
+        selected: false
+        title: 条件分支_满血继续分析是否成功
+        type: if-else
+      height: 124
+      id: '1779000000305'
+      position: {x: 4820, y: 1300}
+      positionAbsolute: {x: 4820, y: 1300}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v):
+              if isinstance(v,dict): return v
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def _text(v):
+              if isinstance(v,dict) and v: return json.dumps(v,ensure_ascii=False)
+              obj=_loads(v); return json.dumps(obj,ensure_ascii=False) if obj else (str(v or '').strip() or '{}')
+          def main(full_continue_analysis_ok: str='false', full_continue_analysis_text: str='', full_continue_analysis_structured_json: str='{}', full_continue_analysis_error_message: str='', local_structured_output=None, local_text: str='', **kwargs):
+              use_full=str(full_continue_analysis_ok or '').lower()=='true'; source='full_llm' if use_full else 'local_llm_fallback'; out=_text(full_continue_analysis_structured_json or full_continue_analysis_text) if use_full else (_text(local_structured_output) if isinstance(local_structured_output,dict) and local_structured_output else _text(local_text)); debug={'source':source,'has_text':bool(out and out!='{}'),'full_continue_analysis_ok':str(full_continue_analysis_ok or ''),'full_continue_analysis_error_message':str(full_continue_analysis_error_message or ''),'local_text_present':bool(local_text),'local_structured_output_present':isinstance(local_structured_output,dict) and bool(local_structured_output)}; return {'text':out,'structured_json':out,'structured_output':{},'plan_source':source,'merge_debug_json':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 合并满血或本地继续分析结果，输出浅层 structured_output 避免 depth limit。
+        outputs:
+          text: {type: string}
+          structured_json: {type: string}
+          structured_output: {type: object}
+          plan_source: {type: string}
+          merge_debug_json: {type: string}
+        selected: false
+        title: 代码执行_合并满血或本地继续分析结果
+        type: code
+        variables:
+        - {variable: full_continue_analysis_ok, value_type: string, value_selector: ['1779000000303', full_continue_analysis_ok]}
+        - {variable: full_continue_analysis_text, value_type: string, value_selector: ['1779000000303', full_continue_analysis_text]}
+        - {variable: full_continue_analysis_structured_json, value_type: string, value_selector: ['1779000000303', full_continue_analysis_structured_json]}
+        - {variable: full_continue_analysis_error_message, value_type: string, value_selector: ['1779000000303', full_continue_analysis_error_message]}
+        - {variable: local_structured_output, value_type: object, value_selector: ['1776000000017', structured_output]}
+        - {variable: local_text, value_type: string, value_selector: ['1776000000017', text]}
+      height: 110
+      id: '1779000000304'
+      position: {x: 5140, y: 1480}
+      positionAbsolute: {x: 5140, y: 1480}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
       x: -120
       y: 80
