@@ -1266,6 +1266,21 @@
                   return {}
               raise ValueError('invalid_' + field_name)
 
+          def _coerce_query_refinement(value, normalized):
+              if isinstance(value, dict):
+                  return value
+              if value is None or value == '':
+                  normalized.append('query_refinement')
+                  return {}
+              if isinstance(value, str):
+                  text = value.strip()
+                  if not text:
+                      normalized.append('query_refinement')
+                      return {}
+                  normalized.append('query_refinement')
+                  return {'summary': text}
+              raise ValueError('invalid_query_refinement')
+
           def _coerce_chart_modification(value, normalized):
               if isinstance(value, dict):
                   return value
@@ -1310,7 +1325,7 @@
               out['missing_info'] = _coerce_missing_info(out.get('missing_info'), normalized)
               out['chart_modification'] = _coerce_chart_modification(out.get('chart_modification'), normalized)
               out['refine_route'] = _normalize_refine_route(out.get('refine_route'), out.get('turn_intent'), normalized)
-              out['query_refinement'] = _coerce_object_field(out.get('query_refinement'), 'query_refinement', normalized)
+              out['query_refinement'] = _coerce_query_refinement(out.get('query_refinement'), normalized)
               if out.get('analysis_focus') is None:
                   out['analysis_focus'] = ''
                   normalized.append('analysis_focus')

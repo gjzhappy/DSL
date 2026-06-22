@@ -144,7 +144,16 @@
               obj['turn_intent'] = intent
               obj['missing_info'] = obj.get('missing_info') if isinstance(obj.get('missing_info'), list) else []
               obj['chart_modification'] = obj.get('chart_modification') if isinstance(obj.get('chart_modification'), dict) else {}
-              obj['query_refinement'] = obj.get('query_refinement') if isinstance(obj.get('query_refinement'), dict) else {}
+              qref = obj.get('query_refinement')
+              if isinstance(qref, dict):
+                  obj['query_refinement'] = qref
+              elif qref is None or qref == '':
+                  obj['query_refinement'] = {}
+              elif isinstance(qref, str):
+                  text = qref.strip()
+                  obj['query_refinement'] = {'summary': text} if text else {}
+              else:
+                  obj['query_refinement'] = {}
               obj['analysis_focus'] = str(obj.get('analysis_focus') or '')
               obj['reason'] = str(obj.get('reason') or '')
               refine_route = str(obj.get('refine_route') or '').strip()
