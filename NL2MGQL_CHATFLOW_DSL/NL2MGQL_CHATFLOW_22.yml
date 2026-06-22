@@ -200,6 +200,292 @@
       targetPosition: left
       type: custom
       width: 242
+    - data:
+        code: |
+          import base64, json, uuid
+          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
+          def _int(v,d):
+              try: return int(v)
+              except Exception: return d
+          def main(enable_full_llm: str='', token_url: str='', chat_url: str='', app_id: str='', static_token: str='', model: str='', timeout_ms: str='', temperature: str='', response_format_enabled: str='false', **kwargs):
+              enabled=_truthy(enable_full_llm) and bool(str(token_url or '').strip()) and bool(str(chat_url or '').strip()) and bool(str(app_id or '').strip()) and bool(str(static_token or ''))
+              rf_enabled=_truthy(response_format_enabled)
+              token_request_body={'appId':str(app_id or '').strip(),'credential':base64.b64encode(str(static_token or '').encode('utf-8')).decode('utf-8')}
+              debug={'enable_full_llm':_truthy(enable_full_llm),'token_url_present':bool(str(token_url or '').strip()),'chat_url_present':bool(str(chat_url or '').strip()),'app_id_present':bool(str(app_id or '').strip()),'static_token_present':bool(str(static_token or '')),'model':model or '','timeout_ms':timeout_ms or '','temperature':temperature or '','response_format_enabled':rf_enabled,'response_format_type':'json_schema' if rf_enabled else None,'schema_name':'semantic_plan_contract' if rf_enabled else ''}
+              return {'full_refine_plan_request_enabled':'true' if enabled else 'false','full_refine_plan_token_url':str(token_url or '').strip(),'full_refine_plan_token_request_body_json':json.dumps(token_request_body,ensure_ascii=False),'full_refine_plan_chat_url':str(chat_url or ''),'full_refine_plan_model':str(model or ''),'full_refine_plan_timeout_sec':str(max(1, int(_int(timeout_ms,600000)/1000))),'full_refine_plan_temperature':str(temperature or '0'),'full_refine_plan_response_format_enabled':'true' if rf_enabled else 'false','full_refine_plan_schema_name':'semantic_plan_contract' if rf_enabled else '','full_refine_plan_request_id':'refine_plan_'+uuid.uuid4().hex,'full_refine_plan_debug_summary':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 使用统一 ENABLE_FULL_LLM 构造 Refine full_replan 满血 planner 配置，不新增独立开关。
+        outputs:
+          full_refine_plan_request_enabled: {type: string}
+          full_refine_plan_token_url: {type: string}
+          full_refine_plan_token_request_body_json: {type: string}
+          full_refine_plan_chat_url: {type: string}
+          full_refine_plan_model: {type: string}
+          full_refine_plan_timeout_sec: {type: string}
+          full_refine_plan_temperature: {type: string}
+          full_refine_plan_response_format_enabled: {type: string}
+          full_refine_plan_schema_name: {type: string}
+          full_refine_plan_request_id: {type: string}
+          full_refine_plan_debug_summary: {type: string}
+        selected: false
+        title: 代码执行_构造满血LLM_Refine查询规划配置
+        type: code
+        variables:
+        - {variable: enable_full_llm, value_type: string, value_selector: [env, ENABLE_FULL_LLM]}
+        - {variable: token_url, value_type: string, value_selector: [env, LLM_TOKEN_URL]}
+        - {variable: chat_url, value_type: string, value_selector: [env, LLM_CHAT_URL]}
+        - {variable: app_id, value_type: string, value_selector: [env, LLM_APP_ID]}
+        - {variable: model, value_type: string, value_selector: [env, LLM_MODEL]}
+        - {variable: timeout_ms, value_type: string, value_selector: [env, LLM_TIMEOUT_MS]}
+        - {variable: temperature, value_type: string, value_selector: [env, LLM_TEMPERATURE]}
+        - {variable: static_token, value_type: string, value_selector: [env, LLM_STATIC_TOKEN]}
+        - {variable: response_format_enabled, value_type: string, value_selector: [env, FULL_LLM_RESPONSE_FORMAT_ENABLED]}
+      height: 100
+      id: '1779000000100'
+      position: {x: 5840, y: 1900}
+      positionAbsolute: {x: 5840, y: 1900}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - {comparison_operator: is, id: full-refine-enable, value: 'true', varType: string, variable_selector: ['1779000000100', full_refine_plan_request_enabled]}
+          id: 'true'
+          logical_operator: and
+        desc: ENABLE_FULL_LLM=true 且满血 planner 必要配置可用时进入满血分支，否则直接本地 fallback。
+        selected: false
+        title: 条件分支_是否启用满血LLM_Refine查询规划
+        type: if-else
+      height: 124
+      id: '1779000000101'
+      position: {x: 6160, y: 1900}
+      positionAbsolute: {x: 6160, y: 1900}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          config:
+            type: no-auth
+        body:
+          data:
+          - id: refine-plan-token-body
+            key: ''
+            type: text
+            value: "{{#1779000000100.full_refine_plan_token_request_body_json#}}"
+          type: json
+        desc: 与满血意图识别一致，使用 appId + credential 获取动态 Basic token；仅 ENABLE_FULL_LLM=true 且配置可用时执行。
+        headers: Content-Type:application/json
+        method: post
+        params: ''
+        selected: false
+        title: HTTP请求_获取动态Token_Refine查询规划
+        type: http-request
+        url: "{{#1779000000100.full_refine_plan_token_url#}}"
+        variables: []
+      height: 80
+      id: '1779000000106'
+      position: {x: 6480, y: 1760}
+      positionAbsolute: {x: 6480, y: 1760}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, urllib.request, urllib.error
+          def _loads(s, default):
+              try: return json.loads(s) if isinstance(s,str) and s.strip() else default
+              except Exception: return default
+          def _truthy(v): return str(v or '').strip().lower() in {'1','true','yes','on','y'}
+          def _trunc(s,n=2000):
+              s='' if s is None else str(s); return s if len(s)<=n else s[:n]+'...'
+          def main(token_status_code=0, token_body: str='', chat_url: str='', model: str='', temperature: str='0', timeout_sec: str='600', system_prompt: str='', user_prompt: str='', schema_json: str='{}', response_format_enabled: str='false', request_debug: str='{}', request_id: str=''):
+              safe_debug=_loads(request_debug,{})
+              try:
+                  code=int(token_status_code or 0)
+                  if code<200 or code>=300: raise ValueError('token_http_non_2xx:%s'%code)
+                  token_json=_loads(token_body,{})
+                  authorization_value=str(token_json.get('result') or '').strip()
+                  if not authorization_value: raise ValueError('TOKEN_RESULT_EMPTY')
+                  schema=_loads(schema_json,{})
+                  contract_hint='\n\n输出 JSON contract/schema:\n'+json.dumps(schema,ensure_ascii=False)+'\n只输出 JSON object，不要 markdown、解释文字、代码块。'
+                  body={'model':model or None,'messages':[{'role':'system','content':system_prompt},{'role':'user','content':str(user_prompt or '')+contract_hint}], 'stream':False, 'temperature':float(temperature or 0)}
+                  rf_enabled=_truthy(response_format_enabled)
+                  if rf_enabled:
+                      body['response_format']={'type':'json_schema','json_schema':{'name':'semantic_plan_contract','schema':schema,'strict':False}}
+                  body={k:v for k,v in body.items() if v is not None}
+                  headers={'Content-Type':'application/json','Authorization':authorization_value}
+                  response_format=body.get('response_format') if isinstance(body.get('response_format'),dict) else {}
+                  json_schema=response_format.get('json_schema') if isinstance(response_format.get('json_schema'),dict) else {}
+                  safe_debug.update({'chat_url_present':bool(chat_url),'model':model,'auth_present':bool(authorization_value),'auth_scheme':'Basic' if authorization_value.startswith('Basic ') else (authorization_value.split(' ',1)[0] if ' ' in authorization_value else 'unknown'),'auth_len':len(authorization_value),'body_keys':list(body.keys()),'response_format_enabled':rf_enabled,'response_format_type':response_format.get('type') if rf_enabled else None,'schema_name':str(json_schema.get('name') or '') if rf_enabled else '', 'request_id':request_id})
+                  req=urllib.request.Request(chat_url, data=json.dumps(body,ensure_ascii=False).encode('utf-8'), headers=headers, method='POST')
+                  with urllib.request.urlopen(req, timeout=int(float(timeout_sec or 600))) as resp:
+                      text=resp.read().decode('utf-8','replace')
+                      return {'status_code':resp.getcode(),'ok':True,'body':text,'body_preview':text[:2000],'headers_json':json.dumps(dict(resp.headers),ensure_ascii=False),'error_message':'','request_debug':safe_debug}
+              except urllib.error.HTTPError as e:
+                  text=e.read().decode('utf-8','replace') if hasattr(e,'read') else ''
+                  safe_debug['checker_error']='HTTPError'
+                  return {'status_code':e.code,'ok':False,'body':text,'body_preview':text[:2000],'headers_json':'{}','error_message':str(e),'request_debug':safe_debug}
+              except Exception as e:
+                  safe_debug['checker_error']=str(e)
+                  return {'status_code':0,'ok':False,'body':'','body_preview':'','headers_json':'{}','error_message':str(e),'request_debug':safe_debug}
+        code_language: python3
+        desc: 调用满血 LLM Refine 查询规划，保留错误响应并避免泄露授权值。
+        outputs:
+          status_code: {type: number}
+          ok: {type: boolean}
+          body: {type: string}
+          body_preview: {type: string}
+          headers_json: {type: string}
+          error_message: {type: string}
+          request_debug: {type: object}
+        selected: false
+        title: 代码执行_调用满血LLM_Refine查询规划并保留错误响应
+        type: code
+        variables:
+        - {variable: token_status_code, value_type: number, value_selector: ['1779000000106', status_code]}
+        - {variable: token_body, value_type: string, value_selector: ['1779000000106', body]}
+        - {variable: chat_url, value_type: string, value_selector: ['1779000000100', full_refine_plan_chat_url]}
+        - {variable: model, value_type: string, value_selector: ['1779000000100', full_refine_plan_model]}
+        - {variable: temperature, value_type: string, value_selector: ['1779000000100', full_refine_plan_temperature]}
+        - {variable: timeout_sec, value_type: string, value_selector: ['1779000000100', full_refine_plan_timeout_sec]}
+        - {variable: system_prompt, value_type: string, value_selector: ['1776000000027', replan_system_prompt]}
+        - {variable: user_prompt, value_type: string, value_selector: ['1776000000027', replan_user_prompt]}
+        - {variable: schema_json, value_type: string, value_selector: ['1776000000027', replan_json_schema]}
+        - {variable: response_format_enabled, value_type: string, value_selector: ['1779000000100', full_refine_plan_response_format_enabled]}
+        - {variable: request_debug, value_type: string, value_selector: ['1779000000100', full_refine_plan_debug_summary]}
+        - {variable: request_id, value_type: string, value_selector: ['1779000000100', full_refine_plan_request_id]}
+      height: 120
+      id: '1779000000102'
+      position: {x: 6800, y: 1760}
+      positionAbsolute: {x: 6800, y: 1760}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json, re
+          REQUIRED=['contract_version','primary_collection','related_collections','execution_mode','answer_mode','needs_chart','stages','final_merge','chart_request','requires_clarification','clarification_question','needs_schema_retrieval','warnings']
+          def _strip(s):
+              s=str(s or '').strip(); m=re.match(r'^```(?:json)?\s*(.*?)\s*```$',s,re.S|re.I); return m.group(1).strip() if m else s
+          def _loads_any(v):
+              if isinstance(v,dict): return v
+              x=json.loads(_strip(v))
+              if isinstance(x,str): x=json.loads(_strip(x))
+              return x
+          def main(status_code=0, ok=False, body: str='', body_preview: str='', headers_json: str='{}', error_message: str='', request_debug=None):
+              debug={'body_preview':body_preview,'request_debug':request_debug or {},'normalized_fields':[]}
+              if int(status_code or 0)<200 or int(status_code or 0)>=300: return {'full_refine_plan_ok':'false','full_refine_plan_status_code':status_code,'full_refine_plan_text':'','full_refine_plan_structured_json':'{}','full_refine_plan_error_message':error_message or 'http_non_2xx','full_refine_plan_debug_json':json.dumps(debug,ensure_ascii=False)}
+              if not str(body or '').strip():
+                  debug['checker_error']='invalid_empty_body'; return {'full_refine_plan_ok':'false','full_refine_plan_status_code':status_code,'full_refine_plan_text':'','full_refine_plan_structured_json':'{}','full_refine_plan_error_message':'invalid_empty_body','full_refine_plan_debug_json':json.dumps(debug,ensure_ascii=False)}
+              try:
+                  root=_loads_any(body); content=(((root.get('choices') or [{}])[0].get('message') or {}).get('content') if isinstance(root,dict) else '') or (body if isinstance(root,dict) and root.get('contract_version') else '')
+                  if not content: raise ValueError('invalid_empty_content')
+                  plan=_loads_any(content)
+                  debug['content_preview']=str(content)[:1500]
+                  if not isinstance(plan,dict): raise ValueError('invalid_json_object')
+                  missing=[k for k in REQUIRED if k not in plan]
+                  if missing: raise ValueError('missing_required:'+','.join(missing))
+                  if plan.get('contract_version')!='semantic_plan_contract' or not isinstance(plan.get('stages'),list) or not plan.get('stages'): raise ValueError('invalid_contract')
+                  text=json.dumps(plan,ensure_ascii=False)
+                  return {'full_refine_plan_ok':'true','full_refine_plan_status_code':status_code,'full_refine_plan_text':text,'full_refine_plan_structured_json':text,'full_refine_plan_error_message':'','full_refine_plan_debug_json':json.dumps(debug,ensure_ascii=False)}
+              except Exception as e:
+                  debug['checker_error']=str(e)
+                  return {'full_refine_plan_ok':'false','full_refine_plan_status_code':status_code,'full_refine_plan_text':'','full_refine_plan_structured_json':'{}','full_refine_plan_error_message':str(e),'full_refine_plan_debug_json':json.dumps(debug,ensure_ascii=False)}
+        code_language: python3
+        desc: 校验满血 Refine 查询规划响应，仅允许合法 semantic_plan_contract 进入统一输出。
+        outputs:
+          full_refine_plan_ok: {type: string}
+          full_refine_plan_status_code: {type: number}
+          full_refine_plan_text: {type: string}
+          full_refine_plan_structured_json: {type: string}
+          full_refine_plan_error_message: {type: string}
+          full_refine_plan_debug_json: {type: string}
+        selected: false
+        title: 代码执行_判断满血LLM_Refine查询规划状态
+        type: code
+        variables:
+        - {variable: status_code, value_type: number, value_selector: ['1779000000102', status_code]}
+        - {variable: ok, value_type: boolean, value_selector: ['1779000000102', ok]}
+        - {variable: body, value_type: string, value_selector: ['1779000000102', body]}
+        - {variable: body_preview, value_type: string, value_selector: ['1779000000102', body_preview]}
+        - {variable: headers_json, value_type: string, value_selector: ['1779000000102', headers_json]}
+        - {variable: error_message, value_type: string, value_selector: ['1779000000102', error_message]}
+        - {variable: request_debug, value_type: object, value_selector: ['1779000000102', request_debug]}
+      height: 120
+      id: '1779000000103'
+      position: {x: 7120, y: 1760}
+      positionAbsolute: {x: 7120, y: 1760}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: |
+          import json
+          def _loads(v):
+              if isinstance(v,dict): return v
+              try: return json.loads(v) if isinstance(v,str) and v.strip() else {}
+              except Exception: return {}
+          def main(full_refine_plan_ok: str='false', full_refine_plan_text: str='', full_refine_plan_structured_json: str='{}', full_refine_plan_debug_json: str='{}', local_structured_output=None, local_text: str='', local_semantic_plan_contract_json: str='', **kwargs):
+              use_full=str(full_refine_plan_ok or '').lower()=='true'
+              if use_full:
+                  obj=_loads(full_refine_plan_structured_json or full_refine_plan_text); source='full_llm'
+              else:
+                  obj=local_structured_output if isinstance(local_structured_output,dict) and local_structured_output else _loads(local_semantic_plan_contract_json or local_text); source='local_llm_fallback'
+              text=json.dumps(obj,ensure_ascii=False) if isinstance(obj,dict) and obj else '{}'
+              return {'structured_output':obj if isinstance(obj,dict) else {},'text':text,'semantic_plan_contract_json':text,'plan_source':source,'plan_merge_debug_json':json.dumps({'source':source,'full_refine_plan_ok':full_refine_plan_ok,'full_debug':str(full_refine_plan_debug_json or '')[:1500]},ensure_ascii=False)}
+        code_language: python3
+        desc: 统一满血或本地 Refine 查询规划输出，保持下游 text/structured_output contract 稳定。
+        outputs:
+          structured_output: {type: object}
+          text: {type: string}
+          semantic_plan_contract_json: {type: string}
+          plan_source: {type: string}
+          plan_merge_debug_json: {type: string}
+        selected: false
+        title: 代码执行_合并满血或本地Refine查询规划结果
+        type: code
+        variables:
+        - {variable: full_refine_plan_ok, value_type: string, value_selector: ['1779000000103', full_refine_plan_ok]}
+        - {variable: full_refine_plan_text, value_type: string, value_selector: ['1779000000103', full_refine_plan_text]}
+        - {variable: full_refine_plan_structured_json, value_type: string, value_selector: ['1779000000103', full_refine_plan_structured_json]}
+        - {variable: full_refine_plan_debug_json, value_type: string, value_selector: ['1779000000103', full_refine_plan_debug_json]}
+        - {variable: local_structured_output, value_type: object, value_selector: ['1776000000020', structured_output]}
+        - {variable: local_text, value_type: string, value_selector: ['1776000000020', text]}
+      height: 110
+      id: '1779000000104'
+      position: {x: 7760, y: 2040}
+      positionAbsolute: {x: 7760, y: 2040}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - {comparison_operator: is, id: full-refine-ok, value: 'true', varType: string, variable_selector: ['1779000000103', full_refine_plan_ok]}
+          id: 'true'
+          logical_operator: and
+        desc: 满血 Refine 查询规划成功则跳过本地 LLM，否则回退本地 LLM_Refine查询规划。
+        selected: false
+        title: 条件分支_满血Refine查询规划是否成功
+        type: if-else
+      height: 124
+      id: '1779000000105'
+      position: {x: 7440, y: 1760}
+      positionAbsolute: {x: 7440, y: 1760}
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
       x: -120
       y: 80
