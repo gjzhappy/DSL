@@ -291,7 +291,7 @@
               raw_filters = cleaned.get('filters') or []
               cleaned['filters'] = _sanitize_stage_filters(raw_filters, time_range)
               dropped_stage_ref_filters = 0
-              if str(cleaned.get('intent_type') or '').strip() == 'enrich_related':
+              if str(cleaned.get('stage_type') or '').strip() == 'enrich_related' or str(cleaned.get('intent_type') or '').strip() == 'enrich_related':
                   cleaned['join_source_field'] = _normalize_stage_field_ref(cleaned.get('join_source_field'))
                   kept_filters = []
                   for f in cleaned.get('filters') or []:
@@ -581,6 +581,8 @@
           def canonicalize_intent_type(intent_type, stage=None):
               raw = str(intent_type or '').strip().lower()
               stage = stage if isinstance(stage, dict) else {}
+              if str(stage.get('stage_type') or '').strip() == 'enrich_related':
+                  return 'enrich_related'
               if raw in {'aggregate', 'aggregation'}:
                   if stage.get('group_fields') and (stage.get('metric_function') or stage.get('metric_alias') or stage.get('metric_field')):
                       return 'aggregate_summary'
@@ -763,6 +765,7 @@
                   stage_time_range = _normalize_time_range(raw.get('time_range'), collection)
                   stage = {
                       'stage_name': stage_name,
+                      'stage_type': str(raw.get('stage_type') or '').strip(),
                       'collection': collection,
                       'depends_on': str(raw.get('depends_on') or '').strip(),
                       'intent_type': intent_type,

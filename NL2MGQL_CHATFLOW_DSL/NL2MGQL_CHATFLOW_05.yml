@@ -218,7 +218,11 @@
               return validated_ast, pipeline, False
           def _compile_stage(stage, schema_context, stage_outputs, prior_stages=None, warnings=None):
               stage = _sanitize_stage_for_compile(stage)
+              stage_type = str(stage.get('stage_type') or '').strip()
               intent = canonicalize_intent_type(stage.get('intent_type'), stage)
+              if stage_type == 'enrich_related' or intent == 'enrich_related':
+                  stage['intent_type'] = 'enrich_related'
+                  return _compile_enrich_related(stage, schema_context, stage_outputs, prior_stages, warnings)
               stage['intent_type'] = intent
               if intent == 'detail_query':
                   validated_ast, pipeline = _compile_detail_query(stage, schema_context, stage_outputs)
