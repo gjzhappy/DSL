@@ -432,6 +432,22 @@
                 type: array
                 items:
                   type: string
+              array_unwind:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+                  properties:
+                    collection:
+                      type: string
+                    path:
+                      type: string
+                    preserveNullAndEmptyArrays:
+                      type: boolean
+                    source_stage:
+                      type: string
+                    reason:
+                      type: string
               replan_error:
                 type: string
               clarify_suggestion:

@@ -1,3 +1,24 @@
+              def _ensure_array_unwind(collection: str, path: str, source_stage: str, reason: str):
+                  if not collection:
+                      collection = primary
+                  items = plan.get("array_unwind") if isinstance(plan.get("array_unwind"), list) else []
+                  for item in items:
+                      if isinstance(item, dict) and _str(item.get("path")) == path and (_str(item.get("collection")) in {"", collection}):
+                          if "preserveNullAndEmptyArrays" not in item:
+                              item["preserveNullAndEmptyArrays"] = False
+                          item.setdefault("source_stage", source_stage or "")
+                          item.setdefault("reason", reason or "")
+                          return
+                  new_item = {"collection": collection, "path": path, "preserveNullAndEmptyArrays": False, "source_stage": source_stage or "", "reason": reason or "array item field used by filter/group/sort/projection/metric"}
+                  items.append(new_item)
+                  plan["array_unwind"] = items
+                  autofixes.append({"type": "array_unwind_autofill", **new_item})
+
+              def _array_use(field: str, collection: str, stage_name: str, place: str):
+                  apath, item = _array_item_ref(array_map, collection, field)
+                  if apath:
+                      _ensure_array_unwind(collection, apath, stage_name, f"array item field used by {place}")
+
               if selected and primary and selected != primary:
                   msg = f"collection_selection.selected_primary_collection={selected} 与 plan.primary_collection={primary} 不一致。"
                   if confidence and confidence < 0.6:
@@ -271,7 +292,7 @@
                           if not is_stage_output and canonical_sf not in valid_sort_fields:
                               cf = _canonical_field(canonical_sf, schema, coll, "sort", errors, warnings, autofixes, "sortable")
                               ns["field"] = cf
-                              if cf not in valid_sort_fields and cf != _str(stage.get("metric_alias")):
+                              if cf not in valid_sort_fields and cf != _str(stage.get("metric_alias")) and not _array_item_ref(array_map, coll, cf)[0]:
                                   errors.append(f"sort.field={sf} 不是 group/metric/projection/schema sortable 字段。")
                       d = ns.get("direction", ns.get("order", "desc"))
                       if d in (1, "1", "asc", "ASC", "ascending"):
@@ -291,6 +312,43 @@
                           sorts.append({"field": stage.get("metric_alias"), "direction": _str(m.get("default_sort"))}); autofixes.append({"type": "metric_default_sort", "metric": stage.get("metric_alias"), "direction": m.get("default_sort")})
                   stage["sort"] = sorts
 
+                  stage_name_for_array = _str(stage.get("stage_name") or i)
+                  for gf in _list(stage.get("group_fields")):
+                      _array_use(gf, coll, stage_name_for_array, "group_fields")
+                  for f0 in _list(stage.get("filters")):
+                      if isinstance(f0, dict):
+                          _array_use(_str(f0.get("field")), coll, stage_name_for_array, "filters")
+                  for pf0 in _list(stage.get("projection_fields")):
+                      _array_use(pf0, coll, stage_name_for_array, "projection_fields")
+                  for sf0 in _list(stage.get("sort")):
+                      if isinstance(sf0, dict):
+                          _array_use(_str(sf0.get("field")), coll, stage_name_for_array, "sort")
+                  for key0 in ("entity_field", "rank_order_field", "metric_field"):
+                      if _str(stage.get(key0)):
+                          _array_use(_str(stage.get(key0)), coll, stage_name_for_array, key0)
+
+
+              for uw_i, uw in enumerate(plan.get("array_unwind") if isinstance(plan.get("array_unwind"), list) else []):
+                  if not isinstance(uw, dict):
+                      errors.append(f"array_unwind[{uw_i}] 不是对象。")
+                      continue
+                  uw_coll = _str(uw.get("collection") or primary)
+                  uw_path = _str(uw.get("path"))
+                  if uw_coll not in collections:
+                      errors.append(f"array_unwind[{uw_i}].collection={uw_coll} 不存在。")
+                      continue
+                  if uw_path not in (array_map.get(uw_coll) or {}):
+                      errors.append(f"array_unwind[{uw_i}].path={uw_path or '<empty>'} 未在 collection={uw_coll} 的 array_fields 中声明。")
+                      continue
+                  if "preserveNullAndEmptyArrays" not in uw:
+                      uw["preserveNullAndEmptyArrays"] = False
+                      autofixes.append({"type": "array_unwind_preserve_default", "collection": uw_coll, "path": uw_path, "value": False})
+                  if "source_stage" not in uw:
+                      uw["source_stage"] = ""
+                      autofixes.append({"type": "array_unwind_source_stage_default", "collection": uw_coll, "path": uw_path})
+                  if "reason" not in uw:
+                      uw["reason"] = ""
+                      autofixes.append({"type": "array_unwind_reason_default", "collection": uw_coll, "path": uw_path})
 
               stage_list = plan.get("stages") if isinstance(plan.get("stages"), list) else []
               stage_positions = {_str(st.get("stage_name")): idx for idx, st in enumerate(stage_list) if isinstance(st, dict) and _str(st.get("stage_name"))}
@@ -409,7 +467,19 @@
                       for jk in rel.get("join_keys") or []:
                           primary_field_map = _named_item_map((collections.get(primary) or {}).get("fields") or {})
                           target_field_map = _named_item_map((collections.get(rc) or {}).get("fields") or {})
-                          if _str(jk.get("source_field")) not in primary_field_map:
+                          if _str(jk.get("source_cardinality")) == "array":
+                              sap = _str(jk.get("source_array_path"))
+                              sif = _str(jk.get("source_item_field"))
+                              sf = _str(jk.get("source_field"))
+                              if sap not in (array_map.get(primary) or {}):
+                                  errors.append(f"relation array source_array_path={sap or '<empty>'} 未在 {primary}.array_fields 中声明。")
+                              elif sif not in ((array_map.get(primary) or {}).get(sap, {}).get("item_fields") or {}):
+                                  errors.append(f"relation array source_item_field={sif or '<empty>'} 未在 {primary}.{sap}.item_fields 中声明。")
+                              if sf != (sap + "." + sif):
+                                  errors.append("relation array source_field 必须等于 source_array_path + '.' + source_item_field。")
+                              if _str(jk.get("match_type") or "exact") != "exact":
+                                  errors.append(f"relation array match_type={jk.get('match_type')} 当前不支持，仅支持 exact。")
+                          elif _str(jk.get("source_field")) not in primary_field_map:
                               errors.append(f"relation source_field={jk.get('source_field')} 不存在。")
                           if _str(jk.get("target_field")) not in target_field_map:
                               errors.append(f"relation target_field={jk.get('target_field')} 不存在。")

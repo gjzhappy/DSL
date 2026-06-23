@@ -618,7 +618,8 @@
               'collection', 'primary_collection', 'related_collections',
               'relation', 'join', 'enrich',
               'intent', 'intent_type', 'business_rule_change', 'negative_fields',
-              'entity_field', 'business_logic', 'semantic_change', 'new_schema_needed'
+              'entity_field', 'business_logic', 'semantic_change', 'new_schema_needed',
+              'array_unwind', 'array_field', 'array_fields', 'source_cardinality', 'source_array_path', 'source_item_field'
           )
           STRUCTURAL_NESTED_PATHS = (
               ('chart_request', 'x_field'),
@@ -630,7 +631,7 @@
               r'按.+统计', r'按.+排序', r'按.+口径', r'按.+维度', r'横轴改成', r'纵轴改成',
               r'换成.+维度', r'改成.+口径', r'只统计', r'只看(?!前\s*\d)',
               r'筛选', r'过滤', r'排除', r'条件', r'口径', r'真实口径', r'重新统计',
-              r'不看.+改成', r'改看', r'加上.+信息', r'关联', r'join|JOIN'
+              r'不看.+改成', r'改看', r'加上.+信息', r'关联', r'join|JOIN', r'[A-Za-z_][\w-]*\.[A-Za-z_][\w-]*'
           )
           NEGATION_PATTERNS = (r'不再按\s*([^，。,.\s]+)', r'不要\s*([^，。,.\s]+)', r'不是\s*([^，。,.\s]+)', r'不看\s*([^，。,.\s]+)')
 
