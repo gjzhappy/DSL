@@ -611,8 +611,10 @@
               ctx = _loads(compact_context_json)
               turn = _loads(turn_intent_json)
               cb = _loads(context_binding_json)
-              base = str(cb.get('base_primary_collection') or '').strip()
-              inherit = bool(cb.get('inherit_previous_collection')) and bool(base) and not bool(cb.get('collection_switch'))
+              base = str(cb.get('base_primary_collection') or cb.get('old_primary_collection') or '').strip()
+              if not base:
+                  base = str(ctx.get('last_primary_collection') or '').strip()
+              inherit = (bool(cb.get('inherit_previous_collection')) or bool(turn.get('keep_previous_primary'))) and bool(base) and not (bool(cb.get('collection_switch')) or bool(turn.get('collection_switch')))
               if not catalog.get('collections'):
                   if inherit:
                       selection.update({
@@ -630,7 +632,7 @@
                           'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
                           'collection_selection_json': json.dumps(selection, ensure_ascii=False),
                           'selected_primary_collection': base,
-                          'selected_related_collections': [],
+                          'selected_related_collections': selection.get('selected_related_collections') or [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
                           'schema_hydration_collections': selection.get('schema_hydration_collections') or ([base] if base else []),
@@ -663,31 +665,44 @@
               context_prior_collections = _uniq([last_primary] + last_related + schema_ref_collections, 12)
               warnings, candidates = [], []
               catalog_names = [str(c.get('collection_name') or '').strip() for c in catalog.get('collections') or []]
+
+              def _inherited_related():
+                  needed = _uniq(_list(turn.get('needed_collections')), 12)
+                  related = [x for x in needed if x and x != base and x in catalog_names]
+                  missing = [x for x in needed if x and x != base and x not in catalog_names]
+                  return related, missing
+
               if inherit:
                   if base in catalog_names:
-                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'selection_reason': 'inherited_from_previous_primary_collection'})
+                      related, missing_related = _inherited_related()
+                      warnings.append('refine primary inherited from previous context: ' + base)
+                      if missing_related:
+                          warnings.append('missing related schema triggers hydration: ' + ', '.join(missing_related))
+                      selection.update({'selected_primary_collection': base, 'selected_related_collections': related, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': bool(missing_related), 'needs_schema_hydration': bool(missing_related), 'schema_hydration_collections': missing_related, 'selection_reason': 'inherited_from_previous_primary_collection'})
                       selection['primary_candidates'] = [{'collection': base, 'score': 0.85, 'reason': 'inherited_from_previous_primary_collection', 'matched_aliases': []}]
                       selection['warnings'] = warnings
                       return {
                           'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
                           'collection_selection_json': json.dumps(selection, ensure_ascii=False),
                           'selected_primary_collection': base,
-                          'selected_related_collections': [],
+                          'selected_related_collections': selection.get('selected_related_collections') or [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
                           'requires_clarification': False,
                           'clarification_question': '',
                       }
                   else:
-                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog'})
+                      related, missing_related = _inherited_related()
+                      selection.update({'selected_primary_collection': base, 'selected_related_collections': related, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'needs_schema_retrieval': True, 'needs_schema_hydration': True, 'selection_reason': 'inherited_primary_collection_missing_from_candidate_catalog'})
+                      warnings.append('refine primary inherited from previous context: ' + base)
                       warnings.append('inherited_primary_collection_missing_from_candidate_catalog')
-                      selection['schema_hydration_collections'] = [base]
+                      selection['schema_hydration_collections'] = _uniq([base] + missing_related, 12)
                       selection['warnings'] = warnings
                       return {
                           'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
                           'collection_selection_json': json.dumps(selection, ensure_ascii=False),
                           'selected_primary_collection': base,
-                          'selected_related_collections': [],
+                          'selected_related_collections': selection.get('selected_related_collections') or [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
                           'requires_clarification': False,
@@ -984,6 +999,17 @@
               return result
 
 
+          def _uniq(items, limit=0):
+              out, seen = [], set()
+              for item in items or []:
+                  item = str(item or '').strip()
+                  if item and item not in seen:
+                      seen.add(item); out.append(item)
+                      if limit and len(out) >= limit:
+                          break
+              return out
+
+
           def _schema_context(meta):
               sections = []
               for cname, coll in (meta.get('collections') or {}).items():
@@ -991,13 +1017,19 @@
               return '\n\n'.join(sections)
 
 
-          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}', needed_collections=None, schema_recall_summary_json: str='{}', keep_previous_primary=True, collection_switch=False):
+          def main(selected_primary_collection: str = '', selected_related_collections=None, schema_context: str = '', schema_metadata_json: str = '{}', schema_alias_index_json: str = '{}', schema_context_ref_json: str = '{}', collection_catalog_json: str = '{}', needed_collections=None, schema_recall_summary_json: str='{}', keep_previous_primary=True, collection_switch=False, context_binding_json: str='{}'):
               warnings = []
               meta = _loads(schema_metadata_json, {}) or {}
               alias = _loads(schema_alias_index_json, {}) or {}
               ref = _loads(schema_context_ref_json, {}) or {}
               collections = meta.get('collections') if isinstance(meta.get('collections'), dict) else {}
+              cb = _loads(context_binding_json, {}) or {}
+              inherited_primary = str(cb.get('base_primary_collection') or cb.get('old_primary_collection') or '').strip()
               primary = str(selected_primary_collection or '').strip()
+              if bool(keep_previous_primary) and not bool(collection_switch) and inherited_primary:
+                  if primary != inherited_primary:
+                      warnings.append('refine primary inherited from previous context: ' + inherited_primary)
+                  primary = inherited_primary
               if not primary:
                   warnings.append('selected primary collection is empty')
               if primary and primary not in collections:
@@ -1010,6 +1042,7 @@
                   return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
               keep = []
               requested = _list(needed_collections) or [primary] + _list(selected_related_collections)
+              requested = _uniq([primary] + [x for x in requested if x != primary], 24)
               for name in requested:
                   if name in collections and name not in keep:
                       keep.append(name)
@@ -1021,8 +1054,12 @@
               selected_alias = _filter_alias(alias, set(keep))
               selected_ref = {'collections': keep, 'schema_digest': selected.get('schema_digest', ''), 'schema_version': str(selected.get('schema_version') or ref.get('schema_version') or ''), 'catalog_digest': str(ref.get('catalog_digest') or '')}
               missing = [x for x in requested if x not in keep]
+              if primary and primary in requested and primary not in keep:
+                  warnings.append('missing primary schema triggers hydration: ' + primary)
+              ready = bool(keep) and not missing
+              hydration_needed = bool(missing)
               context_obj = {'needed_collections': requested, 'selected_collections': keep, 'missing_collections': missing, 'primary_collection_hint': primary, 'keep_previous_primary': bool(keep_previous_primary), 'collection_switch': bool(collection_switch), 'schemas': [{'collection': name, 'source': 'candidate_retrieval_or_hydration', 'content': json.dumps(collections[name], ensure_ascii=False)} for name in keep], 'relation_evidence': [], 'warnings': warnings + (['missing schema: '+', '.join(missing)] if missing else [])}
-              return {'selected_schema_context_refine_json': json.dumps(context_obj, ensure_ascii=False), 'needed_collections': requested, 'selected_collections': keep, 'missing_collections': missing, 'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': bool(keep), 'schema_hydration_needed': False, 'schema_hydration_reason': '', 'schema_hydration_collections': [], 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
+              return {'selected_schema_context_refine_json': json.dumps(context_obj, ensure_ascii=False), 'needed_collections': requested, 'selected_collections': keep, 'missing_collections': missing, 'schema_context': _schema_context(selected), 'schema_metadata_json': json.dumps(selected, ensure_ascii=False), 'schema_alias_index_json': json.dumps(selected_alias, ensure_ascii=False), 'schema_context_ref_json': json.dumps(selected_ref, ensure_ascii=False), 'selected_schema_ready': ready, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': 'missing_collections_for_schema_hydration' if hydration_needed else '', 'schema_hydration_collections': missing, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
         code_language: python3
         desc: 按 refine selector 结果裁剪 CandidateSchemas，只保留 selected primary 与必要 related
           collections。
