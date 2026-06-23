@@ -120,11 +120,23 @@
       width: 242
     - data:
         code: |
-          def main(missing_collections=None):
+          def _as_list(value):
+              if value in (None, ''):
+                  return []
+              if isinstance(value, list):
+                  return value
+              return [value]
+
+
+          def main(missing_collections=None, selector_schema_hydration_collections=None, selected_schema_hydration_collections=None):
               items=[]
-              for c in missing_collections or []:
-                  c=str(c or '').strip()
-                  if c: items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
+              seen=set()
+              for source in (missing_collections, selector_schema_hydration_collections, selected_schema_hydration_collections):
+                  for c in _as_list(source):
+                      c=str(c or '').strip()
+                      if c and c not in seen:
+                          seen.add(c)
+                          items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
               return {'missing_collection_tasks':items}
         code_language: python3
         desc: 只为 missing_collections 构造 hydration 任务，不重复检索已召回 collection。
@@ -134,6 +146,8 @@
         type: code
         variables:
         - {variable: missing_collections, value_type: 'array[string]', value_selector: ['1777300000001', missing_collections]}
+        - {variable: selector_schema_hydration_collections, value_type: 'array[string]', value_selector: ['1777000000002', schema_hydration_collections]}
+        - {variable: selected_schema_hydration_collections, value_type: 'array[string]', value_selector: ['1777100000105', schema_hydration_collections]}
       height: 80
       id: '1777300000003'
       position: {x: 4440, y: 2500}
