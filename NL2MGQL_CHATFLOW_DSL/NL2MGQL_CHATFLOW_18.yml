@@ -592,7 +592,7 @@
               return _term_matches(question, [coll.get('collection_name'), coll.get('collection_label')] + _list(coll.get('aliases')))
 
           def _coverage_matches(question, coll):
-              return _term_matches(question, _list(coll.get('primary_metrics')) + _list(coll.get('primary_dimensions')))
+              return _term_matches(question, _list(coll.get('primary_terms')) + [coll.get('description')])
 
           def _has_cross_collection_intent(question):
               q = str(question or '').lower()
@@ -716,14 +716,12 @@
                   for term in _uniq(_list(coll.get('aliases')) + [coll.get('collection_label'), cname], 48):
                       if term and term in q:
                           score += 0.55; matched.append(term)
-                  for term in _uniq(_list(coll.get('primary_metrics')), 48):
+                  for term in _uniq(_list(coll.get('primary_terms')), 64):
                       if term and term in q:
                           score += 0.22; matched.append(term)
-                  for term in _uniq(_list(coll.get('primary_dimensions')), 64):
-                      if term and term in q:
-                          score += 0.14; matched.append(term)
-                  if intent in _list(coll.get('supported_intents')):
-                      score += 0.05
+                  desc = str(coll.get('description') or '')
+                  if desc and desc in q:
+                      score += 0.08; matched.append(desc)
                   if intent in ['refine_query', 'fix_result', 'continue_previous']:
                       if last_primary and cname == last_primary:
                           score += 0.35 if not matched else 0.12
@@ -731,7 +729,6 @@
                       elif cname in context_prior_collections:
                           score += 0.18 if not matched else 0.08
                           reasons.append('使用 compact_context.schema_context_ref.collections prior')
-                  score += min(float(coll.get('priority') or 0) / 1000.0, 0.1)
                   if matched:
                       reasons.append('命中 ' + '、'.join(_uniq(matched, 8)))
                   candidates.append({'collection': cname, 'score': round(min(score, 1.0), 4), 'reason': '；'.join(reasons), 'matched_aliases': _uniq(matched, 12)})
@@ -760,7 +757,7 @@
               related = []
               if selected:
                   primary_coll = cmap.get(selected, {})
-                  primary_terms = _uniq(_list(primary_coll.get('aliases')) + [primary_coll.get('collection_label'), selected] + _list(primary_coll.get('primary_metrics')) + _list(primary_coll.get('primary_dimensions')), 120)
+                  primary_terms = _uniq(_list(primary_coll.get('aliases')) + [primary_coll.get('collection_label'), selected] + _list(primary_coll.get('primary_terms')) + [primary_coll.get('description')], 120)
                   primary_matched = set(_term_matches(q, primary_terms))
                   for rname in primary_coll.get('related_collections') or []:
                       rc = cmap.get(rname) or {}
@@ -774,9 +771,9 @@
                       if explicit:
                           necessary = True; reason = '用户问题明确命中 related collection name/label/alias：' + '、'.join(explicit[:6])
                       elif _has_cross_collection_intent(q) and matched:
-                          necessary = True; reason = '用户问题包含跨集合意图词且命中 related 字段/指标/维度：' + '、'.join(matched[:6])
+                          necessary = True; reason = '用户问题包含跨集合意图词且命中 related 轻量术语：' + '、'.join(matched[:6])
                       elif coverage and not all(t in primary_matched for t in coverage):
-                          necessary = True; reason = 'related collection 覆盖 primary 未覆盖的字段/指标/维度：' + '、'.join([t for t in coverage if t not in primary_matched][:6])
+                          necessary = True; reason = 'related collection 覆盖 primary 未覆盖的轻量术语：' + '、'.join([t for t in coverage if t not in primary_matched][:6])
                       elif in_refine_context and not _negates_related(q, rname):
                           necessary = True; reason = 'refine/continue compact context 已包含该 related collection 且当前问题未否定'
                       elif matched:

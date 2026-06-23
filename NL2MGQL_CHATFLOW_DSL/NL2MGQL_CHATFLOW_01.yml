@@ -726,41 +726,69 @@
     - data:
         code: |
           import json
-          CATALOG_KEYS = ['collection_name','collection_label','aliases','description','primary_terms','fields','metrics','relations','array_fields']
+          CATALOG_VERSION = 'collection_catalog_contract'
           def _loads(value):
               if isinstance(value, dict):
                   return value
               if isinstance(value, str) and value.strip():
                   return json.loads(value)
               return {}
-          def _compact_registry(registry):
-              collections = []
-              for item in registry.get('collections') or []:
-                  if not isinstance(item, dict):
+          def _safe_list(v):
+              return v if isinstance(v, list) else []
+          def _short_text(v, limit=80):
+              s = str(v or '').strip()
+              return s[:limit]
+          def _uniq_keep_order(items):
+              out = []
+              seen = set()
+              for x in items:
+                  k = str(x or '').strip()
+                  if not k or k in seen:
                       continue
-                  collections.append({k: item.get(k, [] if k in ['aliases','primary_terms','fields','metrics','relations','array_fields'] else '') for k in CATALOG_KEYS})
-              return {
-                  'registry_version': str(registry.get('registry_version') or ''),
-                  'database': str(registry.get('database') or ''),
-                  'collections': collections,
-              }
+                  seen.add(k)
+                  out.append(k)
+              return out
+          def build_compact_collection_catalog(registry, max_aliases=8, max_terms=12, desc_limit=80):
+              cols = []
+              for c in _safe_list((registry or {}).get('collections')):
+                  if not isinstance(c, dict):
+                      continue
+                  rel_targets = []
+                  for r in _safe_list(c.get('relations')):
+                      if isinstance(r, dict) and r.get('target_collection'):
+                          rel_targets.append(r.get('target_collection'))
+                  item = {
+                      'collection_name': str(c.get('collection_name') or '').strip(),
+                      'collection_label': str(c.get('collection_label') or '').strip(),
+                      'aliases': _uniq_keep_order(c.get('aliases'))[:max_aliases],
+                      'primary_terms': _uniq_keep_order(c.get('primary_terms'))[:max_terms],
+                      'description': _short_text(c.get('description'), desc_limit),
+                      'related_collections': _uniq_keep_order(rel_targets),
+                  }
+                  if item.get('collection_name'):
+                      cols.append(item)
+              return {'catalog_version': CATALOG_VERSION, 'collections': cols, 'warnings': []}
           def main(question: str, collection_registry_json: str = ''):
               q = str(question or '').strip()
               try:
                   registry = _loads(collection_registry_json)
-                  catalog = _compact_registry(registry)
+                  catalog = build_compact_collection_catalog(registry)
                   names = [str(c.get('collection_name') or '').strip() for c in catalog.get('collections') or [] if str(c.get('collection_name') or '').strip()]
                   if not names:
                       raise ValueError('registry collections is empty')
                   prompt = '\n'.join([
+                      '你是多轮数据查询 Chatflow 的 Collection 选择器。',
+                      '根据用户问题和极简 collection catalog 选择 primary collection 和 related collections。',
+                      '只能使用 catalog 中的 collection_name，不要编造 collection，不要判断字段、指标、join key 或数组字段。',
                       '用户问题：' + q,
-                      'collection_catalog_json：',
+                      'compact_collection_catalog_json：',
                       json.dumps(catalog, ensure_ascii=False),
-                      '请只从 collection_catalog_json.collections[].collection_name 中选择需要 hydration 的集合。',
+                      '请只从 compact_collection_catalog_json.collections[].collection_name 中选择需要 hydration 的集合。',
                   ])
                   return {
                       'collection_selector_prompt': prompt,
                       'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
+                      'compact_collection_catalog_json': json.dumps(catalog, ensure_ascii=False),
                       'collection_registry_valid': True,
                       'collection_registry_error': '',
                       'available_collection_names_json': json.dumps(names, ensure_ascii=False),
@@ -769,9 +797,11 @@
                   }
               except Exception as exc:
                   question_text = '当前集合目录不可用，无法判断需要查询的数据集合。'
+                  empty_catalog = {'catalog_version': CATALOG_VERSION, 'collections': [], 'warnings': [str(exc)]}
                   return {
                       'collection_selector_prompt': '用户问题：' + q,
-                      'collection_catalog_json': '{}',
+                      'collection_catalog_json': json.dumps(empty_catalog, ensure_ascii=False),
+                      'compact_collection_catalog_json': json.dumps(empty_catalog, ensure_ascii=False),
                       'collection_registry_valid': False,
                       'collection_registry_error': str(exc),
                       'available_collection_names_json': '[]',
@@ -785,6 +815,9 @@
             children:
             type: string
           collection_catalog_json:
+            children:
+            type: string
+          compact_collection_catalog_json:
             children:
             type: string
           collection_registry_valid:
