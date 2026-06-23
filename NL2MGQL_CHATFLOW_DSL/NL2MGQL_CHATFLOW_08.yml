@@ -242,6 +242,9 @@
                           'source_field': str(jk.get('source_field') or '').strip(),
                           'target_field': str(jk.get('target_field') or '').strip(),
                           'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
+                          **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),
+                          **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),
+                          **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),
                       })
               normalized = {
                   'target_collection': str(item.get('target_collection') or '').strip(),

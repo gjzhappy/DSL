@@ -330,6 +330,28 @@
               stage['projection_fields'] = _as_list(stage.get('projection_fields'))
               return stage
 
+
+          def _normalize_array_unwind_item(item):
+              item = item if isinstance(item, dict) else {}
+              return {
+                  'collection': str(item.get('collection') or '').strip(),
+                  'path': str(item.get('path') or '').strip(),
+                  'preserveNullAndEmptyArrays': bool(item.get('preserveNullAndEmptyArrays')),
+                  'source_stage': str(item.get('source_stage') or '').strip(),
+                  'reason': str(item.get('reason') or '').strip(),
+              }
+
+          def _normalize_array_unwind(value):
+              if value is None or value == '':
+                  return []
+              if isinstance(value, dict):
+                  items = [value]
+              elif isinstance(value, list):
+                  items = value
+              else:
+                  return []
+              return [_normalize_array_unwind_item(item) for item in items if isinstance(item, dict)]
+
           def semantic_plan_normalizer(raw_plan, source='unknown'):
               warnings = []
               try:
@@ -384,6 +406,7 @@
                       'needs_chart': bool(needs_chart),
                       'stages': stages,
                       'final_merge': final_merge,
+                      'array_unwind': _normalize_array_unwind(plan.get('array_unwind')),
                       'chart_request': chart_request,
                       'requires_clarification': bool(plan.get('requires_clarification')),
                       'clarification_question': str(plan.get('clarification_question') or '').strip(),

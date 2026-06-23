@@ -152,6 +152,7 @@
                   'fields': fields,
                   'metrics': metrics,
                   'relations': [r for r in relations if isinstance(r, dict)],
+                  'array_fields': doc.get('array_fields') if isinstance(doc.get('array_fields'), list) else [],
                   'query_rules': doc.get('query_rules') if isinstance(doc.get('query_rules'), dict) else {},
               })
               return normalized
@@ -481,7 +482,7 @@
           \               'source_field': str(jk.get('source_field') or '').strip(),\n
           \               'target_field': str(jk.get('target_field') or '').strip(),\n
           \               'match_type': str(jk.get('match_type') or 'exact').strip() or
-          'exact',\n            })\n    normalized = {\n        'target_collection': str(item.get('target_collection')
+          'exact',\n                **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),\n                **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),\n                **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),\n            })\n    normalized = {\n        'target_collection': str(item.get('target_collection')
           or '').strip(),\n        'relation_type': str(item.get('relation_type') or 'enrich').strip()
           or 'enrich',\n        'description': str(item.get('description') or '').strip(),\n
           \       'join_keys': normalized_join_keys,\n        'allowed_usage': _as_str_list(item.get('allowed_usage')),\n

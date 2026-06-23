@@ -125,6 +125,9 @@
                           'source_field': str(jk.get('source_field') or '').strip(),
                           'target_field': str(jk.get('target_field') or '').strip(),
                           'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
+                          **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),
+                          **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),
+                          **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),
                       })
               normalized = {
                   'target_collection': str(item.get('target_collection') or '').strip(),
@@ -184,6 +187,7 @@
                   'fields': fields,
                   'metrics': metrics,
                   'relations': [_normalize_relation(r, cname, warnings) for r in relations if isinstance(r, dict)],
+                  'array_fields': _as_list(doc.get('array_fields')),
                   'query_rules': _normalize_query_rules(doc.get('query_rules')),
                   'aggregation_policy': _as_dict(doc.get('aggregation_policy')),
                   'chart_label': _as_dict(doc.get('chart_label')),
@@ -563,6 +567,28 @@
               stage['projection_fields'] = _as_list(stage.get('projection_fields'))
               return stage
 
+
+          def _normalize_array_unwind_item(item):
+              item = item if isinstance(item, dict) else {}
+              return {
+                  'collection': str(item.get('collection') or '').strip(),
+                  'path': str(item.get('path') or '').strip(),
+                  'preserveNullAndEmptyArrays': bool(item.get('preserveNullAndEmptyArrays')),
+                  'source_stage': str(item.get('source_stage') or '').strip(),
+                  'reason': str(item.get('reason') or '').strip(),
+              }
+
+          def _normalize_array_unwind(value):
+              if value is None or value == '':
+                  return []
+              if isinstance(value, dict):
+                  items = [value]
+              elif isinstance(value, list):
+                  items = value
+              else:
+                  return []
+              return [_normalize_array_unwind_item(item) for item in items if isinstance(item, dict)]
+
           def semantic_plan_normalizer(raw_plan, source='unknown'):
               warnings = []
               try:
@@ -646,6 +672,7 @@
                       'needs_chart': bool(needs_chart),
                       'stages': stages,
                       'final_merge': final_merge,
+                      'array_unwind': _normalize_array_unwind(plan.get('array_unwind')),
                       'chart_request': chart_request,
                       'requires_clarification': bool(plan.get('requires_clarification')),
                       'clarification_question': str(plan.get('clarification_question') or '').strip(),

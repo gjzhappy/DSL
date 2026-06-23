@@ -726,7 +726,7 @@
     - data:
         code: |
           import json
-          CATALOG_KEYS = ['collection_name','collection_label','aliases','description','primary_terms','fields','metrics','relations']
+          CATALOG_KEYS = ['collection_name','collection_label','aliases','description','primary_terms','fields','metrics','relations','array_fields']
           def _loads(value):
               if isinstance(value, dict):
                   return value
@@ -738,7 +738,7 @@
               for item in registry.get('collections') or []:
                   if not isinstance(item, dict):
                       continue
-                  collections.append({k: item.get(k, [] if k in ['aliases','primary_terms','fields','metrics','relations'] else '') for k in CATALOG_KEYS})
+                  collections.append({k: item.get(k, [] if k in ['aliases','primary_terms','fields','metrics','relations','array_fields'] else '') for k in CATALOG_KEYS})
               return {
                   'registry_version': str(registry.get('registry_version') or ''),
                   'database': str(registry.get('database') or ''),
