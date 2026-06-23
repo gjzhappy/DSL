@@ -120,32 +120,20 @@
       width: 242
     - data:
         code: |
-          def _uniq(values):
-              out = []
-              seen = set()
-              for value in values or []:
-                  c = str(value or '').strip()
-                  if c and c not in seen:
-                      out.append(c)
-                      seen.add(c)
-              return out
-
-          def main(missing_collections=None, selector_schema_hydration_collections=None):
-              # Planner 前 hydration 仅补齐候选/selector 明确声明缺失的 schema；不得接 validator runtime hydration。
-              collections = _uniq(list(missing_collections or []) + list(selector_schema_hydration_collections or []))
-              items = []
-              for c in collections:
-                  items.append({'collection_name': c, 'query_text': '完整 mongo schema metadata fields metrics relations for collection ' + c})
-              return {'missing_collection_tasks': items}
+          def main(missing_collections=None):
+              items=[]
+              for c in missing_collections or []:
+                  c=str(c or '').strip()
+                  if c: items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
+              return {'missing_collection_tasks':items}
         code_language: python3
-        desc: Planner 前 schema hydration：同时支持 CandidateSchemas missing_collections 与 Refine selector schema_hydration_collections；不得接 validator runtime hydration。
+        desc: 只为 missing_collections 构造 hydration 任务，不重复检索已召回 collection。
         outputs:
           missing_collection_tasks: {type: 'array[object]'}
         title: 代码执行_构建RefineMissingOnlyHydration任务
         type: code
         variables:
         - {variable: missing_collections, value_type: 'array[string]', value_selector: ['1777300000001', missing_collections]}
-        - {variable: selector_schema_hydration_collections, value_type: 'array[string]', value_selector: ['1777000000002', schema_hydration_collections]}
       height: 80
       id: '1777300000003'
       position: {x: 4440, y: 2500}
