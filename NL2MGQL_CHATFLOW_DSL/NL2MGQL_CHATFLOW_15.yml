@@ -1060,7 +1060,7 @@
               return list(dict.fromkeys(out))
 
 
-          def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", refine_collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok", schema_runtime_context_json: str = "{}") -> Dict[str, Any]:
+          def semantic_plan_validator(question: str = "", semantic_plan_json: str = "{}", schema_metadata_json: str = "{}", schema_alias_index_json: str = "{}", collection_selection_json: str = "{}", compact_context_json: str = "{}", patch_result_json: str = "{}", patch_debug_json: str = "{}", query_refinement_json: str = "{}", normalizer_valid: Any = True, normalizer_route: str = "ok", schema_runtime_context_json: str = "{}") -> Dict[str, Any]:
               errors: List[str] = []
               warnings: List[str] = []
               autofixes: List[Dict[str, Any]] = []
@@ -1074,8 +1074,7 @@
               runtime_alias_json = runtime_ctx.get("schema_alias_index_json") if runtime_ctx.get("schema_alias_index_json") not in (None, "") else schema_alias_index_json
               schema = _loads(runtime_schema_json, {})
               alias_index = _loads(runtime_alias_json, {})
-              refine_selection = _loads(refine_collection_selection_json, {})
-              selection = refine_selection if isinstance(refine_selection, dict) and refine_selection else _loads(collection_selection_json, {})
+              selection = _loads(collection_selection_json, {})
               compact = _loads(compact_context_json, {})
               if not isinstance(compact, dict):
                   compact = {}
