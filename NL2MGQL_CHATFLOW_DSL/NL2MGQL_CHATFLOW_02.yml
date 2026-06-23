@@ -18,6 +18,7 @@
                   'fields': fields,
                   'metrics': metrics,
                   'relations': [r for r in relations if isinstance(r, dict)],
+                  'array_fields': doc.get('array_fields') if isinstance(doc.get('array_fields'), list) else [],
                   'query_rules': doc.get('query_rules') if isinstance(doc.get('query_rules'), dict) else {},
               })
               return normalized

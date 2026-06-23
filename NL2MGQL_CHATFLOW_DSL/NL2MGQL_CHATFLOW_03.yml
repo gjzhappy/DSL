@@ -169,6 +169,9 @@
                                       'source_field': str(jk.get('source_field') or '').strip(),
                                       'target_field': str(jk.get('target_field') or '').strip(),
                                       'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
+                                      **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),
+                                      **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),
+                                      **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),
                                   }
                                   for jk in (r.get('join_keys') or []) if isinstance(jk, dict)
                               ],
@@ -184,6 +187,7 @@
                           'fields': fields,
                           'metrics': metrics,
                           'relations': relations,
+                          'array_fields': coll.get('array_fields') if isinstance(coll.get('array_fields'), list) else [],
                       }
                       if alias_count < 300:
                           caliases = [cname, coll.get('collection_label')] + compact_aliases(coll.get('collection_aliases'), 5)
@@ -902,6 +906,9 @@
                           'source_field': str(jk.get('source_field') or '').strip(),
                           'target_field': str(jk.get('target_field') or '').strip(),
                           'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
+                          **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),
+                          **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),
+                          **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),
                       })
               normalized = {
                   'target_collection': str(item.get('target_collection') or '').strip(),
@@ -961,6 +968,7 @@
                   'fields': fields,
                   'metrics': metrics,
                   'relations': [_normalize_relation(r, cname, warnings) for r in relations if isinstance(r, dict)],
+                  'array_fields': _as_list(doc.get('array_fields')),
                   'query_rules': _normalize_query_rules(doc.get('query_rules')),
                   'aggregation_policy': _as_dict(doc.get('aggregation_policy')),
                   'chart_label': _as_dict(doc.get('chart_label')),
