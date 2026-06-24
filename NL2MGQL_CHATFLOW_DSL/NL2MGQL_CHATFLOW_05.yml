@@ -192,6 +192,7 @@
                   'reasoning': f"enrich {stage['collection']} by {join_target_field}",
               }
               if not join_values:
+                  warnings.append({'type': 'enrich_related_empty_join_values', 'stage_name': stage.get('stage_name'), 'join_source_field': join_source_field})
                   return validated_ast, [], True
               pipeline = []
 
@@ -268,7 +269,7 @@
               return name + '_info'
 
           def _normalize_attach_as(attach_as, related_collection=''):
-              value = str(attach_as or '').strip()
+              value = attach_as.strip() if isinstance(attach_as, str) else ''
               if (not value) or (value in GENERIC_ATTACH_NAMES and str(related_collection or '').strip()):
                   return _default_attach_as(related_collection)
               return value
@@ -286,26 +287,28 @@
               for row in right_rows:
                   if not isinstance(row, dict):
                       continue
-                  key = row.get(right_field)
-                  if isinstance(key, list):
-                      for item in key:
-                          if item is not None:
-                              right_index.setdefault(str(item), []).append(row)
-                  elif key is not None:
-                      right_index.setdefault(str(key), []).append(row)
+                  for key in _extract_path_values(row, right_field):
+                      text = str(key or '').strip()
+                      if text:
+                          right_index.setdefault(text, []).append(row)
               merged = []
               for row in left_rows:
                   if not isinstance(row, dict):
                       continue
                   item = dict(row)
-                  key = row.get(left_field)
                   matches = []
-                  if isinstance(key, list):
-                      for val in key:
-                          matches.extend(right_index.get(str(val), []))
-                  elif key is not None:
-                      matches = right_index.get(str(key), [])
-                  if len(matches) == 1:
+                  matched_ids = set()
+                  left_values = _extract_path_values(row, left_field)
+                  for val in left_values:
+                      text = str(val or '').strip()
+                      if not text:
+                          continue
+                      for match in right_index.get(text, []):
+                          marker = id(match)
+                          if marker not in matched_ids:
+                              matched_ids.add(marker)
+                              matches.append(match)
+                  if len(matches) == 1 and '.' not in left_field and len(left_values) <= 1:
                       item[attach_as] = dict(matches[0])
                   elif matches:
                       item[attach_as] = [dict(m) for m in matches if isinstance(m, dict)]

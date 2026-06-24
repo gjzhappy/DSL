@@ -466,20 +466,51 @@
               return best
 
 
+          def _extract_path_values(obj, path):
+              parts = [p for p in str(path or '').strip().split('.') if p]
+              if not parts:
+                  return []
+              current = [obj]
+              for part in parts:
+                  nxt = []
+                  for item in current:
+                      if item is None:
+                          continue
+                      if isinstance(item, list):
+                          for sub in item:
+                              if isinstance(sub, dict):
+                                  val = sub.get(part)
+                                  if isinstance(val, list):
+                                      nxt.extend(val)
+                                  elif val not in (None, ''):
+                                      nxt.append(val)
+                              elif part == '':
+                                  nxt.append(sub)
+                      elif isinstance(item, dict):
+                          val = item.get(part)
+                          if isinstance(val, list):
+                              nxt.extend(val)
+                          elif val not in (None, ''):
+                              nxt.append(val)
+                  current = nxt
+              out = []
+              for item in current:
+                  if isinstance(item, list):
+                      for sub in item:
+                          if sub not in (None, ''):
+                              out.append(sub)
+                  elif item not in (None, ''):
+                      out.append(item)
+              return out
+
+
           def _unique_values(rows, field):
               values = []
               seen = set()
               for row in rows or []:
                   if not isinstance(row, dict):
                       continue
-                  value = row.get(field)
-                  if isinstance(value, list):
-                      for item in value:
-                          text = str(item or '').strip()
-                          if text and text not in seen:
-                              seen.add(text)
-                              values.append(text)
-                  else:
+                  for value in _extract_path_values(row, field):
                       text = str(value or '').strip()
                       if text and text not in seen:
                           seen.add(text)
