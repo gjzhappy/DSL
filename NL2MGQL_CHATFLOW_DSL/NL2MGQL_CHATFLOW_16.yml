@@ -294,6 +294,7 @@
 
               stage_list = plan.get("stages") if isinstance(plan.get("stages"), list) else []
               stage_positions = {_str(st.get("stage_name")): idx for idx, st in enumerate(stage_list) if isinstance(st, dict) and _str(st.get("stage_name"))}
+              stages_by_name = {_str(st.get("stage_name")): st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_name"))}
               primary_stages = [st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_type")) == "primary_query"]
               enrich_stages = [st for st in stage_list if isinstance(st, dict) and _str(st.get("stage_type")) == "enrich_related"]
               final_merge = plan.get("final_merge") if isinstance(plan.get("final_merge"), dict) else {}
@@ -309,6 +310,40 @@
                           if isinstance(jk0, dict) and _str(jk0.get("source_field")) and _str(jk0.get("target_field")):
                               return _str(jk0.get("source_field")), _str(jk0.get("target_field"))
                   return "", ""
+
+              def _declared_relation_join(source_collection: str, target_collection: str, source_field: str, target_field: str) -> bool:
+                  for rel in _iter_named_items((collections.get(source_collection) or {}).get("relations") or []):
+                      if _str(rel.get("target_collection")) != _str(target_collection):
+                          continue
+                      for jk in rel.get("join_keys") or []:
+                          if isinstance(jk, dict) and _str(jk.get("source_field")) == _str(source_field) and _str(jk.get("target_field")) == _str(target_field):
+                              return True
+                  return False
+
+              def _relation_declares_field(source_collection: str, target_collection: str, key_name: str, field_name: str) -> bool:
+                  for rel in _iter_named_items((collections.get(source_collection) or {}).get("relations") or []):
+                      if _str(rel.get("target_collection")) != _str(target_collection):
+                          continue
+                      for jk in rel.get("join_keys") or []:
+                          if isinstance(jk, dict) and _str(jk.get(key_name)) == _str(field_name):
+                              return True
+                  return False
+
+              def _aggregate_output_fields(stage: Dict[str, Any]) -> set:
+                  out = set()
+                  for key in ("group_fields", "projection_fields"):
+                      for value in _list(stage.get(key)):
+                          if _str(value):
+                              out.add(_str(value))
+                  for key in ("metric_alias", "entity_field", "rank_order_field"):
+                      if _str(stage.get(key)):
+                          out.add(_str(stage.get(key)))
+                  for metric_item in _list(stage.get("metrics")):
+                      if isinstance(metric_item, dict):
+                          for alias_key in ("alias", "metric_alias", "name", "output_field"):
+                              if _str(metric_item.get(alias_key)):
+                                  out.add(_str(metric_item.get(alias_key)))
+                  return out
 
               if _str(final_merge.get("merge_mode")) == "enrich" and enrich_stages:
                   enrich_stage0 = next((st for st in enrich_stages if _str(st.get("stage_name")) == _str(final_merge.get("right_stage"))), enrich_stages[0])
@@ -330,6 +365,9 @@
                   if not _str(enrich_stage0.get("join_target_field")) and _str(final_merge.get("right_field")):
                       enrich_stage0["join_target_field"] = _str(final_merge.get("right_field")); changed0 = True
                   if not _str(final_merge.get("attach_as")):
+                      rc0 = _str(enrich_stage0.get("collection") or (related[0] if related else ""))
+                      final_merge["attach_as"] = (rc0 + "_info") if rc0 else "related_info"; changed0 = True
+                  elif not isinstance(final_merge.get("attach_as"), str):
                       rc0 = _str(enrich_stage0.get("collection") or (related[0] if related else ""))
                       final_merge["attach_as"] = (rc0 + "_info") if rc0 else "related_info"; changed0 = True
                   if changed0:
@@ -364,6 +402,18 @@
                       errors.append(f"{stage_name}.join_source_field 必须非空。")
                   if not join_target:
                       errors.append(f"{stage_name}.join_target_field 必须非空。")
+                  if join_source and join_target:
+                      source_stage = stages_by_name.get(depends_on) or (primary_stages[0] if primary_stages else {})
+                      source_collection = _str(source_stage.get("collection") or primary)
+                      target_collection = _str(enrich_stage.get("collection"))
+                      if not _declared_relation_join(source_collection, target_collection, join_source, join_target):
+                          errors.append(f"schema relations 未声明 join key {source_collection}.{join_source}->{target_collection}.{join_target}，禁止 LLM 发明 join。")
+                      if not (_schema_field_exists(schema, source_collection, join_source) or _relation_declares_field(source_collection, target_collection, "source_field", join_source)):
+                          errors.append(f"relation source_field={join_source} 不存在。")
+                      if not (_schema_field_exists(schema, target_collection, join_target) or _relation_declares_field(source_collection, target_collection, "target_field", join_target)):
+                          errors.append(f"relation target_field={join_target} 不存在。")
+                      if _stage_is_aggregate(source_stage) and join_source not in _aggregate_output_fields(source_stage):
+                          errors.append(f"aggregate output does not contain join_source_field {join_source} required by enrich_related")
                   projections = _list(enrich_stage.get("projection_fields"))
                   if join_target and join_target not in [_str(x) for x in projections]:
                       enrich_stage["projection_fields"] = [join_target] + projections
@@ -381,6 +431,9 @@
                   if not _str(final_merge.get("right_field")):
                       final_merge["right_field"] = _str(enrich_stage.get("join_target_field")); changed = True
                   if not _str(final_merge.get("attach_as")):
+                      rc = _str(enrich_stage.get("collection") or (related[0] if related else ""))
+                      final_merge["attach_as"] = (rc + "_info") if rc else "related_info"; changed = True
+                  elif not isinstance(final_merge.get("attach_as"), str):
                       rc = _str(enrich_stage.get("collection") or (related[0] if related else ""))
                       final_merge["attach_as"] = (rc + "_info") if rc else "related_info"; changed = True
                   if changed:
@@ -407,11 +460,9 @@
                       if not rel.get("join_keys"):
                           errors.append(f"relation {primary}->{rc} 缺少 join_keys。")
                       for jk in rel.get("join_keys") or []:
-                          primary_field_map = _named_item_map((collections.get(primary) or {}).get("fields") or {})
-                          target_field_map = _named_item_map((collections.get(rc) or {}).get("fields") or {})
-                          if _str(jk.get("source_field")) not in primary_field_map:
+                          if not (_schema_field_exists(schema, primary, _str(jk.get("source_field"))) or _relation_declares_field(primary, rc, "source_field", _str(jk.get("source_field")))):
                               errors.append(f"relation source_field={jk.get('source_field')} 不存在。")
-                          if _str(jk.get("target_field")) not in target_field_map:
+                          if not (_schema_field_exists(schema, rc, _str(jk.get("target_field"))) or _relation_declares_field(primary, rc, "target_field", _str(jk.get("target_field")))):
                               errors.append(f"relation target_field={jk.get('target_field')} 不存在。")
                       intent_text = json.dumps(plan.get("stages") or [], ensure_ascii=False)
                       for forbidden in _list(rel.get("forbidden_usage")):
@@ -1189,5 +1240,3 @@
                   except Exception:
                       pass
               return _strip_quotes(v)
-
-

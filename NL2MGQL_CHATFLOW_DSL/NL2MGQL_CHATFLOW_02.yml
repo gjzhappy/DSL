@@ -10,17 +10,42 @@
               fields = _named_map(doc.get('fields'))
               metrics = _named_map(doc.get('metrics'))
               relations = doc.get('relations') if isinstance(doc.get('relations'), list) else []
+              array_fields = [a for a in (doc.get('array_fields') or []) if isinstance(a, dict)] if isinstance(doc.get('array_fields'), list) else []
               normalized = dict(doc)
               normalized.update({
                   'collection_name': cname,
                   'collection_label': str(doc.get('collection_label') or cname).strip() or cname,
                   'collection_aliases': _str_list(doc.get('collection_aliases')),
                   'fields': fields,
+                  'array_fields': array_fields,
                   'metrics': metrics,
                   'relations': [r for r in relations if isinstance(r, dict)],
                   'query_rules': doc.get('query_rules') if isinstance(doc.get('query_rules'), dict) else {},
               })
               return normalized
+
+
+          def _iter_array_item_fields(coll):
+              for arr in coll.get('array_fields') or []:
+                  if not isinstance(arr, dict):
+                      continue
+                  path = str(arr.get('field') or arr.get('name') or '').strip()
+                  if not path:
+                      continue
+                  for item in arr.get('item_fields') or []:
+                      if not isinstance(item, dict):
+                          continue
+                      item_name = str(item.get('field') or item.get('name') or '').strip()
+                      if not item_name:
+                          continue
+                      dotted = path + '.' + item_name
+                      obj = dict(item)
+                      obj.setdefault('name', dotted)
+                      obj.setdefault('field', dotted)
+                      obj.setdefault('array_path', path)
+                      obj.setdefault('item_field', item_name)
+                      obj.setdefault('role', 'array_item_dimension')
+                      yield dotted, obj
 
 
           def _digest(obj, key):
@@ -63,6 +88,11 @@
                       for val_alias, canonical_value in (f.get('value_aliases') or {}).items() if isinstance(f.get('value_aliases'), dict) else []:
                           _add_alias(aliases, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
                           _add_alias(va, val_alias, cname, 'value', canonical_value, val_alias, 'field.value_aliases', field=fname)
+                  for dotted, f in _iter_array_item_fields(coll):
+                      for alias, source in [(dotted, 'array_item.path'), (f.get('field'), 'array_item.field'), (f.get('label'), 'array_item.label')] + [(a, 'array_item.aliases') for a in (f.get('aliases') or [])]:
+                          _add_alias(aliases, alias, cname, 'field', dotted, f.get('label'), source)
+                          _add_alias(fa, alias, cname, 'field', dotted, f.get('label'), source)
+                          if alias: simple['fields'].setdefault(cname, {})[str(alias)] = dotted
                   for mname, m in (coll.get('metrics') or {}).items():
                       for alias, source in [(mname, 'metric.name'), (m.get('label'), 'metric.label')] + [(a, 'metric.aliases') for a in (m.get('aliases') or [])]:
                           _add_alias(aliases, alias, cname, 'metric', mname, m.get('label'), source)
@@ -89,11 +119,33 @@
                       target = str((r or {}).get('target_collection') or '').strip()
                       if target and target not in related:
                           related.append(target)
+                  relation_summary = []
+                  for r in coll.get('relations') or []:
+                      if not isinstance(r, dict):
+                          continue
+                      join_keys = []
+                      for jk in r.get('join_keys') or []:
+                          if not isinstance(jk, dict):
+                              continue
+                          item = {
+                              'source_field': str(jk.get('source_field') or '').strip(),
+                              'target_field': str(jk.get('target_field') or '').strip(),
+                              'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
+                          }
+                          for extra in ('source_cardinality', 'source_array_path', 'source_item_field'):
+                              if str(jk.get(extra) or '').strip():
+                                  item[extra] = str(jk.get(extra) or '').strip()
+                          join_keys.append(item)
+                      relation_summary.append({
+                          'target_collection': str(r.get('target_collection') or '').strip(),
+                          'relation_type': str(r.get('relation_type') or 'enrich').strip() or 'enrich',
+                          'join_keys': join_keys,
+                      })
                   try:
                       priority = int(coll.get('priority')) if str(coll.get('priority') or '').strip() != '' else 60
                   except Exception:
                       priority = 60
-                  cols.append({'collection_name': cname, 'collection_label': str(coll.get('collection_label') or cname).strip() or cname, 'aliases': _str_list([cname, coll.get('collection_label')] + (coll.get('collection_aliases') or []), 32), 'description': str(coll.get('purpose') or coll.get('description') or '').strip(), 'default_time_field': default_time, 'primary_metrics': _str_list(metrics, 64), 'primary_dimensions': _str_list(dims, 80), 'supported_intents': _str_list(coll.get('supported_intents') or ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'], 16), 'related_collections': related, 'priority': priority})
+                  cols.append({'collection_name': cname, 'collection_label': str(coll.get('collection_label') or cname).strip() or cname, 'aliases': _str_list([cname, coll.get('collection_label')] + (coll.get('collection_aliases') or []), 32), 'description': str(coll.get('purpose') or coll.get('description') or '').strip(), 'default_time_field': default_time, 'primary_metrics': _str_list(metrics, 64), 'primary_dimensions': _str_list(dims, 80), 'supported_intents': _str_list(coll.get('supported_intents') or ['detail', 'aggregate_summary', 'trend', 'ranking', 'enrich'], 16), 'related_collections': related, 'relations': relation_summary, 'priority': priority})
               if not cols:
                   warnings.append('schema metadata 中没有 collections，collection catalog 为空。')
               cat = {'catalog_version': CATALOG_VERSION, 'catalog_digest': '', 'collections': cols, 'warnings': warnings}

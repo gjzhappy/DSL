@@ -157,21 +157,54 @@
                               'aggregate_only': bool(m.get('aggregate_only', True)),
                               'aliases': compact_aliases(m.get('aliases'), 5),
                           })
+                      array_fields = []
+                      for arr in coll.get('array_fields') or []:
+                          if not isinstance(arr, dict):
+                              continue
+                          path = str(arr.get('field') or arr.get('name') or '').strip()
+                          if not path:
+                              continue
+                          item_fields = []
+                          for item in arr.get('item_fields') or []:
+                              if not isinstance(item, dict):
+                                  continue
+                              item_name = str(item.get('field') or item.get('name') or '').strip()
+                              if not item_name:
+                                  continue
+                              item_fields.append({
+                                  'field': item_name,
+                                  'path': path + '.' + item_name,
+                                  'label': str(item.get('label') or item_name).strip(),
+                                  'type': str(item.get('type') or '').strip(),
+                                  'aliases': compact_aliases(item.get('aliases'), 5),
+                              })
+                          array_fields.append({
+                              'field': path,
+                              'label': str(arr.get('label') or path).strip(),
+                              'item_type': str(arr.get('item_type') or '').strip(),
+                              'item_fields': item_fields,
+                          })
                       relations = []
                       for r in coll.get('relations') or []:
                           if not isinstance(r, dict):
                               continue
+                          join_keys = []
+                          for jk in (r.get('join_keys') or []):
+                              if not isinstance(jk, dict):
+                                  continue
+                              item = {
+                                  'source_field': str(jk.get('source_field') or '').strip(),
+                                  'target_field': str(jk.get('target_field') or '').strip(),
+                                  'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
+                              }
+                              for extra in ('source_cardinality', 'source_array_path', 'source_item_field'):
+                                  if str(jk.get(extra) or '').strip():
+                                      item[extra] = str(jk.get(extra) or '').strip()
+                              join_keys.append(item)
                           relations.append({
                               'target_collection': str(r.get('target_collection') or '').strip(),
                               'relation_type': str(r.get('relation_type') or 'enrich').strip() or 'enrich',
-                              'join_keys': [
-                                  {
-                                      'source_field': str(jk.get('source_field') or '').strip(),
-                                      'target_field': str(jk.get('target_field') or '').strip(),
-                                      'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
-                                  }
-                                  for jk in (r.get('join_keys') or []) if isinstance(jk, dict)
-                              ],
+                              'join_keys': join_keys,
                               'description': short_text(r.get('description'), 120),
                           })
                       compact['collections'][cname] = {
@@ -182,6 +215,7 @@
                           'default_time_field': str(coll.get('default_time_field') or '').strip(),
                           'query_rules': compact_query_rules(coll.get('query_rules')),
                           'fields': fields,
+                          'array_fields': array_fields,
                           'metrics': metrics,
                           'relations': relations,
                       }
@@ -279,7 +313,8 @@
                   "14. intent_type 硬约束：按维度分组统计、按字段分组统计、group by 聚合统计，必须使用 aggregate_summary。用户说“按 A 和 B 统计数量/金额/销量/订单数”，必须使用 aggregate_summary，并把 A、B 都放入 group_fields。不得因为第二个 group_field 是商品、用户、厂商、品牌、设备等实体字段，就改成 group_top_entity；不得因为 chart_request.series_name 等于某个 group field，就改成 group_top_entity。",
                   "15. group_top_entity 只能在用户明确表达 top/topN/前N/排名前N/最高/最低/最多/最少/第一/最大/最小/榜单/排名 等 TopN/排序极值语义时使用；使用时必须输出 entity_field、metric_function、metric_field、metric_alias、limit；如果没有 entity_field，禁止输出 group_top_entity。反例：用户‘查询过去三个月订单，按订单状态和商品名称统计订单数’正确 intent_type=aggregate_summary, group_fields=[status,product_name], metric_alias=order_count；错误 intent_type=group_top_entity。",
                   "16. 多集合 enrich：如果用户明确要求关联/补充/带出/合并/join/lookup/enrich 且 compact_schema_context 存在 relation，则 execution_mode=multi_stage；primary_query stage 使用 primary_collection；enrich_related stage 使用 related collection；join_source_field/join_target_field 必须来自 schema relation join_keys；final_merge.merge_mode=enrich；final_merge.left_field/right_field 与 stage2.join_source_field/join_target_field 一致；final_merge.attach_as 使用 string，不要输出 array。",
-                  "17. 图表 gating：默认 needs_chart=false 且 chart_request.enabled=false；只有用户明确要求图表/可视化时才启用；‘如果适合请生成图表’属于弱图表意图，可以启用图表，但必须基于数据语义选择合理图表；chart_request.x_field/y_field/series_name 必须使用 canonical field/metric，例如 y_field=order_count，不要使用中文指标别名。",
+                  "17. dotted path relation 硬约束：如果 schema/registry 的 relations[].join_keys[] 声明了 dotted path source_field，例如 array_path.item_field 或 object_path.field，则它仍然是 ordinary enrich relation path。当用户要求关联、补充、带出、合并、join、lookup、enrich，且 schema relation 已声明该 dotted path relation 时，必须继续输出普通 enrich_related stage：stage_type=enrich_related；join_source_field=relations[].join_keys[].source_field；join_target_field=relations[].join_keys[].target_field；final_merge.merge_mode=enrich。禁止为 dotted path relation 生成任何新的 stage_type 或专用数组链路。本阶段不要输出 Mongo pipeline，不要输出 array_unwind，除非用户明确要求按数组元素字段过滤、分组、排序、统计或数组元素级明细。",
+                  "18. 图表 gating：默认 needs_chart=false 且 chart_request.enabled=false；只有用户明确要求图表/可视化时才启用；‘如果适合请生成图表’属于弱图表意图，可以启用图表，但必须基于数据语义选择合理图表；chart_request.x_field/y_field/series_name 必须使用 canonical field/metric，例如 y_field=order_count，不要使用中文指标别名。",
               ])
               json_only_closure = "\n\n".join([
                   "【现在开始输出】",
