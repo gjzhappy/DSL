@@ -356,11 +356,32 @@
                       continue
                   tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
                   if str(tr.get('mode') or '').strip() == 'relative_days' and _to_int_safe(tr.get('relative_days')) <= 0:
-                      stage['time_range'] = {'field': '', 'mode': '', 'relative_days': 0, 'start': '', 'end': ''}
+                      stage['time_range'] = {}
                       if str(stage.get('intent_type') or '').strip() in aggregate_intents:
                           plan['requires_clarification'] = True
                           plan['clarification_question'] = plan.get('clarification_question') or '请提供要统计的时间范围，例如最近30天、今年、某个月。'
                       normalizer_warnings.append({'type': 'relative_days_zero_requires_clarification', 'stage_name': stage.get('stage_name')})
+              return plan
+
+          def _clear_executable_time_range_when_clarifying(plan, normalizer_warnings):
+              if not isinstance(plan, dict) or not bool(plan.get('requires_clarification')):
+                  return plan
+              question = str(plan.get('clarification_question') or '').strip()
+              warnings = plan.get('warnings') if isinstance(plan.get('warnings'), list) else []
+              warning_text = ' '.join(str(x) for x in warnings)
+              if '时间' not in question and 'time_range' not in warning_text and 'require_time_range_for_aggregate' not in warning_text:
+                  return plan
+              aggregate_intents = {'aggregate_summary', 'group_top_entity', 'trend'}
+              for stage in plan.get('stages') if isinstance(plan.get('stages'), list) else []:
+                  if not isinstance(stage, dict):
+                      continue
+                  if str(stage.get('stage_type') or '').strip() == 'enrich_related':
+                      continue
+                  if str(stage.get('intent_type') or '').strip() in aggregate_intents or stage.get('group_fields') or stage.get('metric_alias') or stage.get('metric_function') or stage.get('metric_field'):
+                      tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
+                      if any(str(tr.get(k) or '').strip() for k in ('mode', 'relative_days', 'start', 'end')):
+                          stage['time_range'] = {}
+                          normalizer_warnings.append({'type': 'clarification_time_range_cleared', 'stage_name': stage.get('stage_name')})
               return plan
 
           def _canonicalize_enrich_contract(plan, schema=None, normalizer_warnings=None):
@@ -632,6 +653,7 @@
                       'warnings': _as_list(plan.get('warnings')),
                   }
                   contract = _guard_relative_days_zero(contract, normalizer_warnings)
+                  contract = _clear_executable_time_range_when_clarifying(contract, normalizer_warnings)
                   contract = _remove_unnecessary_enrich_related(contract, normalizer_warnings)
                   contract = _canonicalize_enrich_contract(contract, schema=None, normalizer_warnings=normalizer_warnings)
                   contract = _strip_runtime_fields_from_semantic_plan(contract)
