@@ -1117,6 +1117,10 @@
                   return _finalize(_result("invalid", {}, ["semantic_plan_normalizer 未通过，validator 拒绝进入 Mongo 编译。"], debug=debug))
               if not isinstance(plan, dict) or not plan:
                   return _finalize(_result("invalid", {}, ["semantic_plan_json 为空或不是 JSON 对象。"], debug=debug))
+              if bool(plan.get("requires_clarification")):
+                  clarification = _str(plan.get("clarification_question")) or "请补充必要的查询条件后再继续。"
+                  debug["plan_requires_clarification_passthrough"] = True
+                  return _finalize(_result("requires_clarification", plan, [], [], [], clarification=clarification, debug=debug, needs_schema_retrieval=False))
               stages = plan.get("stages") if isinstance(plan.get("stages"), list) else []
               if not stages:
                   return _finalize(_result("invalid", plan, ["semantic_plan_contract 缺少 stages。"], debug=debug))
