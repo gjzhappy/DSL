@@ -8,68 +8,12 @@
                       x=json.loads(v); return _list(x)
                   except Exception: return [v.strip()]
               return []
-          def _loads(v, default):
-              if isinstance(v, (dict, list)): return v
-              if isinstance(v, str) and v.strip():
-                  try: return json.loads(v)
-                  except Exception: return default
-              return default
-          def _iter_docs(value):
-              if isinstance(value, list):
-                  for item in value:
-                      yield from _iter_docs(item)
-              elif isinstance(value, dict):
-                  if isinstance(value.get('docs'), list):
-                      for item in value.get('docs') or []: yield from _iter_docs(item)
-                  elif isinstance(value.get('result'), list):
-                      for item in value.get('result') or []: yield from _iter_docs(item)
-                  else:
-                      yield value
-              elif isinstance(value, str) and value.strip():
-                  parsed=_loads(value, None)
-                  if parsed is not None: yield from _iter_docs(parsed)
-          def _metadata(doc):
-              if not isinstance(doc, dict): return {}
-              meta=doc.get('metadata') if isinstance(doc.get('metadata'), dict) else {}
-              dm=meta.get('doc_metadata') if isinstance(meta.get('doc_metadata'), dict) else {}
-              out={}
-              out.update(meta); out.update(dm)
-              for k in ('doc_metadata','metadata'):
-                  nested=doc.get(k) if isinstance(doc.get(k), dict) else {}
-                  out.update(nested)
-              return out
-          def _content(doc):
-              if not isinstance(doc, dict): return ''
-              for k in ('content','text','page_content'):
-                  if isinstance(doc.get(k), str) and doc.get(k).strip(): return doc.get(k)
-              return ''
-          def _doc_collection_names(doc):
-              names=[]
-              meta=_metadata(doc)
-              cname=str(meta.get('collection_name') or '').strip()
-              if cname: names.append(cname)
-              body=_content(doc).strip()
-              parsed=_loads(body, None)
-              if isinstance(parsed, dict):
-                  if isinstance(parsed.get('collections'), dict): names += [str(k).strip() for k in parsed.get('collections').keys() if str(k).strip()]
-                  else:
-                      cname=str(parsed.get('collection_name') or '').strip()
-                      if cname: names.append(cname)
-              # Only allow explicit self-identifying headers, not relation targets or prose/examples.
-              for m in re.finditer(r'(?im)^\s*#{1,6}\s*(?:Mongo\s+Schema\s*[:：-]?\s*)?(?:collection(?:_name)?\s*[=:：-]\s*)?([A-Za-z0-9_\-]+)\s*$', body[:4000]):
-                  val=m.group(1).strip()
-                  if val.lower() not in {'mongo','schema','metadata','collection'}: names.append(val)
-              out=[]
-              for n in names:
-                  if n and n not in out: out.append(n)
-              return out
+          def _text(v):
+              try: return json.dumps(v, ensure_ascii=False) if not isinstance(v,str) else v
+              except Exception: return str(v or '')
           def main(needed_collections=None, retrieval_result=None, **kwargs):
-              needed=_list(needed_collections)
-              retrieved=[]
-              for doc in _iter_docs(retrieval_result):
-                  for name in _doc_collection_names(doc):
-                      if name in needed and name not in retrieved:
-                          retrieved.append(name)
+              needed=_list(needed_collections); raw=_text(retrieval_result); low=raw.lower()
+              retrieved=[c for c in needed if re.search(r'(?<![\w-])'+re.escape(c.lower())+r'(?![\w-])',low)]
               missing=[c for c in needed if c not in retrieved]
               summary={'needed_collections':needed,'retrieved_collections':retrieved,'missing_collections':missing,'schema_hydration_needed':bool(missing),'schema_recall_valid':not missing,'reason':('missing schema: '+', '.join(missing)) if missing else 'all needed collections recalled'}
               return {'needed_collections':needed,'retrieved_collections':retrieved,'missing_collections':missing,'schema_hydration_needed':bool(missing),'schema_recall_summary_json':json.dumps(summary,ensure_ascii=False)}
@@ -120,23 +64,11 @@
       width: 242
     - data:
         code: |
-          def _as_list(value):
-              if value in (None, ''):
-                  return []
-              if isinstance(value, list):
-                  return value
-              return [value]
-
-
-          def main(missing_collections=None, selector_schema_hydration_collections=None, selected_schema_hydration_collections=None):
+          def main(missing_collections=None):
               items=[]
-              seen=set()
-              for source in (missing_collections, selector_schema_hydration_collections, selected_schema_hydration_collections):
-                  for c in _as_list(source):
-                      c=str(c or '').strip()
-                      if c and c not in seen:
-                          seen.add(c)
-                          items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
+              for c in missing_collections or []:
+                  c=str(c or '').strip()
+                  if c: items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
               return {'missing_collection_tasks':items}
         code_language: python3
         desc: 只为 missing_collections 构造 hydration 任务，不重复检索已召回 collection。
@@ -146,8 +78,6 @@
         type: code
         variables:
         - {variable: missing_collections, value_type: 'array[string]', value_selector: ['1777300000001', missing_collections]}
-        - {variable: selector_schema_hydration_collections, value_type: 'array[string]', value_selector: ['1777000000002', schema_hydration_collections]}
-        - {variable: selected_schema_hydration_collections, value_type: 'array[string]', value_selector: ['1777100000105', schema_hydration_collections]}
       height: 80
       id: '1777300000003'
       position: {x: 4440, y: 2500}

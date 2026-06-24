@@ -635,7 +635,6 @@
                           'selected_related_collections': selection.get('selected_related_collections') or [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                          'needs_schema_hydration': bool(selection.get('needs_schema_hydration') or selection.get('needs_schema_retrieval')),
                           'schema_hydration_collections': selection.get('schema_hydration_collections') or ([base] if base else []),
                           'requires_clarification': False,
                           'clarification_question': '',
@@ -654,8 +653,6 @@
                       'selected_related_collections': [],
                       'selection_confidence': 0,
                       'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                      'needs_schema_hydration': bool(selection.get('needs_schema_hydration') or selection.get('schema_hydration_collections')),
-                      'schema_hydration_collections': selection.get('schema_hydration_collections') or [],
                       'requires_clarification': True,
                       'clarification_question': selection.get('clarification_question') or '',
                   }
@@ -691,8 +688,6 @@
                           'selected_related_collections': selection.get('selected_related_collections') or [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                          'needs_schema_hydration': bool(selection.get('needs_schema_hydration') or selection.get('needs_schema_retrieval') or selection.get('schema_hydration_collections')),
-                          'schema_hydration_collections': selection.get('schema_hydration_collections') or [],
                           'requires_clarification': False,
                           'clarification_question': '',
                       }
@@ -710,8 +705,6 @@
                           'selected_related_collections': selection.get('selected_related_collections') or [],
                           'selection_confidence': float(selection.get('confidence') or 0),
                           'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                          'needs_schema_hydration': bool(selection.get('needs_schema_hydration') or selection.get('needs_schema_retrieval') or selection.get('schema_hydration_collections')),
-                          'schema_hydration_collections': selection.get('schema_hydration_collections') or [],
                           'requires_clarification': False,
                           'clarification_question': '',
                       }
@@ -804,8 +797,6 @@
                   'selected_related_collections': selection['selected_related_collections'],
                   'selection_confidence': float(selection.get('confidence') or 0),
                   'selector_warnings_json': json.dumps(selection.get('warnings') or [], ensure_ascii=False),
-                  'needs_schema_hydration': bool(selection.get('needs_schema_hydration') or selection.get('needs_schema_retrieval') or selection.get('schema_hydration_collections')),
-                  'schema_hydration_collections': selection.get('schema_hydration_collections') or [],
                   'requires_clarification': bool(selection.get('requires_clarification')),
                   'clarification_question': selection.get('clarification_question') or '',
               }
@@ -831,12 +822,6 @@
           selector_warnings_json:
             children:
             type: string
-          needs_schema_hydration:
-            children:
-            type: boolean
-          schema_hydration_collections:
-            children:
-            type: array[string]
           requires_clarification:
             children:
             type: boolean
@@ -917,24 +902,6 @@
       width: 242
     - data:
         cases:
-        - case_id: schema_hydration_needed
-          conditions:
-          - comparison_operator: is
-            id: collection-selection-hydration-needed
-            value: 'true'
-            varType: boolean
-            variable_selector:
-            - '1777000000002'
-            - needs_schema_hydration
-          - comparison_operator: not empty
-            id: collection-selection-hydration-collections
-            value: ''
-            varType: array[string]
-            variable_selector:
-            - '1777000000002'
-            - schema_hydration_collections
-          id: schema_hydration_needed
-          logical_operator: and
         - case_id: has_primary
           conditions:
           - comparison_operator: not empty
@@ -951,13 +918,6 @@
             variable_selector:
             - '1777000000002'
             - requires_clarification
-          - comparison_operator: is
-            id: collection-selection-no-hydration
-            value: 'false'
-            varType: boolean
-            variable_selector:
-            - '1777000000002'
-            - needs_schema_hydration
           id: has_primary
           logical_operator: and
         desc: refine selector 必须选出 primary collection 且不需要澄清；否则 safe stop。
@@ -1076,16 +1036,7 @@
                   hydration_needed = bool(primary and primary not in collections)
                   hydration_collections = [primary] if hydration_needed else []
                   hydration_reason = 'selected_primary_collection_missing_from_candidate_schemas' if hydration_needed else ''
-                  requested = _uniq([primary] + [x for x in (_list(needed_collections) or _list(selected_related_collections)) if x != primary], 24)
-                  available = [x for x in requested if x in collections]
-                  missing = [x for x in requested if x and x not in collections]
-                  if primary and primary not in missing and primary not in collections:
-                      missing = _uniq([primary] + missing, 24)
-                  hydration_needed = bool(missing)
-                  hydration_collections = missing
-                  hydration_reason = 'selected_primary_collection_missing_from_candidate_schemas' if primary and primary in missing else ('missing_collections_for_schema_hydration' if hydration_needed else '')
-                  context_obj = {'needed_collections': requested, 'selected_collections': available, 'missing_collections': missing, 'primary_collection_hint': primary, 'keep_previous_primary': bool(keep_previous_primary), 'collection_switch': bool(collection_switch), 'schemas': [], 'relation_evidence': [], 'warnings': warnings + (['missing schema: '+', '.join(missing)] if missing else [])}
-                  return {'selected_schema_context_refine_json': json.dumps(context_obj, ensure_ascii=False), 'needed_collections': requested, 'selected_collections': available, 'missing_collections': missing, 'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': available, 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(context_obj['warnings'], ensure_ascii=False)}
+                  return {'schema_context': '', 'schema_metadata_json': json.dumps(empty_meta, ensure_ascii=False), 'schema_alias_index_json': json.dumps({}, ensure_ascii=False), 'schema_context_ref_json': json.dumps({'collections': [], 'schema_digest': '', 'schema_version': empty_meta['schema_version'], 'catalog_digest': str(ref.get('catalog_digest') or '')}, ensure_ascii=False), 'selected_schema_ready': False, 'schema_hydration_needed': hydration_needed, 'schema_hydration_reason': hydration_reason, 'schema_hydration_collections': hydration_collections, 'selected_schema_warnings_json': json.dumps(warnings, ensure_ascii=False)}
               keep = []
               requested = _list(needed_collections) or [primary] + _list(selected_related_collections)
               requested = _uniq([primary] + [x for x in requested if x != primary], 24)
