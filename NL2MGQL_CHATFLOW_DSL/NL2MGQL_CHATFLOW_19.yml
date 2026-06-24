@@ -117,7 +117,10 @@
               selection = _loads(collection_selection_json)
               catalog = _loads(collection_catalog_json)
               warnings = selection.get('warnings') if isinstance(selection.get('warnings'), list) else []
-              if not catalog.get('collections'):
+              internal_errors = {'missing_expected_collections_in_catalog','missing_must_include_collections','schema_recall_pack_inconsistent','inherited_primary_collection_missing_from_candidate_catalog'}
+              if selection.get('selection_error') in internal_errors or selection.get('needs_schema_hydration'):
+                  text = '当前 refine 查询的 schema 召回与 catalog 打包结果不一致，系统未能继续生成查询计划。请重试，或联系管理员检查知识库召回配置。'
+              elif not catalog.get('collections'):
                   text = '未检索到可用 schema，无法确定要查询的数据集合，请检查知识库 schema 文档。'
               else:
                   text = selection.get('clarification_question') or '无法从候选 schema 中确定本次查询的主集合，请补充说明要查询的数据对象。'

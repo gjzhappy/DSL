@@ -313,6 +313,24 @@
           catalog_parse_warnings_json:
             children:
             type: string
+          catalog_valid:
+            children:
+            type: boolean
+          catalog_error:
+            children:
+            type: string
+          catalog_collections:
+            children:
+            type: array[string]
+          catalog_collections_json:
+            children:
+            type: string
+          missing_catalog_collections:
+            children:
+            type: array[string]
+          missing_catalog_collections_json:
+            children:
+            type: string
         selected: false
         title: 代码执行_打包CandidateSchemas并派生Catalog_Refine
         type: code
@@ -322,6 +340,26 @@
           - result
           value_type: array[object]
           variable: docs
+        - value_selector:
+          - '1777300000008'
+          - combined_docs
+          value_type: array[object]
+          variable: combined_docs
+        - value_selector:
+          - '1777300000008'
+          - combined_docs_json
+          value_type: string
+          variable: combined_docs_json
+        - value_selector:
+          - '1776000000025'
+          - expected_collections
+          value_type: array[string]
+          variable: expected_collections
+        - value_selector:
+          - '1776000000025'
+          - must_include_collections_json
+          value_type: array[string]
+          variable: must_include_collections
       height: 80
       id: '1776000000026'
       position:
