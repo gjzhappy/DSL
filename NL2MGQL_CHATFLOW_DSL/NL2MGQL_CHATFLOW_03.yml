@@ -169,9 +169,6 @@
                                       'source_field': str(jk.get('source_field') or '').strip(),
                                       'target_field': str(jk.get('target_field') or '').strip(),
                                       'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
-                                      **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),
-                                      **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),
-                                      **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),
                                   }
                                   for jk in (r.get('join_keys') or []) if isinstance(jk, dict)
                               ],
@@ -187,7 +184,6 @@
                           'fields': fields,
                           'metrics': metrics,
                           'relations': relations,
-                          'array_fields': coll.get('array_fields') if isinstance(coll.get('array_fields'), list) else [],
                       }
                       if alias_count < 300:
                           caliases = [cname, coll.get('collection_label')] + compact_aliases(coll.get('collection_aliases'), 5)
@@ -276,15 +272,14 @@
                   "7. 用户要求的补充字段必须来自 related collection 的 fields。",
                   "8. 用户要求的分组字段必须来自 primary collection 或明确的最终合并字段。",
                   "9. 用户要求统计数量时，优先使用对应 collection 的 count metric；若 metric 存在 order_count，则 metric_alias 使用该 metric name。",
-                  "10. 相对时间“过去三个月”使用 time_range.mode=\"relative_days\"，relative_days=90，field 使用 primary collection 的 default_time_field；relative_days 必须是正整数，禁止输出 relative_days=0。用户没有提供时间范围时，必须读取 compact_schema_context.query_rules.require_time_range_for_aggregate：若为 true，输出 requires_clarification=true 且 clarification_question=\"请提供要统计的时间范围，例如最近30天、今年、某个月。\"，不要生成非法 time_range；若 schema 明确允许默认全量，则不要使用 relative_days=0，也不要发明 schema 未支持的 all_time mode。",
-                  "11. 单集合优先硬约束：如果用户问题需要的 group_fields、metric_field、filters、sort fields、projection fields、chart x/y 字段都能在 primary_collection 的 fields/metrics 中解析，则必须使用 single_stage：related_collections=[]、execution_mode=single_stage、仅输出 primary_query stage、final_merge={} 或 merge_mode=none；禁止生成 enrich_related、related_collections、final_merge enrich。除非用户明确说补充/关联/带出/合并/join/lookup/enrich related 明细/商品详情/主数据，否则不得因为字段名像实体（如品牌、商品、省份等）而引入 related collection。",
-                  "12. 你只能使用统一 semantic_plan_contract 表达单集合和多集合查询。单集合查询：related_collections 必须为 []；execution_mode 必须为 single_stage；final_merge.merge_mode 必须为 none；不得输出 join_fields / merge_keys / join_keys / joins / relations / lookups。多集合 enrich 查询：primary_collection 是主集合；related_collections 列出补充集合；stages 必须包含一个 primary_query stage 和一个或多个 enrich_related stage；enrich_related stage 必须包含 depends_on / join_source_field / join_target_field；final_merge 必须包含 merge_mode=enrich / left_stage / right_stage / left_field / right_field / attach_as；final_merge.left_stage 必须等于 enrich_related.depends_on，final_merge.right_stage 必须指向 enrich_related stage，不能写反；不得输出 join_fields / merge_keys / join_keys / additional_fields 等 legacy 字段。如果需要表达 A.field -> B.field：stage2.join_source_field、stage2.join_target_field、final_merge.left_field、final_merge.right_field 均填写对应 schema relation join key 字段。不要发明 schema 未声明的关联键；关联键必须来自 schema relations.join_keys；如果 schema relations 没有声明关联关系，不能生成 enrich_related，应要求澄清或 needs_replan。",
-                  "13. 输出协议固定为 semantic_plan_contract：必须包含 contract_version/primary_collection/related_collections/execution_mode/answer_mode/needs_chart/stages/final_merge/chart_request/requires_clarification/clarification_question/needs_schema_retrieval/warnings；禁止输出 debug 大字段、rows、chart option、Mongo pipeline、MQL、MGQL、AST。",
-                  "14. schema 硬约束：primary_collection 必须来自 selected_primary_collection；related_collections 必须来自 selected_related_collections 或 schema relations；只能使用 compact_schema_context 中存在的 collection、field、metric、relation、query_rules；字段/指标别名必须解析成 canonical name；relation 必须来自 schema relations；不得发明 collection/field/metric/relation。",
-                  "15. intent_type 硬约束：按维度分组统计、按字段分组统计、group by 聚合统计，必须使用 aggregate_summary。用户说“按 A 和 B 统计数量/金额/销量/订单数”，必须使用 aggregate_summary，并把 A、B 都放入 group_fields。不得因为第二个 group_field 是商品、用户、厂商、品牌、设备等实体字段，就改成 group_top_entity；不得因为 chart_request.series_name 等于某个 group field，就改成 group_top_entity。",
-                  "16. group_top_entity 只能在用户明确表达 top/topN/前N/排名前N/最高/最低/最多/最少/第一/最大/最小/榜单/排名 等 TopN/排序极值语义时使用；使用时必须输出 entity_field、metric_function、metric_field、metric_alias、limit；如果没有 entity_field，禁止输出 group_top_entity。反例：用户‘查询过去三个月订单，按订单状态和商品名称统计订单数’正确 intent_type=aggregate_summary, group_fields=[status,product_name], metric_alias=order_count；错误 intent_type=group_top_entity。",
-                  "17. 多集合 enrich：如果用户明确要求关联/补充/带出/合并/join/lookup/enrich 且 compact_schema_context 存在 relation，则 execution_mode=multi_stage；primary_query stage 使用 primary_collection；enrich_related stage 使用 related collection；join_source_field/join_target_field 必须来自 schema relation join_keys；final_merge.merge_mode=enrich；final_merge.left_field/right_field 与 stage2.join_source_field/join_target_field 一致；final_merge.attach_as 使用 string，不要输出 array。",
-                  "18. 图表 gating：默认 needs_chart=false 且 chart_request.enabled=false；只有用户明确要求图表/可视化时才启用；‘如果适合请生成图表’属于弱图表意图，可以启用图表，但必须基于数据语义选择合理图表；chart_request.x_field/y_field/series_name 必须使用 canonical field/metric，例如 y_field=order_count，不要使用中文指标别名。",
+                  "10. 相对时间“过去三个月”使用 time_range.mode=\"relative_days\"，relative_days=90，field 使用 primary collection 的 default_time_field。",
+                  "11. 你只能使用统一 semantic_plan_contract 表达单集合和多集合查询。单集合查询：related_collections 必须为 []；execution_mode 必须为 single_stage；final_merge.merge_mode 必须为 none；不得输出 join_fields / merge_keys / join_keys / joins / relations / lookups。多集合 enrich 查询：primary_collection 是主集合；related_collections 列出补充集合；stages 必须包含一个 primary_query stage 和一个或多个 enrich_related stage；enrich_related stage 必须包含 depends_on / join_source_field / join_target_field；final_merge 必须包含 merge_mode=enrich / left_stage / right_stage / left_field / right_field / attach_as；不得输出 join_fields / merge_keys / join_keys / additional_fields 等 legacy 字段。如果需要表达 A.field -> B.field：stage2.join_source_field、stage2.join_target_field、final_merge.left_field、final_merge.right_field 均填写对应 schema relation join key 字段。不要发明 schema 未声明的关联键；关联键必须来自 schema relations.join_keys；如果 schema relations 没有声明关联关系，不能生成 enrich_related，应要求澄清或 needs_replan。",
+                  "12. 输出协议固定为 semantic_plan_contract：必须包含 contract_version/primary_collection/related_collections/execution_mode/answer_mode/needs_chart/stages/final_merge/chart_request/requires_clarification/clarification_question/needs_schema_retrieval/warnings；禁止输出 debug 大字段、rows、chart option、Mongo pipeline、MQL、MGQL、AST。",
+                  "13. schema 硬约束：primary_collection 必须来自 selected_primary_collection；related_collections 必须来自 selected_related_collections 或 schema relations；只能使用 compact_schema_context 中存在的 collection、field、metric、relation、query_rules；字段/指标别名必须解析成 canonical name；relation 必须来自 schema relations；不得发明 collection/field/metric/relation。",
+                  "14. intent_type 硬约束：按维度分组统计、按字段分组统计、group by 聚合统计，必须使用 aggregate_summary。用户说“按 A 和 B 统计数量/金额/销量/订单数”，必须使用 aggregate_summary，并把 A、B 都放入 group_fields。不得因为第二个 group_field 是商品、用户、厂商、品牌、设备等实体字段，就改成 group_top_entity；不得因为 chart_request.series_name 等于某个 group field，就改成 group_top_entity。",
+                  "15. group_top_entity 只能在用户明确表达 top/topN/前N/排名前N/最高/最低/最多/最少/第一/最大/最小/榜单/排名 等 TopN/排序极值语义时使用；使用时必须输出 entity_field、metric_function、metric_field、metric_alias、limit；如果没有 entity_field，禁止输出 group_top_entity。反例：用户‘查询过去三个月订单，按订单状态和商品名称统计订单数’正确 intent_type=aggregate_summary, group_fields=[status,product_name], metric_alias=order_count；错误 intent_type=group_top_entity。",
+                  "16. 多集合 enrich：如果用户明确要求关联/补充/带出/合并/join/lookup/enrich 且 compact_schema_context 存在 relation，则 execution_mode=multi_stage；primary_query stage 使用 primary_collection；enrich_related stage 使用 related collection；join_source_field/join_target_field 必须来自 schema relation join_keys；final_merge.merge_mode=enrich；final_merge.left_field/right_field 与 stage2.join_source_field/join_target_field 一致；final_merge.attach_as 使用 string，不要输出 array。",
+                  "17. 图表 gating：默认 needs_chart=false 且 chart_request.enabled=false；只有用户明确要求图表/可视化时才启用；‘如果适合请生成图表’属于弱图表意图，可以启用图表，但必须基于数据语义选择合理图表；chart_request.x_field/y_field/series_name 必须使用 canonical field/metric，例如 y_field=order_count，不要使用中文指标别名。",
               ])
               json_only_closure = "\n\n".join([
                   "【现在开始输出】",
@@ -907,9 +902,6 @@
                           'source_field': str(jk.get('source_field') or '').strip(),
                           'target_field': str(jk.get('target_field') or '').strip(),
                           'match_type': str(jk.get('match_type') or 'exact').strip() or 'exact',
-                          **({'source_cardinality': str(jk.get('source_cardinality') or '').strip()} if str(jk.get('source_cardinality') or '').strip() else {}),
-                          **({'source_array_path': str(jk.get('source_array_path') or '').strip()} if str(jk.get('source_array_path') or '').strip() else {}),
-                          **({'source_item_field': str(jk.get('source_item_field') or '').strip()} if str(jk.get('source_item_field') or '').strip() else {}),
                       })
               normalized = {
                   'target_collection': str(item.get('target_collection') or '').strip(),
@@ -969,7 +961,6 @@
                   'fields': fields,
                   'metrics': metrics,
                   'relations': [_normalize_relation(r, cname, warnings) for r in relations if isinstance(r, dict)],
-                  'array_fields': _as_list(doc.get('array_fields')),
                   'query_rules': _normalize_query_rules(doc.get('query_rules')),
                   'aggregation_policy': _as_dict(doc.get('aggregation_policy')),
                   'chart_label': _as_dict(doc.get('chart_label')),
