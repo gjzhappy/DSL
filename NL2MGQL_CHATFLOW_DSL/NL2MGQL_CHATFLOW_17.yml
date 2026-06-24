@@ -242,8 +242,110 @@
               return '\n\n'.join(sections)
 
 
-          def main(docs):
+          def _json_loads_maybe(value, default=None):
+              if value in (None, ''):
+                  return default
+              if isinstance(value, (list, dict)):
+                  return value
+              if isinstance(value, str):
+                  s = value.strip()
+                  if not s:
+                      return default
+                  try:
+                      return json.loads(s)
+                  except Exception:
+                      return default
+              return default
+
+
+          def _docs_list(value):
+              if value in (None, ''):
+                  return []
+              if isinstance(value, list):
+                  return value
+              if isinstance(value, dict):
+                  for key in ('combined_docs', 'result', 'records', 'data'):
+                      inner = value.get(key)
+                      if isinstance(inner, list):
+                          return inner
+                  return [value] if (value.get('content') or value.get('text') or value.get('document')) else []
+              parsed = _json_loads_maybe(value, None)
+              if parsed is not None and parsed is not value:
+                  return _docs_list(parsed)
+              return []
+
+
+          def _pick_docs(docs=None, combined_docs=None, combined_docs_json='', candidate_docs=None, candidate_docs_json='', retrieval_result=None, result=None, kwargs=None):
+              kwargs = kwargs or {}
+              candidates = [
+                  combined_docs,
+                  _json_loads_maybe(combined_docs_json, None),
+                  kwargs.get('combined_docs'),
+                  _json_loads_maybe(kwargs.get('combined_docs_json'), None),
+                  docs,
+                  candidate_docs,
+                  _json_loads_maybe(candidate_docs_json, None),
+                  retrieval_result,
+                  result,
+              ]
+              for item in candidates:
+                  picked = _docs_list(item)
+                  if picked:
+                      return picked
+              return []
+
+
+          def _dedupe_nonempty(values):
+              out, seen = [], set()
+              for value in values or []:
+                  s = str(value or '').strip()
+                  if s and s not in seen:
+                      seen.add(s)
+                      out.append(s)
+              return out
+
+
+          def _required_collections(expected_collections=None, expected_collections_json='', must_include_collections=None, must_include_collections_json='', schema_recall_summary_json='', kwargs=None):
+              kwargs = kwargs or {}
+              required = []
+              required.extend(_str_list(expected_collections))
+              required.extend(_str_list(_json_loads_maybe(expected_collections_json, [])))
+              required.extend(_str_list(must_include_collections))
+              required.extend(_str_list(_json_loads_maybe(must_include_collections_json, [])))
+              summary = _json_loads_maybe(schema_recall_summary_json, {})
+              if isinstance(summary, dict):
+                  required.extend(_str_list(summary.get('expected_collections')))
+                  required.extend(_str_list(summary.get('must_include_collections')))
+                  required.extend(_str_list(summary.get('needed_collections')))
+              for key in ('expected_collections', 'must_include_collections'):
+                  required.extend(_str_list(kwargs.get(key)))
+              for key in ('expected_collections_json', 'must_include_collections_json'):
+                  required.extend(_str_list(_json_loads_maybe(kwargs.get(key), [])))
+              summary = _json_loads_maybe(kwargs.get('schema_recall_summary_json'), {})
+              if isinstance(summary, dict):
+                  required.extend(_str_list(summary.get('expected_collections')))
+                  required.extend(_str_list(summary.get('must_include_collections')))
+                  required.extend(_str_list(summary.get('needed_collections')))
+              return _dedupe_nonempty(required)
+
+
+          def main(
+              docs=None,
+              combined_docs=None,
+              combined_docs_json='',
+              candidate_docs=None,
+              candidate_docs_json='',
+              retrieval_result=None,
+              result=None,
+              expected_collections=None,
+              expected_collections_json='',
+              must_include_collections=None,
+              must_include_collections_json='',
+              schema_recall_summary_json='',
+              **kwargs
+          ):
               warnings = []
+              docs = _pick_docs(docs, combined_docs, combined_docs_json, candidate_docs, candidate_docs_json, retrieval_result, result, kwargs)
               collections = {}
               schema_version = ''
               for doc in (docs or []):
@@ -268,6 +370,21 @@
               meta['schema_digest'] = _digest(meta, 'schema_digest') if collections else ''
               alias = _alias_index(meta) if collections else {'contract_version': ALIAS_INDEX_CONTRACT_VERSION, 'aliases': {}, 'collection_aliases': {}, 'field_aliases': {}, 'metric_aliases': {}, 'value_aliases': {}, 'fields': {}, 'metrics': {}, 'collections': {}, 'warnings': []}
               cat = _catalog(meta)
+              catalog_collections = list(collections.keys())
+              required = _required_collections(expected_collections, expected_collections_json, must_include_collections, must_include_collections_json, schema_recall_summary_json, kwargs)
+              missing_catalog_collections = [c for c in required if c not in catalog_collections]
+              if not docs:
+                  catalog_valid = False
+                  catalog_error = 'pack_input_parse_failed'
+              elif not catalog_collections:
+                  catalog_valid = False
+                  catalog_error = 'empty_collection_catalog'
+              elif missing_catalog_collections:
+                  catalog_valid = False
+                  catalog_error = 'missing_expected_collections_in_catalog'
+              else:
+                  catalog_valid = True
+                  catalog_error = ''
               context_ref = {'collections': list(collections.keys()), 'schema_digest': meta.get('schema_digest', ''), 'schema_version': schema_version, 'catalog_digest': cat.get('catalog_digest', '')}
               if not docs:
                   warnings.append('CandidateSchemas retrieval returned no documents')
@@ -284,6 +401,12 @@
                   'candidate_schema_collections_json': json.dumps(list(collections.keys()), ensure_ascii=False),
                   'parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
                   'catalog_parse_warnings_json': json.dumps(warnings, ensure_ascii=False),
+                  'catalog_valid': catalog_valid,
+                  'catalog_error': catalog_error,
+                  'catalog_collections': catalog_collections,
+                  'catalog_collections_json': json.dumps(catalog_collections, ensure_ascii=False),
+                  'missing_catalog_collections': missing_catalog_collections,
+                  'missing_catalog_collections_json': json.dumps(missing_catalog_collections, ensure_ascii=False),
               }
         code_language: python3
         desc: 解析 refine CandidateSchemas 检索结果中的 mongo_schema 文档，输出裁剪前 schema metadata、alias
