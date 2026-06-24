@@ -277,7 +277,7 @@
               if not raw:
                   return ''
               raw = raw.lstrip('$')
-              if '.' in raw:
+              if raw.startswith('stage') and '.' in raw:
                   return raw.split('.')[-1].strip()
               return raw
 
@@ -794,6 +794,8 @@
                   normalized_stages.append(stage)
 
               final_merge = plan.get('final_merge') or {}
+              attach_as_raw = final_merge.get('attach_as') if isinstance(final_merge, dict) else ''
+              attach_as = attach_as_raw if isinstance(attach_as_raw, str) else ''
               if not normalized_stages:
                   raise ValueError('execution_plan has no effective stages')
               if execution_mode == 'multi_stage' and len(normalized_stages) < 2:
@@ -826,7 +828,7 @@
                       'right_stage': str(final_merge.get('right_stage') or (normalized_stages[1]['stage_name'] if len(normalized_stages) > 1 else '')).strip(),
                       'left_field': str(final_merge.get('left_field') or '').strip(),
                       'right_field': str(final_merge.get('right_field') or '').strip(),
-                      'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
+                      'attach_as': attach_as.strip() or 'related_info',
                   },
               }
 

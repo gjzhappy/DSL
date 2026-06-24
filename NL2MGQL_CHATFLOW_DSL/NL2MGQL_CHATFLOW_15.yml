@@ -847,15 +847,67 @@
                   for item in v:
                       if isinstance(item, dict):
                           yield item
+                      elif _str(item):
+                          yield {"name": _str(item)}
 
 
           def _named_item_map(v: Any) -> Dict[str, Dict[str, Any]]:
               out: Dict[str, Dict[str, Any]] = {}
               for item in _iter_named_items(v):
-                  name = _str(item.get("name")).strip()
+                  name = _str(item.get("name") or item.get("field")).strip()
                   if name:
                       out[name] = item
               return out
+
+
+          def _resolve_nested_field_path(coll: Dict[str, Any], field_name: str) -> Dict[str, Any]:
+              field = _str(field_name).strip()
+              if not field or "." not in field or not isinstance(coll, dict):
+                  return {}
+              head, tail = field.split(".", 1)
+              for arr in coll.get("array_fields") or []:
+                  if not isinstance(arr, dict) or _str(arr.get("field") or arr.get("name")) != head:
+                      continue
+                  for item in arr.get("item_fields") or []:
+                      if not isinstance(item, dict):
+                          continue
+                      item_name = _str(item.get("field") or item.get("name")).strip()
+                      item_path = _str(item.get("path") or item.get("name")).strip()
+                      if item_name == tail or item_path == field:
+                          resolved = dict(item)
+                          resolved.setdefault("name", field)
+                          resolved.setdefault("field", field)
+                          resolved.setdefault("array_path", head)
+                          resolved.setdefault("item_field", tail)
+                          resolved.setdefault("role", "array_item_dimension")
+                          return resolved
+              for obj in coll.get("object_fields") or []:
+                  if not isinstance(obj, dict) or _str(obj.get("field") or obj.get("name")) != head:
+                      continue
+                  for item in (obj.get("fields") or obj.get("item_fields") or []):
+                      if not isinstance(item, dict):
+                          continue
+                      item_name = _str(item.get("field") or item.get("name")).strip()
+                      item_path = _str(item.get("path") or item.get("name")).strip()
+                      if item_name == tail or item_path == field:
+                          resolved = dict(item)
+                          resolved.setdefault("name", field)
+                          resolved.setdefault("field", field)
+                          resolved.setdefault("object_path", head)
+                          resolved.setdefault("item_field", tail)
+                          resolved.setdefault("role", "object_field")
+                          return resolved
+              return {}
+
+
+          def _schema_field_exists(schema: Dict[str, Any], collection: str, field_name: str) -> bool:
+              field = _str(field_name).strip()
+              if not field:
+                  return False
+              coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
+              if field in _named_item_map(coll.get("fields") or {}):
+                  return True
+              return bool(_resolve_nested_field_path(coll, field))
 
 
           def _alias_hits(alias_index: Any, section: str, raw: str, collection: str, kind: str) -> List[Dict[str, Any]]:
@@ -875,7 +927,7 @@
                       continue
                   if hit.get("kind") and hit.get("kind") != kind:
                       continue
-                  name = _str(hit.get("name")).strip()
+                  name = _str(hit.get("name") or hit.get("canonical")).strip()
                   if name:
                       out.append({"name": name, "source": section, "label": hit.get("label")})
               return out
@@ -897,6 +949,8 @@
               field_map = _named_item_map(fields)
               if raw in field_map:
                   return raw, "schema_field_name", []
+              if _schema_field_exists(schema, collection, raw):
+                  return raw, "schema_field_path", []
               for field in _iter_named_items(fields):
                   name = _str(field.get("name")).strip()
                   label = _str(field.get("label")).strip()
@@ -955,7 +1009,7 @@
 
           def _field(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
               coll = ((schema.get("collections") or {}).get(collection) or {}) if isinstance(schema, dict) else {}
-              return _named_item_map(coll.get("fields") or {}).get(name) or {}
+              return _named_item_map(coll.get("fields") or {}).get(name) or _resolve_nested_field_path(coll, name) or {}
 
 
           def _metric(schema: Dict[str, Any], collection: str, name: str) -> Dict[str, Any]:
