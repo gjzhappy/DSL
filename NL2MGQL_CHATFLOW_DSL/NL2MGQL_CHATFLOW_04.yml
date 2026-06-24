@@ -784,31 +784,11 @@
                       'projection_fields': _ensure_string_list(raw.get('projection_fields') or [], f'stages[{idx}].projection_fields'),
                       'join_source_field': str(raw.get('join_source_field') or '').strip(),
                       'apply_global_limit': bool(raw.get('apply_global_limit', False)),
-                      'array_unwind': raw.get('array_unwind') if isinstance(raw.get('array_unwind'), list) else [],
-                      'source_cardinality': str(raw.get('source_cardinality') or '').strip(),
-                      'source_array_path': str(raw.get('source_array_path') or '').strip(),
-                      'source_item_field': str(raw.get('source_item_field') or '').strip(),
-                      'target_collection': str(raw.get('target_collection') or raw.get('related_collection') or '').strip(),
-                      'join_key': raw.get('join_key') if isinstance(raw.get('join_key'), dict) else {},
-                      'relation': raw.get('relation') if isinstance(raw.get('relation'), dict) else {},
                   }
                   stage['filters'] = _sanitize_stage_filters(raw.get('filters') or [], stage['time_range'])
                   if intent_type == 'enrich_related':
                       stage['join_target_field'] = str(raw.get('join_target_field') or '').strip()
                       stage['attach_as'] = str(raw.get('attach_as') or 'related_info').strip() or 'related_info'
-                      relation = stage.get('relation') if isinstance(stage.get('relation'), dict) else {}
-                      join_key = stage.get('join_key') if isinstance(stage.get('join_key'), dict) else {}
-                      for src in (join_key, relation):
-                          if not isinstance(src, dict):
-                              continue
-                          stage['source_cardinality'] = stage.get('source_cardinality') or str(src.get('source_cardinality') or '').strip()
-                          stage['source_array_path'] = stage.get('source_array_path') or str(src.get('source_array_path') or '').strip()
-                          stage['source_item_field'] = stage.get('source_item_field') or str(src.get('source_item_field') or '').strip()
-                          stage['join_source_field'] = stage.get('join_source_field') or str(src.get('source_field') or '').strip()
-                          stage['join_target_field'] = stage.get('join_target_field') or str(src.get('target_field') or '').strip()
-                      stage['target_collection'] = stage.get('target_collection') or collection
-                      if stage.get('source_cardinality') == 'array':
-                          stage['collection'] = primary_collection
                   if _is_effectively_empty_stage(stage):
                       continue
                   normalized_stages.append(stage)
@@ -820,14 +800,6 @@
                   execution_mode = 'single_stage'
               if execution_mode == 'single_stage':
                   normalized_stages = normalized_stages[:1]
-              plan_array_unwind = plan.get('array_unwind') if isinstance(plan.get('array_unwind'), list) else []
-              if plan_array_unwind:
-                  for stage in normalized_stages:
-                      stage_unwinds = list(stage.get('array_unwind') or [])
-                      for item in plan_array_unwind:
-                          if isinstance(item, dict) and str(item.get('collection') or primary_collection).strip() == stage.get('collection'):
-                              stage_unwinds.append(item)
-                      stage['array_unwind'] = stage_unwinds
               visualization = _normalize_visualization(plan.get('visualization'))
               chart_request = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
               chart_request_title = str(chart_request.get('title') or '').strip()
@@ -847,7 +819,6 @@
                   'collections': collections,
                   'reasoning': str(plan.get('reasoning') or '').strip(),
                   'visualization': visualization,
-                  'array_unwind': plan_array_unwind,
                   'stages': normalized_stages,
                   'final_merge': {
                       'merge_mode': merge_mode,
@@ -858,52 +829,6 @@
                       'attach_as': str(final_merge.get('attach_as') or 'related_info').strip() or 'related_info',
                   },
               }
-
-
-          def _field_alias(field):
-              text = str(field or '').strip()
-              if not text:
-                  return text
-              return text.split('.')[-1] if '.' in text else text
-
-
-          def _append_validated_array_unwinds(pipeline, stage):
-              inserted_unwinds = set()
-              for item in stage.get('array_unwind') or []:
-                  if not isinstance(item, dict):
-                      continue
-                  collection = str(item.get('collection') or stage.get('collection') or '').strip()
-                  path = str(item.get('path') or '').strip().lstrip('$')
-                  if not path or collection != str(stage.get('collection') or '').strip():
-                      continue
-                  if '.' in path:
-                      raise ValueError('unsupported multi-level array_unwind path')
-                  if path in inserted_unwinds:
-                      continue
-                  inserted_unwinds.add(path)
-                  pipeline.append({'$unwind': {'path': '$' + path, 'preserveNullAndEmptyArrays': bool(item.get('preserveNullAndEmptyArrays', False))}})
-              if inserted_unwinds:
-                  stage['inserted_unwinds'] = sorted(inserted_unwinds)
-
-
-          def _is_array_relation_stage(stage):
-              if not isinstance(stage, dict):
-                  return False
-              if str(stage.get('source_cardinality') or '').strip() == 'array':
-                  return True
-              relation = stage.get('relation') if isinstance(stage.get('relation'), dict) else {}
-              join_key = stage.get('join_key') if isinstance(stage.get('join_key'), dict) else {}
-              return any(str(src.get('source_cardinality') or '').strip() == 'array' for src in (relation, join_key) if isinstance(src, dict))
-
-
-          def _compile_array_relation_lookup(stage):
-              target_collection = _ensure_non_empty_string(stage.get('target_collection') or stage.get('related_collection'), f"{stage['stage_name']}.target_collection")
-              local_field = _ensure_non_empty_string(stage.get('join_source_field'), f"{stage['stage_name']}.join_source_field")
-              foreign_field = _ensure_non_empty_string(stage.get('join_target_field'), f"{stage['stage_name']}.join_target_field")
-              if local_field.count('.') != 1:
-                  raise ValueError('unsupported array relation source_field; expected array_path.item_field')
-              alias = _normalize_attach_as(str(stage.get('attach_as') or '').strip(), target_collection)
-              return {'$lookup': {'from': target_collection, 'localField': local_field, 'foreignField': foreign_field, 'as': alias}}
 
 
           def _build_stage_match(stage):
@@ -939,7 +864,6 @@
 
           def _compile_detail_query(stage, schema_context, stage_outputs):
               pipeline = []
-              _append_validated_array_unwinds(pipeline, stage)
               match_expr = _build_stage_match(stage)
               if match_expr:
                   pipeline.append({'$match': match_expr})
@@ -971,7 +895,6 @@
 
           def _compile_aggregate_summary(stage, schema_context, stage_outputs):
               pipeline = []
-              _append_validated_array_unwinds(pipeline, stage)
               match_expr = _build_stage_match(stage)
               if match_expr:
                   pipeline.append({'$match': match_expr})

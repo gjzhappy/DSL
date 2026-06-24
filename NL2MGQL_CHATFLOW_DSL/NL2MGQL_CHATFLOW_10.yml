@@ -657,55 +657,6 @@
               return {}
 
 
-          def _safe_list(v):
-              return v if isinstance(v, list) else []
-
-          def _uniq_keep_order(items):
-              out = []
-              seen = set()
-              for x in items:
-                  k = str(x or '').strip()
-                  if not k or k in seen:
-                      continue
-                  seen.add(k)
-                  out.append(k)
-              return out
-
-          def build_intent_collection_whitelist(registry, max_aliases=6):
-              available = []
-              for c in _safe_list((registry or {}).get('collections')):
-                  if not isinstance(c, dict):
-                      continue
-                  name = str(c.get('collection_name') or '').strip()
-                  if not name:
-                      continue
-                  available.append({
-                      'name': name,
-                      'label': str(c.get('collection_label') or '').strip(),
-                      'aliases': _uniq_keep_order(c.get('aliases'))[:max_aliases],
-                  })
-              return {'available_collections': available}
-
-          def _plan_summary(plan):
-              stages = (plan.get('execution_plan') or {}).get('stages') or plan.get('stages') or []
-              stage = stages[0] if isinstance(stages, list) and stages and isinstance(stages[0], dict) else {}
-              return {
-                  'primary_collection': str(plan.get('primary_collection') or stage.get('collection') or ''),
-                  'intent_type': str(stage.get('intent_type') or plan.get('intent_type') or ''),
-                  'group_fields': _safe_list(stage.get('group_fields')),
-                  'metric_alias': str(stage.get('metric_alias') or ''),
-                  'metric_field': str(stage.get('metric_field') or ''),
-                  'time_range': stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {},
-              }
-
-          def _result_profile(ctx):
-              profile = ctx.get('last_result_profile') if isinstance(ctx.get('last_result_profile'), dict) else {}
-              fields = profile.get('fields') if isinstance(profile.get('fields'), list) else ctx.get('result_fields')
-              return {
-                  'row_count': int(profile.get('row_count') or ctx.get('result_rows_count') or 0),
-                  'fields': [str(x) for x in _safe_list(fields)[:50]],
-              }
-
           def main(
               question: str = '',
               last_context_json: str = '',
@@ -716,31 +667,30 @@
               ctx = _loads(last_context_json)
               old_plan = _loads(old_normalized_semantic_plan_json)
               registry = _loads(collection_registry_json)
-              has_last_context = bool(ctx.get('has_last_context'))
-              if has_last_context:
-                  slim = {
-                      'has_last_context': True,
-                      'last_question': str(ctx.get('last_question') or ''),
-                      'last_primary_collection': str(ctx.get('last_primary_collection') or old_plan.get('primary_collection') or ''),
-                      'last_related_collections': _safe_list(ctx.get('last_related_collections')),
-                      'last_plan_summary': _plan_summary(old_plan),
-                      'last_result_profile': _result_profile(ctx),
-                      'last_chart_request': ctx.get('last_chart_request') if isinstance(ctx.get('last_chart_request'), dict) else _loads(ctx.get('last_chart_request_json')),
-                  }
-              else:
-                  slim = {'has_last_context': False}
-              whitelist = build_intent_collection_whitelist(registry)
+              slim = {
+                  'has_last_context': bool(ctx.get('has_last_context')),
+                  'last_question': str(ctx.get('last_question') or ''),
+                  'last_normalized_semantic_plan_json': str(ctx.get('last_normalized_semantic_plan_json') or '')[:6000],
+                  'last_chart_request_json': str(ctx.get('last_chart_request_json') or '')[:3000],
+                  'last_final_answer_summary': str(ctx.get('last_final_answer_summary') or '')[:2000],
+                  'result_rows_count': int(ctx.get('result_rows_count') or 0),
+                  'result_fields': ctx.get('result_fields') if isinstance(ctx.get('result_fields'), list) else [],
+                  'result_preview': (ctx.get('result_preview') if isinstance(ctx.get('result_preview'), list) else [])[:5],
+                  'old_primary_collection': str(old_plan.get('primary_collection') or ''),
+                  'collection_registry_json': json.dumps(registry, ensure_ascii=False)[:6000],
+                  'old_stage_collection': str((((old_plan.get('execution_plan') or {}).get('stages') or old_plan.get('stages') or [{}])[0] or {}).get('collection') or '') if isinstance(((old_plan.get('execution_plan') or {}).get('stages') or old_plan.get('stages') or [{}]), list) else '',
+              }
               prompt = (
                   '你是多轮数据查询 Chatflow 的意图识别器。只输出 JSON 对象，不要 markdown，不要解释文字，不要代码块，不要输出 schema 之外的字段。\n\n'
                   '允许的 turn_intent：new_query, modify_chart, refine_query, explain_result, reanalyze_result, fix_result, continue_previous, clarify。\n'
                   '输出字段必须完整：turn_intent, need_previous_context, need_requery, need_rechart, need_analysis, can_answer_directly, reason, missing_info, chart_modification, query_refinement, analysis_focus, refine_route, needed_collections, keep_previous_primary, collection_switch, collection_reason, unresolved_collection_terms。\n'
-                  'chart_modification 必须是 JSON object；没有图表修改时输出 {}。柱状图或条形图输出 {"chart_type":"bar"}，折线图输出 {"chart_type":"line"}，饼图输出 {"chart_type":"pie"}，散点图输出 {"chart_type":"scatter"}；禁止输出普通字符串。refine_query 且 need_rechart=true 时也可以填写 chart_modification object，这不等于 modify_chart。\n'
-                  'query_refinement 必须是 JSON object，不得输出普通字符串；没有查询细化时输出 {}；有查询细化时至少输出 {"summary":"..."}。可选字段包括 changed_time_range、group_by、removed_dimensions、metric、filters、collection_switch、target_collection。\n'
-                  'refine_route 只能是 patch、full_replan、none。\n'
-                  '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；没有上下文却要求改图/继续/解释 => clarify。\n'
-                  'refine collection 规则：仅 refine_query 可基于 available_collections 输出 needed_collections；只允许使用 available_collections.available_collections[].name，不要编造 collection。提到新实体不等于切换 primary；除非用户明确切换主查询对象，否则 keep_previous_primary=true、collection_switch=false。无法映射的词放 unresolved_collection_terms。Intent 阶段不得判断字段、指标、join key、数组字段或具体 schema。\n\n'
+                  'chart_modification 必须是 JSON object；没有图表修改时输出 {}。柱状图或条形图输出 {"chart_type":"bar"}，折线图输出 {"chart_type":"line"}，饼图输出 {"chart_type":"pie"}，散点图输出 {"chart_type":"scatter"}；禁止输出 "柱状图"、"bar"、"line" 等字符串。refine_query 且 need_rechart=true 时也可以填写 chart_modification object，这不等于 modify_chart。\n'
+                  'query_refinement 必须是 JSON object，不得输出普通字符串；没有查询细化时输出 {}；有查询细化时至少输出 {"summary":"..."}。可选字段包括 changed_time_range（时间范围变化，例如 "过去两个月"）、group_by（新的分组维度数组，例如 ["订单状态"]）、removed_dimensions（取消的维度数组，例如 ["品牌","商品名称"]）、metric（指标，例如 "订单数"）、filters（过滤条件对象或数组）、collection_switch（是否切换主集合）、target_collection（目标集合）。禁止输出普通字符串，例如 "按订单状态统计过去两个月订单数"。\n'
+                  'refine_route 只能是 patch、full_replan、none：refine_query 根据是否可安全 patch 选择 patch 或 full_replan；非 refine_query 输出 none。不得输出 refine_query 等其他值。\n'
+                  '判断规则：完整新查询 => new_query 且 need_requery=true；修改时间/筛选/分组/指标 => refine_query 且 need_requery=true；只改图表类型/标题/排序/TopN/标签 => modify_chart 且 need_requery=false need_rechart=true；解释或分析上一轮结果 => explain_result 或 reanalyze_result 且不重查；纠错 fix_result 必须根据用户修改内容设置 need_requery/need_rechart/need_analysis；continue_previous 也必须根据 flags 动态判断；没有上下文却要求改图/继续/解释 => clarify。\n'
+                  f'refine collection 规则：仅 refine_query 重点生成 needed_collections；名称只能来自 COLLECTION_REGISTRY_JSON。默认包含上一轮 primary_collection，提到厂商/客户/产品/区域/组织/人员等实体时按 registry 追加对应 collection。提到新实体不等于切换 primary；除非用户明确说不看旧根对象、改查其他对象，否则 keep_previous_primary=true、collection_switch=false。无法映射的词放 unresolved_collection_terms。排序/topN/图表小改不得无故扩 collection。new_query 仍按原意图逻辑，且不依赖 needed_collections。\nCOLLECTION_REGISTRY_JSON：{json.dumps(registry, ensure_ascii=False)}\n\n'
                   '重要规则：如果上一轮上下文 has_last_context=true，且当前用户只表达图表展示偏好，例如“饼图/柱状图/折线图/换成/改成/标题/标签/TopN/排序”，必须判定为 modify_chart，need_previous_context=true，need_requery=false，need_rechart=true。不得因为用户本轮未重复查询主题、指标、维度而进入 clarify。\n\n'
-                  f'当前用户问题：{question}\n\n上一轮轻量上下文：\n{json.dumps(slim, ensure_ascii=False)}\n\n动态 available_collections：\n{json.dumps(whitelist, ensure_ascii=False)}'
+                  f'当前用户问题：{question}\n\n上一轮上下文（已裁剪，不含原始大文档）：\n{json.dumps(slim, ensure_ascii=False)}\n\n上一轮归一化语义计划摘要（可选，可能为空或无效；仅用于多轮继承参考）：\n{json.dumps({"primary_collection": slim.get("old_primary_collection"), "stage_collection": slim.get("old_stage_collection")}, ensure_ascii=False)}'
               )
               return {'intent_prompt': prompt, 'last_context_slim_json': json.dumps(slim, ensure_ascii=False)}
         code_language: python3

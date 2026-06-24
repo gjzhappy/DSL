@@ -5,7 +5,7 @@
               pipeline.append({'$group': group_stage})
               project_stage = {'_id': 0}
               for field in group_fields:
-                  project_stage[_field_alias(field)] = f'$_id.{field}'
+                  project_stage[field] = f'$_id.{field}'
               project_stage[metric_alias] = f'${metric_alias}'
               pipeline.append({'$project': project_stage})
               sort_stage = {}
@@ -19,9 +19,8 @@
                   pipeline.append({'$limit': int(stage['limit'])})
               projection_fields = list(stage.get('projection_fields') or [])
               for required_field in list(group_fields) + [metric_alias]:
-                  required_alias = _field_alias(required_field)
-                  if required_alias and required_alias not in projection_fields:
-                      projection_fields.append(required_alias)
+                  if required_field and required_field not in projection_fields:
+                      projection_fields.append(required_field)
               if projection_fields:
                   _append_projection(pipeline, projection_fields)
               validated_ast = {
@@ -31,10 +30,10 @@
                   'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
                   'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
                   'aggregations': [{'alias': metric_alias, 'collection': stage['collection'], 'field': metric_field, 'function': metric_function}],
-                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': _field_alias(f)} for f in group_fields],
+                  'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
                   'sort': (stage.get('sort') or []) if stage.get('apply_global_limit') else [],
                   'limit': int(stage.get('limit') or 0) if stage.get('apply_global_limit') else 0,
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': _field_alias(f)} for f in projection_fields],
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
@@ -42,7 +41,6 @@
 
           def _compile_group_top_entity(stage, schema_context, stage_outputs):
               pipeline = []
-              _append_validated_array_unwinds(pipeline, stage)
               match_expr = _build_stage_match(stage)
               if match_expr:
                   pipeline.append({'$match': match_expr})
@@ -102,13 +100,12 @@
                   'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in list(group_fields) + [entity_field]],
                   'sort': stage.get('sort') or [],
                   'limit': int(stage.get('limit') or 0),
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': _field_alias(f)} for f in projection_fields],
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
           def _compile_group_top_record(stage, schema_context, stage_outputs):
               pipeline = []
-              _append_validated_array_unwinds(pipeline, stage)
               match_expr = _build_stage_match(stage)
               if match_expr:
                   pipeline.append({'$match': match_expr})
@@ -156,36 +153,12 @@
                   'group_by': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in group_fields],
                   'sort': stage.get('sort') or [],
                   'limit': int(stage.get('limit') or 0),
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': _field_alias(f)} for f in projection_fields],
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
                   'reasoning': stage['intent_type'],
               }
               return validated_ast, pipeline
           def _compile_enrich_related(stage, schema_context, stage_outputs, prior_stages=None, warnings=None):
               warnings = warnings if isinstance(warnings, list) else []
-              if _is_array_relation_stage(stage):
-                  pipeline = []
-                  _append_validated_array_unwinds(pipeline, stage)
-                  match_expr = _build_stage_match(stage)
-                  if match_expr:
-                      pipeline.append({'$match': match_expr})
-                  pipeline.append(_compile_array_relation_lookup(stage))
-                  projection_fields = list(stage.get('projection_fields') or [])
-                  if projection_fields:
-                      _append_projection(pipeline, projection_fields)
-                  validated_ast = {
-                      'primary_collection': stage['collection'],
-                      'collections': [stage['collection'], stage.get('target_collection') or ''],
-                      'expands': [{'collection': stage.get('target_collection') or '', 'localField': stage.get('join_source_field'), 'foreignField': stage.get('join_target_field'), 'as': _normalize_attach_as(str(stage.get('attach_as') or '').strip(), stage.get('target_collection') or '')}],
-                      'filters': [{'collection': stage['collection'], **f} for f in stage.get('filters') or []],
-                      'time_range': dict(stage.get('time_range') or {}, collection=stage['collection']),
-                      'aggregations': [],
-                      'group_by': [],
-                      'sort': stage.get('sort') or [],
-                      'limit': int(stage.get('limit') or 0),
-                      'projection': [{'collection': stage['collection'], 'field': f, 'alias': _field_alias(f)} for f in projection_fields],
-                      'reasoning': f"array lookup enrich {stage.get('target_collection') or ''} by {stage.get('join_source_field')}",
-                  }
-                  return validated_ast, pipeline, False
               depends_on = str(stage.get('depends_on') or '').strip()
               if not depends_on:
                   primary_candidates = [s for s in (prior_stages or []) if isinstance(s, dict) and str(s.get('stage_type') or '').strip() == 'primary_query']
@@ -215,7 +188,7 @@
                   'group_by': [],
                   'sort': stage.get('sort') or [],
                   'limit': int(stage.get('limit') or 0),
-                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': _field_alias(f)} for f in projection_fields],
+                  'projection': [{'collection': stage['collection'], 'field': f, 'alias': f} for f in projection_fields],
                   'reasoning': f"enrich {stage['collection']} by {join_target_field}",
               }
               if not join_values:
@@ -747,21 +720,8 @@
                   if not isinstance(stage, dict) or len(stage) != 1:
                       raise ValueError('invalid Mongo pipeline stage')
                   op = next(iter(stage.keys()))
-                  if op not in {'$match','$project','$sort','$limit','$group','$unwind','$lookup'}:
+                  if op not in {'$match','$project','$sort','$limit','$group','$unwind'}:
                       raise ValueError('unsupported Mongo pipeline stage rejected')
-                  if op == '$lookup':
-                      spec = stage.get('$lookup')
-                      if not isinstance(spec, dict) or set(spec.keys()) != {'from','localField','foreignField','as'}:
-                          raise ValueError('unsafe Mongo $lookup rejected')
-                      for key in ('from','localField','foreignField','as'):
-                          if not isinstance(spec.get(key), str) or not spec.get(key).strip():
-                              raise ValueError('unsafe Mongo $lookup rejected')
-                  if op == '$unwind':
-                      spec = stage.get('$unwind')
-                      if isinstance(spec, dict):
-                          allowed = {'path','preserveNullAndEmptyArrays','includeArrayIndex'}
-                          if not set(spec.keys()).issubset(allowed) or not str(spec.get('path') or '').startswith('$'):
-                              raise ValueError('unsafe Mongo $unwind rejected')
               if pipeline and not any(isinstance(s, dict) and '$limit' in s for s in pipeline):
                   pipeline.append({'$limit': MAX_RETURN_ROWS})
               return pipeline
