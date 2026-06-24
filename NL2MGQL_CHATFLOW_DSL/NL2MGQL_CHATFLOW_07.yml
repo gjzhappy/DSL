@@ -279,6 +279,90 @@
                   plan.pop(key, None)
               return plan
 
+          def _stage_field_refs(stage):
+              if not isinstance(stage, dict):
+                  return set()
+              refs = set()
+              for key in ('group_fields', 'projection_fields'):
+                  for value in _as_list(stage.get(key)):
+                      s = str(value or '').strip()
+                      if s:
+                          refs.add(s)
+              for key in ('metric_field', 'metric_alias', 'entity_field'):
+                  s = str(stage.get(key) or '').strip()
+                  if s:
+                      refs.add(s)
+              for item in _as_list(stage.get('filters')) + _as_list(stage.get('sort')):
+                  if isinstance(item, dict):
+                      s = str(item.get('field') or item.get('field_name') or '').strip()
+                      if s:
+                          refs.add(s)
+              return refs
+
+          def _remove_unnecessary_enrich_related(plan, normalizer_warnings):
+              if not isinstance(plan, dict):
+                  return plan
+              stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+              primary_stage = _first_stage_by_type(plan, 'primary_query')
+              enrich_stages = [st for st in stages if isinstance(st, dict) and str(st.get('stage_type') or '').strip() == 'enrich_related']
+              if not primary_stage or not enrich_stages:
+                  return plan
+              primary_intent = str(primary_stage.get('intent_type') or '').strip()
+              if primary_intent != 'aggregate_summary' and not primary_stage.get('group_fields') and not str(primary_stage.get('metric_field') or '').strip():
+                  return plan
+              primary_refs = _stage_field_refs(primary_stage)
+              chart = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+              for key in ('x_field', 'y_field', 'series_name'):
+                  s = str(chart.get(key) or '').strip()
+                  if s:
+                      primary_refs.add(s)
+              enrich_output_refs = set()
+              for enrich_stage in enrich_stages:
+                  for value in _as_list(enrich_stage.get('projection_fields')):
+                      s = str(value or '').strip()
+                      if s:
+                          enrich_output_refs.add(s)
+                  attach_as = str(enrich_stage.get('attach_as') or '').strip()
+                  if attach_as:
+                      enrich_output_refs.add(attach_as)
+              join_refs = set()
+              for enrich_stage in enrich_stages:
+                  for key in ('join_source_field', 'join_target_field'):
+                      s = str(enrich_stage.get(key) or '').strip()
+                      if s:
+                          join_refs.add(s)
+              if primary_refs and not ((enrich_output_refs - join_refs) & primary_refs):
+                  plan['stages'] = [st for st in stages if not (isinstance(st, dict) and str(st.get('stage_type') or '').strip() == 'enrich_related')]
+                  plan['related_collections'] = []
+                  plan['execution_mode'] = 'single_stage'
+                  plan['final_merge'] = {'merge_mode': 'none', 'left_stage': '', 'right_stage': '', 'left_field': '', 'right_field': '', 'attach_as': ''}
+                  normalizer_warnings.append({'type': 'removed_unnecessary_enrich_related'})
+              return plan
+
+
+          def _to_int_safe(value, default=0):
+              try:
+                  return int(value or 0)
+              except Exception:
+                  return default
+
+          def _guard_relative_days_zero(plan, normalizer_warnings):
+              if not isinstance(plan, dict):
+                  return plan
+              stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+              aggregate_intents = {'aggregate_summary', 'group_top_entity', 'trend'}
+              for stage in stages:
+                  if not isinstance(stage, dict):
+                      continue
+                  tr = stage.get('time_range') if isinstance(stage.get('time_range'), dict) else {}
+                  if str(tr.get('mode') or '').strip() == 'relative_days' and _to_int_safe(tr.get('relative_days')) <= 0:
+                      stage['time_range'] = {'field': '', 'mode': '', 'relative_days': 0, 'start': '', 'end': ''}
+                      if str(stage.get('intent_type') or '').strip() in aggregate_intents:
+                          plan['requires_clarification'] = True
+                          plan['clarification_question'] = plan.get('clarification_question') or '请提供要统计的时间范围，例如最近30天、今年、某个月。'
+                      normalizer_warnings.append({'type': 'relative_days_zero_requires_clarification', 'stage_name': stage.get('stage_name')})
+              return plan
+
           def _canonicalize_enrich_contract(plan, schema=None, normalizer_warnings=None):
               if normalizer_warnings is None:
                   normalizer_warnings = []
@@ -304,6 +388,12 @@
               enrich_stage = enrich_stages[0] if enrich_stages else None
               left_stage = str(final_merge.get('left_stage') or (primary_stage or {}).get('stage_name') or 'stage1').strip()
               right_stage = str(final_merge.get('right_stage') or (enrich_stage or {}).get('stage_name') or 'stage2').strip()
+              if enrich_stage:
+                  enrich_name = str(enrich_stage.get('stage_name') or '').strip()
+                  enrich_depends_on = _normalize_stage_depends_on(enrich_stage.get('depends_on')) or str((primary_stage or {}).get('stage_name') or 'stage1').strip()
+                  if left_stage == enrich_name and right_stage == enrich_depends_on:
+                      left_stage, right_stage = enrich_depends_on, enrich_name
+                      normalizer_warnings.append({'type': 'final_merge_enrich_stage_swapped', 'left_stage': left_stage, 'right_stage': right_stage})
               final_merge['left_stage'] = left_stage; final_merge['right_stage'] = right_stage
               primary_collection = str(plan.get('primary_collection') or (primary_stage or {}).get('collection') or '').strip()
               related_collection = str((enrich_stage or {}).get('collection') or (related[0] if related else '') or '').strip()
@@ -541,6 +631,8 @@
                       'needs_schema_retrieval': bool(plan.get('needs_schema_retrieval')),
                       'warnings': _as_list(plan.get('warnings')),
                   }
+                  contract = _guard_relative_days_zero(contract, normalizer_warnings)
+                  contract = _remove_unnecessary_enrich_related(contract, normalizer_warnings)
                   contract = _canonicalize_enrich_contract(contract, schema=None, normalizer_warnings=normalizer_warnings)
                   contract = _strip_runtime_fields_from_semantic_plan(contract)
                   route = 'requires_clarification' if contract['requires_clarification'] else 'ok'
