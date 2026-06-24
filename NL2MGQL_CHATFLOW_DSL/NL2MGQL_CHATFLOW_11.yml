@@ -6,11 +6,7 @@
                   changed.append('time_range')
                   replaced['time_range'] = {'old': tr, 'new_semantic': qref.get('time_range')}
                   if isinstance(tr, dict): _add(deprecated, tr.get('field'))
-              top_collection_switch = bool(obj.get('collection_switch')) if obj.get('collection_switch') is not None else bool(explicit_switch)
-              keep_previous_primary = bool(obj.get('keep_previous_primary'))
-              if keep_previous_primary and not top_collection_switch:
-                  explicit_switch = False
-              inherit = obj.get('turn_intent') == 'refine_query' and bool(obj.get('need_previous_context')) and bool(base) and (not explicit_switch) and (not top_collection_switch)
+              inherit = obj.get('turn_intent') == 'refine_query' and bool(obj.get('need_previous_context')) and bool(base) and not explicit_switch
               target_terms = []
               for v in [qref.get('group_by_dimension'), qref.get('metric'), qref.get('time_range')]:
                   if isinstance(v, dict):
@@ -21,7 +17,7 @@
                           _add(target_terms, x)
                   else:
                       _add(target_terms, v)
-              return {'inherit_previous_collection': inherit, 'collection_switch': bool(top_collection_switch), 'keep_previous_primary': keep_previous_primary, 'base_primary_collection': base, 'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '', 'old_primary_collection': base, 'old_stage_collection': str(st.get('collection') or ''), 'old_group_fields': old_groups, 'old_metric_field': str(st.get('metric_field') or ''), 'old_metric_alias': str(st.get('metric_alias') or ''), 'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '', 'target_group_dimension': qref.get('group_by_dimension'), 'target_metric': qref.get('metric'), 'target_time_range': qref.get('time_range'), 'changed_slots': changed, 'replaced_slots': replaced, 'deprecated_fields': deprecated, 'target_semantic_terms': target_terms}
+              return {'inherit_previous_collection': inherit, 'collection_switch': explicit_switch, 'base_primary_collection': base, 'base_collection_source': 'old_normalized_semantic_plan.primary_collection' if base else '', 'old_primary_collection': base, 'old_stage_collection': str(st.get('collection') or ''), 'old_group_fields': old_groups, 'old_metric_field': str(st.get('metric_field') or ''), 'old_metric_alias': str(st.get('metric_alias') or ''), 'old_time_field': str(tr.get('field') or '') if isinstance(tr, dict) else '', 'target_group_dimension': qref.get('group_by_dimension'), 'target_metric': qref.get('metric'), 'target_time_range': qref.get('time_range'), 'changed_slots': changed, 'replaced_slots': replaced, 'deprecated_fields': deprecated, 'target_semantic_terms': target_terms}
 
           def _safe_int(value, default=0):
               try:
