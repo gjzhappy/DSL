@@ -1,34 +1,76 @@
     - data:
         code: |
-          import json, re
+          import json, re, os
           def _list(v):
               if isinstance(v, list): return [str(x).strip() for x in v if str(x).strip()]
               if isinstance(v, str) and v.strip():
-                  try:
-                      x=json.loads(v); return _list(x)
+                  try: return _list(json.loads(v))
                   except Exception: return [v.strip()]
               return []
-          def _text(v):
-              try: return json.dumps(v, ensure_ascii=False) if not isinstance(v,str) else v
-              except Exception: return str(v or '')
-          def main(needed_collections=None, retrieval_result=None, **kwargs):
-              needed=_list(needed_collections); raw=_text(retrieval_result); low=raw.lower()
-              retrieved=[c for c in needed if re.search(r'(?<![\w-])'+re.escape(c.lower())+r'(?![\w-])',low)]
-              missing=[c for c in needed if c not in retrieved]
-              summary={'needed_collections':needed,'retrieved_collections':retrieved,'missing_collections':missing,'schema_hydration_needed':bool(missing),'schema_recall_valid':not missing,'reason':('missing schema: '+', '.join(missing)) if missing else 'all needed collections recalled'}
-              return {'needed_collections':needed,'retrieved_collections':retrieved,'missing_collections':missing,'schema_hydration_needed':bool(missing),'schema_recall_summary_json':json.dumps(summary,ensure_ascii=False)}
+          def _loads(v):
+              if isinstance(v, dict): return v
+              if isinstance(v, str) and v.strip():
+                  try:
+                      x=json.loads(v); return x if isinstance(x,dict) else {}
+                  except Exception: return {}
+              return {}
+          def _content(doc):
+              if isinstance(doc, dict): return str(doc.get('content') or doc.get('text') or doc.get('page_content') or '')
+              return str(doc or '')
+          def _meta(doc):
+              if not isinstance(doc, dict): return {}
+              m=doc.get('metadata') if isinstance(doc.get('metadata'),dict) else {}
+              dm=m.get('doc_metadata') if isinstance(m.get('doc_metadata'),dict) else {}
+              return m,dm
+          def _doc_collection(doc):
+              m,dm=_meta(doc)
+              for src in (dm,m):
+                  c=str(src.get('collection_name') or '').strip()
+                  if c: return c
+              for src in (m,doc if isinstance(doc,dict) else {}):
+                  name=str(src.get('document_name') or src.get('doc_name') or '').strip()
+                  base=os.path.basename(name).lower()
+                  if base.endswith('.md'): return base[:-3]
+              text=_content(doc)
+              for pat in [r'"collection_name"\s*:\s*"([A-Za-z_][\w-]*)"', r'collection_name\s*:\s*([A-Za-z_][\w-]*)', r'(?im)^\s*(?:Mongo\s+Schema|Collection)\s*:\s*([A-Za-z_][\w-]*)\s*$']:
+                  mm=re.search(pat,text)
+                  if mm: return mm.group(1).strip()
+              mm=re.search(r'"collections"\s*:\s*\{\s*"([A-Za-z_][\w-]*)"', text)
+              if mm: return mm.group(1).strip()
+              return ''
+          def main(needed_collections=None, expected_collections=None, must_include_collections=None, retrieval_result=None, **kwargs):
+              needed=_list(needed_collections); expected=_list(expected_collections); must=_list(must_include_collections)
+              actual=[]
+              for doc in (retrieval_result or []):
+                  c=_doc_collection(doc)
+                  if c and c not in actual: actual.append(c)
+              required=[]
+              for c in needed+expected+must:
+                  if c and c not in required: required.append(c)
+              missing=sorted([c for c in required if c not in actual])
+              valid=not missing
+              reason=('missing schema: '+', '.join(missing)) if missing else 'all required collections recalled'
+              summary={'needed_collections':needed,'expected_collections':expected,'must_include_collections':must,'retrieved_collections':actual,'actual_retrieved_collections':actual,'missing_collections':missing,'schema_hydration_needed':bool(missing),'schema_recall_valid':valid,'reason':reason}
+              return {'needed_collections':needed,'expected_collections':expected,'must_include_collections':must,'retrieved_collections':actual,'actual_retrieved_collections':actual,'missing_collections':missing,'schema_hydration_needed':bool(missing),'schema_recall_valid':valid,'reason':reason,'schema_recall_summary_json':json.dumps(summary,ensure_ascii=False)}
         code_language: python3
         desc: 仅检查 refine full_replan CandidateSchemas 是否覆盖 needed_collections；解析失败时安全地将全部 needed collection 标记为缺失。
         outputs:
           needed_collections: {type: 'array[string]'}
+          expected_collections: {type: 'array[string]'}
+          must_include_collections: {type: 'array[string]'}
           retrieved_collections: {type: 'array[string]'}
+          actual_retrieved_collections: {type: 'array[string]'}
           missing_collections: {type: 'array[string]'}
           schema_hydration_needed: {type: boolean}
+          schema_recall_valid: {type: boolean}
+          reason: {type: string}
           schema_recall_summary_json: {type: string}
         title: 检查CandidateSchemas_Refine召回Collections
         type: code
         variables:
         - {variable: needed_collections, value_type: 'array[string]', value_selector: ['1776000000025', needed_collections]}
+        - {variable: expected_collections, value_type: 'array[string]', value_selector: ['1776000000025', expected_collections]}
+        - {variable: must_include_collections, value_type: 'array[string]', value_selector: ['1776000000025', must_include_collections_json]}
         - {variable: retrieval_result, value_type: 'array[object]', value_selector: ['1776000000032', result]}
       height: 80
       id: '1777300000001'
@@ -68,7 +110,7 @@
               items=[]
               for c in missing_collections or []:
                   c=str(c or '').strip()
-                  if c: items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
+                  if c: items.append({'collection_name':c,'query_text':'metadata_type: mongo_schema\ncollection_name: '+c+'\nmongo schema fields metrics relations query_rules for '+c})
               return {'missing_collection_tasks':items}
         code_language: python3
         desc: 只为 missing_collections 构造 hydration 任务，不重复检索已召回 collection。
@@ -177,16 +219,43 @@
       zIndex: 1001
     - data:
         code: |
+          import json, hashlib
+          def _meta(d): return d.get('metadata') if isinstance(d,dict) and isinstance(d.get('metadata'),dict) else {}
+          def _content(d): return str((d or {}).get('content') or (d or {}).get('text') or (d or {}).get('page_content') or d or '')
+          def _key(d):
+              m=_meta(d)
+              for k in ('document_id','segment_id'):
+                  if m.get(k): return k+':'+str(m.get(k))
+              name=str(m.get('document_name') or (d.get('document_name') if isinstance(d,dict) else '') or '')
+              coll=str(m.get('collection_name') or '')
+              if name or coll: return 'doc:'+name+':'+coll
+              return 'sha:'+hashlib.sha256(_content(d).encode('utf-8')).hexdigest()
+          def _coll(d):
+              m=_meta(d); dm=m.get('doc_metadata') if isinstance(m.get('doc_metadata'),dict) else {}
+              return str(dm.get('collection_name') or m.get('collection_name') or '').strip()
           def main(candidate_docs=None, hydrated_docs=None):
-              out=[]
+              out=[]; seen=set(); warnings=[]
               for group in (candidate_docs or [], hydrated_docs or []):
-                  if isinstance(group,list): out.extend(group)
-                  elif group not in (None,''): out.append(group)
-              return {'combined_docs':out}
+                  items=group if isinstance(group,list) else ([] if group in (None,'') else [group])
+                  for doc in items:
+                      k=_key(doc if isinstance(doc,dict) else {'content':str(doc)})
+                      if k not in seen:
+                          seen.add(k); out.append(doc)
+              cols=[]
+              for d in out:
+                  c=_coll(d)
+                  if c and c not in cols: cols.append(c)
+              if not out: warnings.append('combined_docs_empty')
+              return {'combined_docs':out,'combined_docs_json':json.dumps(out,ensure_ascii=False),'merged_collections':cols,'merged_collections_json':json.dumps(cols,ensure_ascii=False),'merge_warnings':warnings,'merge_warnings_json':json.dumps(warnings,ensure_ascii=False)}
         code_language: python3
         desc: 合并 CandidateSchemas_Refine 与 missing-only hydration 结果后复用既有 schema metadata 打包节点。
         outputs:
           combined_docs: {type: 'array[object]'}
+          combined_docs_json: {type: string}
+          merged_collections: {type: 'array[string]'}
+          merged_collections_json: {type: string}
+          merge_warnings: {type: 'array[string]'}
+          merge_warnings_json: {type: string}
         title: 代码执行_合并RefineCandidate与Hydration结果
         type: code
         variables:

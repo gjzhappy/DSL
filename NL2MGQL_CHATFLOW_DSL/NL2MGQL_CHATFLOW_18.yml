@@ -519,6 +519,13 @@
                   return [str(x).strip() for x in value if str(x).strip()]
               if value in (None, ''):
                   return []
+              if isinstance(value, str) and value.strip():
+                  try:
+                      parsed = json.loads(value)
+                      if isinstance(parsed, list):
+                          return [str(x).strip() for x in parsed if str(x).strip()]
+                  except Exception:
+                      pass
               return [str(value).strip()]
 
           def _uniq(items, limit=0):
@@ -580,7 +587,7 @@
               name = str(related_name or '').lower()
               return bool(name and any(((neg + name) in q) or (neg in q and name in q) for neg in ['不要', '不需要', '无需', '不用', '排除', 'without', 'no ']))
 
-          def main(question: str, turn_intent_json: str = '', compact_context_json: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', query_refinement_json: str = '', context_binding_json: str = '', planner=None, **kwargs):
+          def main(question: str, turn_intent_json: str = '', compact_context_json: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', query_refinement_json: str = '', context_binding_json: str = '', needed_collections=None, expected_collections=None, must_include_collections_json='', schema_recall_summary_json='', catalog_valid=True, catalog_error='', missing_catalog_collections_json='', planner=None, **kwargs):
               catalog = _catalog_from_schema(schema_metadata_json, collection_catalog_json)
               selection = _default_selection()
               selection['collection_catalog_digest'] = catalog.get('catalog_digest', '')
@@ -640,9 +647,21 @@
               context_prior_collections = _uniq([last_primary] + last_related + schema_ref_collections, 12)
               warnings, candidates = [], []
               catalog_names = [str(c.get('collection_name') or '').strip() for c in catalog.get('collections') or []]
+              recall = _loads(schema_recall_summary_json)
+              required = _uniq(_list(needed_collections) + _list(expected_collections) + _list(must_include_collections_json) + _list(recall.get('must_include_collections')) + _list(recall.get('expected_collections')), 24)
+              missing_catalog = _list(missing_catalog_collections_json) or [c for c in required if c not in catalog_names]
+              valid_flag = catalog_valid if isinstance(catalog_valid, bool) else str(catalog_valid).strip().lower() not in {'false','0','no'}
+              if (not valid_flag and str(catalog_error or '') == 'missing_expected_collections_in_catalog') or missing_catalog:
+                  miss = _uniq(missing_catalog or [c for c in required if c not in catalog_names], 24)
+                  selection.update({'selected_primary_collection':'','selected_related_collections':[],'confidence':0,'needs_schema_retrieval':True,'needs_schema_hydration':True,'schema_hydration_collections':miss,'schema_hydration_reason':'missing_expected_collections_in_catalog','low_confidence':False,'requires_clarification':False,'clarification_question':'','selection_error':'missing_expected_collections_in_catalog','warnings':['missing_expected_collections_in_catalog']})
+                  return {'collection_catalog_json': json.dumps(catalog, ensure_ascii=False),'collection_selection_json': json.dumps(selection, ensure_ascii=False),'selected_primary_collection':'','selected_related_collections':[],'selection_confidence':0,'selector_warnings_json':json.dumps(selection.get('warnings') or [], ensure_ascii=False),'requires_clarification':False,'clarification_question':''}
+              if intent == 'refine_query' and not bool(cb.get('collection_switch')) and base and base in catalog_names:
+                  inherit = True
+              if len(required) == 1 and required[0] in catalog_names:
+                  base = required[0]; inherit = True
               if inherit:
                   if base in catalog_names:
-                      selection.update({'selected_primary_collection': base, 'confidence': 0.85, 'requires_clarification': False, 'clarification_question': '', 'selection_reason': 'inherited_from_previous_primary_collection'})
+                      selection.update({'selected_primary_collection': base, 'confidence': 0.9, 'requires_clarification': False, 'clarification_question': '', 'low_confidence': False, 'selection_reason': 'required_or_inherited_primary_collection'})
                       selection['primary_candidates'] = [{'collection': base, 'score': 0.85, 'reason': 'inherited_from_previous_primary_collection', 'matched_aliases': []}]
                       selection['warnings'] = warnings
                       return {
@@ -675,14 +694,15 @@
                   if not cname:
                       continue
                   score, matched, reasons = 0.0, [], []
+                  removed_terms = _list(_loads(query_refinement_json).get('removed_dimensions'))
                   for term in _uniq(_list(coll.get('aliases')) + [coll.get('collection_label'), cname], 48):
-                      if term and term in q:
+                      if term and term in q and term not in removed_terms:
                           score += 0.55; matched.append(term)
                   for term in _uniq(_list(coll.get('primary_metrics')), 48):
-                      if term and term in q:
+                      if term and term in q and term not in removed_terms:
                           score += 0.22; matched.append(term)
                   for term in _uniq(_list(coll.get('primary_dimensions')), 64):
-                      if term and term in q:
+                      if term and term in q and term not in removed_terms:
                           score += 0.14; matched.append(term)
                   if intent in _list(coll.get('supported_intents')):
                       score += 0.05
@@ -852,6 +872,31 @@
           - context_binding_json
           value_type: string
           variable: context_binding_json
+        - value_selector:
+          - '1776000000025'
+          - expected_collections
+          value_type: array[string]
+          variable: expected_collections
+        - value_selector:
+          - '1776000000025'
+          - must_include_collections_json
+          value_type: string
+          variable: must_include_collections_json
+        - value_selector:
+          - '1776000000026'
+          - catalog_valid
+          value_type: boolean
+          variable: catalog_valid
+        - value_selector:
+          - '1776000000026'
+          - catalog_error
+          value_type: string
+          variable: catalog_error
+        - value_selector:
+          - '1776000000026'
+          - missing_catalog_collections_json
+          value_type: string
+          variable: missing_catalog_collections_json
       height: 80
       id: '1777000000002'
       position:
