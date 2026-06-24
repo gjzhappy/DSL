@@ -66,9 +66,18 @@
         code: |
           def main(missing_collections=None):
               items=[]
+              seen=set()
               for c in missing_collections or []:
                   c=str(c or '').strip()
-                  if c: items.append({'collection_name':c,'query_text':'完整 mongo schema metadata fields metrics relations for collection '+c})
+                  if not c or c in seen:
+                      continue
+                  seen.add(c)
+                  query_text='\n'.join([
+                      'metadata_type: mongo_schema',
+                      'collection_name: '+c,
+                      '请返回该 collection 对应的完整 schema metadata。',
+                  ])
+                  items.append({'collection_name':c,'query_text':query_text})
               return {'missing_collection_tasks':items}
         code_language: python3
         desc: 只为 missing_collections 构造 hydration 任务，不重复检索已召回 collection。
