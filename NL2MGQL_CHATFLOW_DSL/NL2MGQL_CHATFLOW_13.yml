@@ -74,6 +74,52 @@
               return True
 
 
+          def _current_user_cancel_chart(question):
+              text = str(question or '').lower()
+              cancel_markers = (
+                  '不画图', '不要图', '不要图表', '不要柱状图', '不生成图', '不生成图表',
+                  '去掉图', '去掉图表', '取消图表', '不用图表', '不用可视化',
+                  '只看数据', '只看表格', '只返回表格', '只要数据',
+                  '不需要柱状图', '不需要图表', '不需要可视化',
+              )
+              return any(marker in text for marker in cancel_markers)
+
+
+          def _disable_chart_request(plan):
+              plan['needs_chart'] = False
+              plan['chart_request'] = {
+                  'enabled': False,
+                  'chart_type': '',
+                  'x_field': '',
+                  'y_field': '',
+                  'series_name': '',
+                  'title': '',
+              }
+
+
+          def _inherit_chart_request_for_patch(plan, last_chart_request):
+              if not isinstance(last_chart_request, dict) or not bool(last_chart_request.get('enabled')):
+                  return False
+              chart = dict(last_chart_request)
+              first = _first_stage(plan)
+              group_fields = first.get('group_fields') if isinstance(first.get('group_fields'), list) else []
+              x_field = str(group_fields[0] or '').strip() if group_fields else str(chart.get('x_field') or '').strip()
+              y_field = str(first.get('metric_alias') or first.get('metric_field') or chart.get('y_field') or '').strip()
+              chart.update({
+                  'enabled': True,
+                  'chart_type': str(chart.get('chart_type') or 'bar').strip() or 'bar',
+                  'x_field': x_field,
+                  'y_field': y_field,
+                  'series_name': y_field or str(chart.get('series_name') or '').strip(),
+                  'title': str(chart.get('title') or '').strip(),
+                  'inherited_from_context': True,
+                  'inherit_reason': 'deterministic_patch',
+              })
+              plan['needs_chart'] = True
+              plan['chart_request'] = chart
+              return True
+
+
           def _unique_keep_order(values):
               seen = set()
               result = []
@@ -195,6 +241,14 @@
               if not old:
                   return _result(reason='缺少上一轮 normalized semantic plan，无法执行确定性 patch', error='missing_old_plan', debug=debug, validation=_failed_validation(validation), route='full_replan')
 
+              if _current_user_cancel_chart(q):
+                  plan = deepcopy(old)
+                  _disable_chart_request(plan)
+                  changed = ['chart_request', 'needs_chart']
+                  validation = _validate_patch(refine, changed, False, plan)
+                  debug['chart_request_cancelled_by_current_user'] = True
+                  return _result(True, False, plan, changed, '当前用户明确取消图表，关闭 chart_request', '', debug, validation, route='use_patch')
+
               if structural_change:
                   reason = '检测到结构性查询变化：%s，不执行确定性 patch，转入 LLM_Refine查询规划' % '；'.join(structural['reasons'])
                   validation = {
@@ -241,6 +295,14 @@
                       return _result(reason='排序字段不在上一轮 metric_alias/group_fields/projection_fields/chart 字段白名单内，转入 full_replan', debug=debug, validation=validation, route='full_replan')
               if not structural_change:
                   changed.extend(_patch_display(plan, q))
+
+              last_chart_request = _loads(last_chart_request_json)
+              if not last_chart_request and isinstance(compact_context.get('last_chart_request'), dict):
+                  last_chart_request = compact_context.get('last_chart_request')
+              if _inherit_chart_request_for_patch(plan, last_chart_request):
+                  changed.append('chart_request')
+                  changed.append('needs_chart')
+                  debug['chart_request_inherited_from_context'] = True
 
               changed = _unique_keep_order(changed)
               validation = _validate_patch(refine, changed, structural_change, plan)
