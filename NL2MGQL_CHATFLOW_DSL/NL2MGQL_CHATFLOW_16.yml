@@ -208,8 +208,145 @@
                   if _stage_is_aggregate(stage) and canonical_metric_alias:
                       add_projection_field(canonical_metric_alias)
                   join_source_field = _str(stage.get("join_source_field"))
-                  if join_source_field:
+                  if join_source_field and not is_enrich_related_stage:
                       add_projection_field(join_source_field)
+
+                  def _field_name(fld):
+                      return _str(fld.get("name") or fld.get("field") or fld.get("path")) if isinstance(fld, dict) else ""
+
+                  def _field_role_tokens(fld):
+                      if not isinstance(fld, dict):
+                          return set()
+                      raw = []
+                      for key in ("role", "semantic_role", "semantic_type", "type", "field_type"):
+                          raw.append(_str(fld.get(key)).lower())
+                      for key in ("roles", "tags"):
+                          raw.extend([_str(x).lower() for x in _list(fld.get(key))])
+                      return {x for x in raw if x}
+
+                  def _returnable_detail_field(fld):
+                      if not isinstance(fld, dict):
+                          return False
+                      if fld.get("returnable") is not True:
+                          return False
+                      if _is_sensitive(fld):
+                          return False
+                      if fld.get("pii") is True or fld.get("sensitive") is True:
+                          return False
+                      return bool(_field_name(fld))
+
+                  def _collection_field_names_and_meta(collection_name):
+                      meta = collections.get(collection_name) or {}
+                      items = [x for x in _iter_named_items(meta.get("fields") or {}) if isinstance(x, dict)]
+                      return items, {_field_name(x): x for x in items if _field_name(x)}
+
+                  def _array_parent_fields(field_items):
+                      out = set()
+                      for fld in field_items:
+                          name = _field_name(fld)
+                          roles0 = _field_role_tokens(fld)
+                          if name and ("array" in roles0 or _str(fld.get("is_array")).lower() == "true"):
+                              out.add(name)
+                          if "." in name:
+                              out.add(name.split(".", 1)[0])
+                      return out
+
+                  def _primary_key_fields(field_items):
+                      out = set()
+                      for fld in field_items:
+                          name = _field_name(fld)
+                          roles0 = _field_role_tokens(fld)
+                          if name and ("primary_key" in roles0 or "id" in roles0 or fld.get("primary_key") is True or name in {"id", "_id"} or name.endswith("_id")):
+                              out.add(name)
+                      return out
+
+                  def _is_explicit_small_projection_request(text):
+                      t = _str(text).lower()
+                      explicit_markers = ("只返回", "仅返回", "只要", "仅要", "只显示", "仅显示", "only return", "return only", "只列", "仅列")
+                      return any(x in t for x in explicit_markers)
+
+                  def _has_detail_semantics(text, st):
+                      t = (_str(text) + " " + json.dumps(st, ensure_ascii=False)).lower()
+                      markers = ("明细", "列表", "每条记录", "每笔记录", "详情", "detail", "details", "list", "records", "rows")
+                      return any(x in t for x in markers)
+
+                  def _preferred_detail_fields(collection_name, existing):
+                      field_items, fmap = _collection_field_names_and_meta(collection_name)
+                      default_time = _str((collections.get(collection_name) or {}).get("default_time_field"))
+                      array_parents = _array_parent_fields(field_items)
+                      buckets = [[] for _ in range(5)]
+                      for fld in field_items:
+                          name = _field_name(fld)
+                          if not name or name in existing or not _returnable_detail_field(fld):
+                              continue
+                          if any(parent in existing for parent in array_parents) and "." in name and name.split(".", 1)[0] in existing:
+                              continue
+                          roles0 = _field_role_tokens(fld)
+                          if name in {"id", "_id"} or "primary_key" in roles0 or fld.get("primary_key") is True:
+                              buckets[0].append(name)
+                          elif "dimension" in roles0:
+                              buckets[1].append(name)
+                          elif "enum" in roles0:
+                              buckets[2].append(name)
+                          elif "measure" in roles0 or "metric" in roles0 or "number" in roles0 or "numeric" in roles0:
+                              buckets[3].append(name)
+                          elif "time" in roles0 or "date" in roles0 or name == default_time:
+                              buckets[4].append(name)
+                      ordered = []
+                      for bucket in buckets:
+                          for name in bucket:
+                              if name not in ordered:
+                                  ordered.append(name)
+                      for parent in array_parents:
+                          if parent in fmap and parent not in existing and _returnable_detail_field(fmap[parent]) and parent not in ordered:
+                              ordered.append(parent)
+                      return ordered
+
+                  field_items_for_guard, _ = _collection_field_names_and_meta(coll)
+                  if (stage_type == "primary_query" and _str(stage.get("intent_type")) == "detail_query" and
+                      _has_detail_semantics(question, stage) and not _is_explicit_small_projection_request(question)):
+                      primary_keys = _primary_key_fields(field_items_for_guard)
+                      array_parents = _array_parent_fields(field_items_for_guard)
+                      narrow_allowed = set(primary_keys) | set(array_parents)
+                      for st0 in _list(plan.get("stages")):
+                          if isinstance(st0, dict) and _str(st0.get("depends_on")) == _str(stage.get("stage_name")) and _str(st0.get("join_source_field")):
+                              narrow_allowed.add(_str(st0.get("join_source_field")))
+                              if "." in _str(st0.get("join_source_field")):
+                                  narrow_allowed.add(_str(st0.get("join_source_field")).split(".", 1)[0])
+                      current_proj = {_str(x) for x in projections if _str(x)}
+                      if current_proj and current_proj.issubset(narrow_allowed) and len(current_proj) <= 3:
+                          for candidate in _preferred_detail_fields(coll, current_proj):
+                              if len(projections) >= 10:
+                                  break
+                              add_projection_field(candidate)
+                          autofixes.append({"type": "detail_query_projection_guard_fill", "stage_name": _str(stage.get("stage_name") or i), "collection": coll, "max_fields": 10})
+
+                  if is_enrich_related_stage:
+                      field_items1, field_map1 = _collection_field_names_and_meta(coll)
+                      schema_complete = bool(field_map1)
+                      filtered = []
+                      for pf0 in projections:
+                          pf0s = _str(pf0)
+                          if not pf0s:
+                              continue
+                          if pf0s in field_map1 and _returnable_detail_field(field_map1.get(pf0s)):
+                              if pf0s not in filtered:
+                                  filtered.append(pf0s)
+                          elif schema_complete:
+                              autofixes.append({"type": "enrich_projection_illegal_field_drop", "stage_name": _str(stage.get("stage_name") or i), "field": pf0s, "collection": coll})
+                          else:
+                              if pf0s not in filtered:
+                                  filtered.append(pf0s)
+                              warnings.append(f"schema_context 不完整，无法确认 enrich projection field={pf0s} 是否属于 {coll}。")
+                      jt = _str(stage.get("join_target_field"))
+                      if jt and jt not in filtered:
+                          if (not schema_complete) or jt in field_map1:
+                              filtered.insert(0, jt)
+                              autofixes.append({"type": "enrich_projection_join_target_fill", "stage_name": _str(stage.get("stage_name") or i), "field": jt})
+                          else:
+                              errors.append(f"{stage.get('stage_name')}.join_target_field={jt} 不是 {coll} 的合法字段。")
+                      projections = filtered
+
                   stage["projection_fields"] = projections
 
                   tr = stage.get("time_range") if isinstance(stage.get("time_range"), dict) else {}
@@ -470,6 +607,17 @@
                               return _finalize(_result("blocked", plan, [f"relation {primary}->{rc} 命中 forbidden_usage={forbidden}。"], blocked="当前查询使用了 schema 禁止的关联关系。", debug=debug))
 
               chart = plan.get("chart_request") if isinstance(plan.get("chart_request"), dict) else {}
+              def _explicit_chart_intent(text):
+                  t = _str(text).lower()
+                  markers = ("图表", "可视化", "柱状图", "条形图", "折线图", "饼图", "趋势图", "趋势", "画图", "生成图", "用图展示", "展示为图", "chart", "visual", "visualization", "bar chart", "line chart", "pie chart")
+                  return any(x in t for x in markers)
+              if not _explicit_chart_intent(question):
+                  if bool(plan.get("needs_chart")) or bool(chart.get("enabled")):
+                      warnings.append("当前用户未明确请求图表/可视化，validator 已关闭自动继承或默认开启的 chart_request。")
+                      autofixes.append({"type": "chart_request_disabled_without_current_user_intent"})
+                  plan["needs_chart"] = False
+                  chart["enabled"] = False
+                  plan["chart_request"] = chart
               if bool(chart.get("enabled")) or bool(plan.get("needs_chart")):
                   first = (plan.get("stages") or [{}])[0]
                   group_fields = _list(first.get("group_fields"))
