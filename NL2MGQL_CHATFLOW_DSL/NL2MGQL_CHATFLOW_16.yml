@@ -611,12 +611,38 @@
                   t = _str(text).lower()
                   markers = ("图表", "可视化", "柱状图", "条形图", "折线图", "饼图", "趋势图", "趋势", "画图", "生成图", "用图展示", "展示为图", "chart", "visual", "visualization", "bar chart", "line chart", "pie chart")
                   return any(x in t for x in markers)
-              if not _explicit_chart_intent(question):
-                  if bool(plan.get("needs_chart")) or bool(chart.get("enabled")):
+              def _current_user_cancel_chart(text):
+                  t = _str(text).lower()
+                  cancel_markers = (
+                      "不画图", "不要图", "不要图表", "不要柱状图", "不生成图", "不生成图表",
+                      "去掉图", "去掉图表", "取消图表", "不用图表", "不用可视化",
+                      "只看数据", "只看表格", "只返回表格", "只要数据",
+                      "不需要柱状图", "不需要图表", "不需要可视化",
+                  )
+                  return any(x in t for x in cancel_markers)
+              def _empty_chart_request():
+                  return {"enabled": False, "chart_type": "", "x_field": "", "y_field": "", "series_name": "", "title": ""}
+              chart_inherited = bool(chart.get("inherited_from_context")) and _str(chart.get("inherit_reason")) == "deterministic_patch"
+              if _current_user_cancel_chart(question):
+                  if bool(plan.get("needs_chart")) or bool(chart.get("enabled")) or chart:
+                      warnings.append("当前用户明确取消图表/可视化，validator 已关闭 chart_request。")
+                      autofixes.append({"type": "chart_request_cancelled_by_current_user"})
+                  plan["needs_chart"] = False
+                  chart = _empty_chart_request()
+                  plan["chart_request"] = chart
+              elif _explicit_chart_intent(question):
+                  pass
+              elif chart_inherited:
+                  plan["needs_chart"] = True
+                  chart["enabled"] = True
+                  plan["chart_request"] = chart
+                  autofixes.append({"type": "chart_request_inherited_from_context"})
+              else:
+                  if bool(plan.get("needs_chart")) or bool(chart.get("enabled")) or any(_str(chart.get(k)) for k in ("chart_type", "x_field", "y_field", "series_name", "title")):
                       warnings.append("当前用户未明确请求图表/可视化，validator 已关闭自动继承或默认开启的 chart_request。")
                       autofixes.append({"type": "chart_request_disabled_without_current_user_intent"})
                   plan["needs_chart"] = False
-                  chart["enabled"] = False
+                  chart = _empty_chart_request()
                   plan["chart_request"] = chart
               if bool(chart.get("enabled")) or bool(plan.get("needs_chart")):
                   first = (plan.get("stages") or [{}])[0]
