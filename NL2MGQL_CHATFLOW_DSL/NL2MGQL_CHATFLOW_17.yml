@@ -305,27 +305,69 @@
               return out
 
 
+          def _collection_list(value, limit=0):
+              out = []
+
+              def add(v):
+                  if v in (None, ''):
+                      return
+                  if isinstance(v, (list, tuple, set)):
+                      for x in v:
+                          add(x)
+                      return
+                  if isinstance(v, str):
+                      s = v.strip()
+                      if not s:
+                          return
+                      try:
+                          parsed = json.loads(s)
+                          if isinstance(parsed, list):
+                              add(parsed)
+                              return
+                      except Exception:
+                          pass
+                      for x in _split_inline_list(s):
+                          x = str(x or '').strip()
+                          if x:
+                              out.append(x)
+                      return
+                  s = str(v or '').strip()
+                  if s:
+                      out.append(s)
+
+              add(value)
+              result, seen = [], set()
+              for x in out:
+                  s = str(x or '').strip()
+                  if s and s not in seen:
+                      seen.add(s)
+                      result.append(s)
+                      if limit and len(result) >= limit:
+                          break
+              return result
+
+
           def _required_collections(expected_collections=None, expected_collections_json='', must_include_collections=None, must_include_collections_json='', schema_recall_summary_json='', kwargs=None):
               kwargs = kwargs or {}
               required = []
-              required.extend(_str_list(expected_collections))
-              required.extend(_str_list(_json_loads_maybe(expected_collections_json, [])))
-              required.extend(_str_list(must_include_collections))
-              required.extend(_str_list(_json_loads_maybe(must_include_collections_json, [])))
+              required.extend(_collection_list(expected_collections))
+              required.extend(_collection_list(expected_collections_json))
+              required.extend(_collection_list(must_include_collections))
+              required.extend(_collection_list(must_include_collections_json))
               summary = _json_loads_maybe(schema_recall_summary_json, {})
               if isinstance(summary, dict):
-                  required.extend(_str_list(summary.get('expected_collections')))
-                  required.extend(_str_list(summary.get('must_include_collections')))
-                  required.extend(_str_list(summary.get('needed_collections')))
+                  required.extend(_collection_list(summary.get('expected_collections')))
+                  required.extend(_collection_list(summary.get('must_include_collections')))
+                  required.extend(_collection_list(summary.get('needed_collections')))
               for key in ('expected_collections', 'must_include_collections'):
-                  required.extend(_str_list(kwargs.get(key)))
+                  required.extend(_collection_list(kwargs.get(key)))
               for key in ('expected_collections_json', 'must_include_collections_json'):
-                  required.extend(_str_list(_json_loads_maybe(kwargs.get(key), [])))
+                  required.extend(_collection_list(kwargs.get(key)))
               summary = _json_loads_maybe(kwargs.get('schema_recall_summary_json'), {})
               if isinstance(summary, dict):
-                  required.extend(_str_list(summary.get('expected_collections')))
-                  required.extend(_str_list(summary.get('must_include_collections')))
-                  required.extend(_str_list(summary.get('needed_collections')))
+                  required.extend(_collection_list(summary.get('expected_collections')))
+                  required.extend(_collection_list(summary.get('must_include_collections')))
+                  required.extend(_collection_list(summary.get('needed_collections')))
               return _dedupe_nonempty(required)
 
 
@@ -480,7 +522,7 @@
           variable: expected_collections
         - value_selector:
           - '1776000000025'
-          - must_include_collections_json
+          - must_include_collections
           value_type: array[string]
           variable: must_include_collections
       height: 80

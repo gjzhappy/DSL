@@ -1029,7 +1029,9 @@
                   'candidate_schema_refine_query': query,
                   'needed_collections': names,
                   'expected_collections': names,
+                  'must_include_collections': names,
                   'must_include_collections_json': json.dumps(names, ensure_ascii=False),
+                  'preferred_collections': names,
                   'preferred_collections_json': json.dumps(names, ensure_ascii=False),
                   'deprecated_fields_json': '[]',
                   'collection_strategy': strategy,
@@ -1084,9 +1086,13 @@
             type: array[string]
           expected_collections:
             type: array[string]
+          must_include_collections:
+            type: array[string]
           must_include_collections_json:
             children:
             type: string
+          preferred_collections:
+            type: array[string]
           preferred_collections_json:
             children:
             type: string
