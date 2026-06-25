@@ -635,6 +635,12 @@
                   success = _query_success(query_result_json, execution_success)
 
                   answer_presentation = _answer_presentation_contract(normalized_plan, result_rows, chart_payload if isinstance(chart_payload, dict) else {})
+                  current_turn_chart_requested = _current_turn_chart_requested(normalized_plan, semantic_plan, answer_presentation)
+                  chart_policy = answer_presentation.get('chart_policy') if isinstance(answer_presentation.get('chart_policy'), dict) else {}
+                  chart_policy['requested'] = bool(current_turn_chart_requested)
+                  chart_policy['enabled'] = bool(chart_payload.get('enabled')) if current_turn_chart_requested and isinstance(chart_payload, dict) else False
+                  chart_policy['role'] = 'auxiliary'
+                  answer_presentation['chart_policy'] = chart_policy
 
                   if not success:
                       err = _compiler_error(query_result_json, execution_error) or '执行阶段返回失败。'
@@ -667,8 +673,7 @@
                       summary_text = '结果摘要：\n- ' + _result_count_label(normalized_plan, current_row_count, schema_metadata_json)
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, False) if _needs_analysis(question, mode) else ''
                       warning = ''
-                      requested_chart = _current_turn_chart_requested(normalized_plan, semantic_plan, answer_presentation)
-                      if requested_chart:
+                      if current_turn_chart_requested:
                           warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '')
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       table_md = _markdown_table(query_profile.get('preview_rows') or result_rows, answer_presentation.get('attach_as'), chart_payload, query_profile.get('fields'), current_row_count) if answer_presentation.get('show_table') else ''
@@ -685,7 +690,9 @@
                   else:
                       compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, result_summary or answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
                       compact_context['last_result_profile'] = query_profile
-                  if answer_type != 'execution_error' and isinstance(chart_payload, dict) and chart_payload.get('summary'):
+                  if not current_turn_chart_requested:
+                      compact_context['last_chart_request'] = {'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''}
+                  elif answer_type != 'execution_error' and isinstance(chart_payload, dict) and chart_payload.get('summary'):
                       compact_context['last_chart_request'].update({k: chart_payload.get(k) for k in ('chart_type', 'title', 'x_field', 'y_field') if chart_payload.get(k)})
 
                   # Prefer hydrated/selected validator runtime schema ref; never let empty compiler metadata overwrite prior non-empty ref.
@@ -720,8 +727,8 @@
                       compact_context['context_warnings'].append('schema_context_ref.catalog_digest 缺失；下一轮需要重新确认 collection catalog。')
                   if '不对' in str(question or '') or '不再' in str(question or ''):
                       compact_context['last_turn_intent'] = {'turn_intent': 'refine_query', 'refine_type': 'requery'}
-                  context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')) and answer_type != 'execution_error')
                   compact_context['answer_presentation'] = answer_presentation
+                  context_update, compact_context_json = _context_update(compact_context, should_save=bool(compact_context.get('has_last_context')) and answer_type != 'execution_error')
                   payload = _answer_payload(
                       answer_type,
                       answer_text=answer_text,
