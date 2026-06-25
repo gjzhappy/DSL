@@ -829,6 +829,78 @@
               return str(value)
 
 
+
+          def _primary_intent(normalized_plan):
+              stages = _execution_stages(normalized_plan if isinstance(normalized_plan, dict) else {})
+              for stage in stages:
+                  if isinstance(stage, dict) and stage.get('stage_type') == 'primary_query':
+                      return str(stage.get('intent_type') or '')
+              return ''
+
+          def _user_explicitly_requested_chart(question):
+              text = str(question or '').lower()
+              keywords = ['图表','柱状图','条形图','折线图','饼图','可视化','趋势图','分布图','排行图','报表','chart','bar chart','line chart','pie chart']
+              return any(k.lower() in text for k in keywords)
+
+          def _is_detail_rows(question, rows, normalized_plan=None):
+              plan = normalized_plan if isinstance(normalized_plan, dict) else {}
+              if plan.get('answer_mode') == 'data' or _primary_intent(plan) == 'detail_query':
+                  return True
+              chart = _chart_request(plan)
+              group_fields = plan.get('group_fields') if isinstance(plan.get('group_fields'), list) else []
+              metric_alias = str(plan.get('metric_alias') or '')
+              for stage in _execution_stages(plan):
+                  if not isinstance(stage, dict):
+                      continue
+                  if isinstance(stage.get('group_fields'), list) and stage.get('group_fields'):
+                      group_fields = stage.get('group_fields')
+                  if stage.get('metric_alias'):
+                      metric_alias = str(stage.get('metric_alias') or '')
+              detail_fields = {'order_id','created_at','cases','product_info','products_enriched'}
+              if any(isinstance(r, dict) and detail_fields.intersection(r.keys()) for r in rows[:20]):
+                  return True
+              if not metric_alias and not group_fields:
+                  return True
+              if not chart.get('x_field') and not chart.get('y_field') and not _user_explicitly_requested_chart(question) and (plan.get('answer_mode') == 'data' or _primary_intent(plan) == 'detail_query'):
+                  return True
+              return False
+
+          def _detail_summary(question, rows, normalized_plan=None):
+              title = '结果摘要'
+              if not rows:
+                  return title + '：\n- 当前筛选条件下未查询到符合条件的数据记录。'
+              order_ids = [str(r.get('order_id')) for r in rows if isinstance(r, dict) and r.get('order_id')]
+              order_count = len(set(order_ids)) if order_ids else len(rows)
+              related_count = 0
+              has_cases = False
+              examples = []
+              for row in rows:
+                  if not isinstance(row, dict):
+                      continue
+                  if row.get('cases'):
+                      has_cases = True
+                  related = row.get('product_info') or row.get('products_enriched') or []
+                  if isinstance(related, list):
+                      related_count += len([x for x in related if isinstance(x, dict)])
+                      names = [str(x.get('product_name')) for x in related if isinstance(x, dict) and x.get('product_name')]
+                  elif isinstance(related, dict):
+                      related_count += 1
+                      names = [str(related.get('product_name'))] if related.get('product_name') else []
+                  else:
+                      names = []
+                  if len(examples) < 2:
+                      oid = row.get('order_id') or '未知订单'
+                      product = row.get('product_name') or '未命名商品'
+                      if names:
+                          examples.append(f'{len(examples)+1}. {oid}：订单商品 {product}；关联商品包括 {"、".join(names)}。')
+              bullets = [f'- 查询完成，共返回 {order_count} 笔订单明细，并已补充每笔订单中订单Case对应的商品信息，共包含 {related_count} 条关联商品信息。'] if related_count else [f'- 查询完成，共返回 {order_count} 笔订单明细。']
+              if has_cases:
+                  bullets.append('- 每笔订单保留了订单Case列表，并补充了 Case 对应的商品名称、品类和品牌。')
+              if examples:
+                  bullets.append('- 示例：')
+                  bullets.extend([f'  {x}' for x in examples])
+              return title + '：\n' + '\n'.join(bullets)
+
           def _summary(question, rows, normalized_plan=None):
               row_count = len(rows)
               group_field = _pick_group_field(rows, normalized_plan)
@@ -838,6 +910,8 @@
               title = '结果摘要'
               if not rows:
                   return title + '：\n- 当前筛选条件下未查询到符合条件的数据记录。'
+              if _is_detail_rows(question, rows, normalized_plan):
+                  return _detail_summary(question, rows, normalized_plan)
 
               bullets = [f'- 查询完成，共返回 {row_count} 条统计结果。']
               if group_field and metric_field:
@@ -862,6 +936,8 @@
               metric_field = _pick_metric_field(rows, group_field, normalized_plan)
               group_label = _field_label(group_field, normalized_plan, 'group')
               metric_label = _field_label(metric_field, normalized_plan, 'metric')
+              if _is_detail_rows('', rows, normalized_plan):
+                  return '简单分析：\n- 本次返回的是订单明细和关联商品信息，适合逐笔核对订单Case及对应商品，不按统计排名解读。'
               if not group_field or not metric_field:
                   return '简单分析：\n- 已返回查询结果，但字段结构不足以自动识别分组维度和指标，可结合统计结果查看整体分布。'
               numeric = [row for row in rows if isinstance(row.get(metric_field), (int, float)) and not isinstance(row.get(metric_field), bool)]

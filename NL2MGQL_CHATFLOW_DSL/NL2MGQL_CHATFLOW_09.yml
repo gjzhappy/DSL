@@ -878,6 +878,29 @@
                   return rows, False
               return [seen[k] for k in ordered], True
 
+
+          def _user_explicitly_requested_chart(question):
+              text = str(question or '').lower()
+              keywords = ['图表','柱状图','条形图','折线图','饼图','可视化','趋势图','分布图','排行图','报表','chart','bar chart','line chart','pie chart']
+              return any(k.lower() in text for k in keywords)
+
+          def _is_detail_enrich_plan(plan):
+              if not isinstance(plan, dict):
+                  return False
+              stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
+              has_detail_primary = any(isinstance(s, dict) and s.get('stage_type') == 'primary_query' and s.get('intent_type') in {'detail_query','find','raw_document_query'} for s in stages)
+              has_enrich = any(isinstance(s, dict) and (s.get('stage_type') == 'enrich_related' or s.get('intent_type') == 'enrich_related') for s in stages)
+              return has_detail_primary and has_enrich
+
+          def _is_detail_or_enrich_context(plan, rows, fields):
+              if isinstance(plan, dict) and (plan.get('answer_mode') == 'data' or _is_detail_enrich_plan(plan)):
+                  return True
+              fields_set = {str(f) for f in (fields or [])}
+              detail_fields = {'order_id','created_at','cases','product_info','products_enriched'}
+              if rows and fields_set.intersection(detail_fields):
+                  return True
+              return False
+
           def _build_multi_series_rows(rows, x_field, series_field, y_field):
               x_order = []
               series_order = []
@@ -899,7 +922,7 @@
                   values[(x_key, s_key)] = values.get((x_key, s_key), 0) + y_val
               return x_order, series_order, values
 
-          def _payload(req, qr, chart_only=False):
+          def _payload(req, qr, chart_only=False, plan=None, question=''):
               rows=qr.get('rows') if isinstance(qr.get('rows'),list) else []; fields_list=_fields(rows, qr.get('fields') if isinstance(qr.get('fields'),list) else []); fields=set(fields_list)
               p={'contract_version':'chart_payload_contract','enabled':False,'renderer':'echarts','chart_type':str(req.get('chart_type') or ''),'option':{},'echarts_markdown':'','summary':'','warning':'','data_profile':{'row_count':int(qr.get('row_count') or len(rows)),'x_field':str(req.get('x_field') or ''),'y_field':str(req.get('y_field') or ''),'fields':[str(f) for f in fields],'preview_rows':rows[:5]},'chart_error':'','chart_debug':{}}
               if not req.get('enabled'):
@@ -910,6 +933,9 @@
                   p['warning']='上一轮结果摘要不足以重新生成图表' if chart_only else '查询结果为空，未生成图表。'; return p
               x=str(req.get('x_field') or ''); y=str(req.get('y_field') or '')
               if not x or not y or x not in fields or y not in fields:
+                  if (not x or not y) and (not _user_explicitly_requested_chart(question)) and _is_detail_or_enrich_context(plan, rows, fields_list):
+                      p.update({'enabled':False,'option':{},'echarts_markdown':'','summary':'','warning':'','chart_error':''})
+                      return p
                   p['warning']='图表字段不在查询结果中'; return p
               if not _numeric(rows,y):
                   p['warning']='图表纵轴字段不是数字，未生成图表。'; return p
@@ -957,12 +983,13 @@
               p.update({'enabled':True,'chart_type':ctype,'option':option,'echarts_markdown':_markdown(option),'summary':summary})
               return p
 
-          def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str='', schema_runtime_context_json: str='', schema_metadata_json: str='', schema_alias_index_json: str=''):
+          def main(normalized_plan_json: str='', semantic_plan_json: str='', chart_request_json: str='', query_result_json: str='', rows_json: str='', row_count=0, fields_json: str='', merged_rows_json: str='', schema_runtime_context_json: str='', schema_metadata_json: str='', schema_alias_index_json: str='', question: str=''):
               req=_chart_req(normalized_plan_json, semantic_plan_json, chart_request_json)
               labels=_label_map(schema_runtime_context_json, schema_metadata_json, schema_alias_index_json)
               req['field_labels']={**labels, **(req.get('field_labels') if isinstance(req.get('field_labels'),dict) else {})}
               qr=_query_result(query_result_json, rows_json, row_count, fields_json, merged_rows_json)
-              p=_payload(req, qr, False)
+              plan=_loads(normalized_plan_json,{}) or _loads(semantic_plan_json,{})
+              p=_payload(req, qr, False, plan, question)
               return {'chart_payload_json':_dumps(p),'chart_payload_contract':'chart_payload_contract','chart_echarts_markdown':p.get('echarts_markdown') or '', 'chart_summary':p.get('summary') or '', 'chart_warning':p.get('warning') or '', 'chart_enabled':bool(p.get('enabled')), 'data_profile_json':_dumps(p.get('data_profile') or {}), 'chart_debug_json':_dumps(p.get('chart_debug') or {})}
         code_language: python3
         desc: Phase 12：chart_request_contract + query_result_contract -> chart_payload_contract；不解析
@@ -996,6 +1023,11 @@
         title: 代码执行_ChartPayloadBuilder
         type: code
         variables:
+        - value_selector:
+          - sys
+          - query
+          value_type: string
+          variable: question
         - value_selector:
           - '1778000000001'
           - normalized_plan_json
