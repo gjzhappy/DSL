@@ -316,6 +316,71 @@
                       item[attach_as] = None
                   merged.append(item)
               return merged
+
+
+          def _is_scalar_value(value):
+              return value is None or isinstance(value, (str, int, float, bool))
+
+          def _enrich_stage_for_merge(stages, final_merge):
+              stages = stages if isinstance(stages, list) else []
+              right_name = str((final_merge or {}).get('right_stage') or '').strip()
+              for stage in stages:
+                  if not isinstance(stage, dict):
+                      continue
+                  if right_name and str(stage.get('stage_name') or '').strip() == right_name:
+                      return stage
+              for stage in stages:
+                  if isinstance(stage, dict) and (stage.get('stage_type') == 'enrich_related' or stage.get('intent_type') == 'enrich_related'):
+                      return stage
+              return {}
+
+          def _flatten_enrich_fields(rows, final_merge, stages, warnings):
+              rows = rows if isinstance(rows, list) else []
+              final_merge = final_merge if isinstance(final_merge, dict) else {}
+              stages = stages if isinstance(stages, list) else []
+              enrich_stage = _enrich_stage_for_merge(stages, final_merge)
+              merge_mode = str(final_merge.get('merge_mode') or '').strip()
+              stage_is_enrich = bool(enrich_stage) and (enrich_stage.get('stage_type') == 'enrich_related' or enrich_stage.get('intent_type') == 'enrich_related')
+              if merge_mode != 'enrich' and not stage_is_enrich:
+                  return rows
+              attach_as = str(final_merge.get('attach_as') or enrich_stage.get('attach_as') or '').strip()
+              if not attach_as:
+                  attach_as = _normalize_attach_as('', str(enrich_stage.get('collection') or '').strip())
+              join_keys = {str(final_merge.get('right_field') or '').strip(), str(enrich_stage.get('join_target_field') or '').strip()}
+              join_keys = {x for x in join_keys if x}
+              projection_fields = []
+              for field in enrich_stage.get('projection_fields') or []:
+                  name = str(field or '').strip()
+                  if name and name not in projection_fields and name not in join_keys:
+                      projection_fields.append(name)
+              out = []
+              for row in rows:
+                  if not isinstance(row, dict):
+                      continue
+                  item = dict(row)
+                  nested = item.get(attach_as)
+                  nested_items = [nested] if isinstance(nested, dict) else []
+                  if isinstance(nested, list):
+                      nested_items = [x for x in nested if isinstance(x, dict)]
+                  candidate_fields = list(projection_fields)
+                  if not candidate_fields:
+                      for nested_obj in nested_items[:1]:
+                          for key, value in nested_obj.items():
+                              name = str(key or '').strip()
+                              if name and name not in join_keys and name not in candidate_fields and _is_scalar_value(value):
+                                  candidate_fields.append(name)
+                  for nested_obj in nested_items[:1]:
+                      for field in candidate_fields:
+                          if field in join_keys or field not in nested_obj or not _is_scalar_value(nested_obj.get(field)):
+                              continue
+                          if field not in item:
+                              item[field] = nested_obj.get(field)
+                          elif item.get(field) != nested_obj.get(field):
+                              msg = 'enrich_flatten_conflict: field=%s attach_as=%s; keep top-level value' % (field, attach_as)
+                              if isinstance(warnings, list) and msg not in warnings:
+                                  warnings.append(msg)
+                  out.append(item)
+              return out
           def _normalize_visualization(value):
               if not isinstance(value, dict):
                   return {'enabled': False}
@@ -1050,6 +1115,7 @@
                   right_stage_attach = str((right_stage or {}).get('attach_as') or '').strip()
                   attach_as = _normalize_attach_as(str(final_merge.get('attach_as') or right_stage_attach or '').strip(), related_collection)
                   merged_rows = _merge_rows(left_rows, right_rows, final_merge.get('left_field'), final_merge.get('right_field'), attach_as)
+                  merged_rows = _flatten_enrich_fields(merged_rows, {**final_merge, 'attach_as': attach_as}, normalized_execution_plan.get('stages') or [], normalized_execution_plan.setdefault('warnings', []))
               else:
                   first_stage_name = normalized_execution_plan['stages'][0]['stage_name']
                   merged_rows = (stage_outputs.get(first_stage_name) or {}).get('rows') or []
