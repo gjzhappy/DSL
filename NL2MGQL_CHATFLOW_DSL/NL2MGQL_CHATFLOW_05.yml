@@ -923,6 +923,77 @@
                           aliases.append(alias)
               return aliases
 
+          def _dedupe_validated_ast_projection(validated_ast):
+              if not isinstance(validated_ast, dict):
+                  return validated_ast
+              projection = validated_ast.get('projection')
+              if not isinstance(projection, list) or not projection:
+                  return validated_ast
+              names = []
+              for item in projection:
+                  if isinstance(item, dict):
+                      name = str(item.get('alias') or item.get('field') or '').strip()
+                  else:
+                      name = str(item or '').strip()
+                  if name:
+                      names.append(name)
+              cleaned_names, dropped_names = _dedupe_projection_path_collisions(names)
+              if not dropped_names:
+                  return validated_ast
+              cleaned_set = set(cleaned_names)
+              new_projection = []
+              kept = set()
+              for item in projection:
+                  if isinstance(item, dict):
+                      name = str(item.get('alias') or item.get('field') or '').strip()
+                  else:
+                      name = str(item or '').strip()
+                  if name in cleaned_set and name not in kept:
+                      new_projection.append(item)
+                      kept.add(name)
+              validated_ast['projection'] = new_projection
+              return validated_ast
+
+
+          def _dedupe_pipeline_project_path_collisions(pipeline):
+              if not isinstance(pipeline, list):
+                  return pipeline
+              for stage in pipeline:
+                  if not isinstance(stage, dict) or not isinstance(stage.get('$project'), dict):
+                      continue
+                  project = stage['$project']
+                  keys = [k for k in project.keys() if k != '_id']
+                  _, dropped_keys = _dedupe_projection_path_collisions(keys)
+                  for key in dropped_keys:
+                      project.pop(key, None)
+              return pipeline
+
+
+          def _raise_if_business_error(stage_name, response_json):
+              if not isinstance(response_json, dict):
+                  return
+              body_code = response_json.get('code')
+              body_msg = str(
+                  response_json.get('msg')
+                  or response_json.get('message')
+                  or response_json.get('error')
+                  or response_json.get('errmsg')
+                  or ''
+              )
+              ok_codes = {None, 0, 200, '0', '200'}
+              failure_tokens = [
+                  '查询失败',
+                  '聚合查询失败',
+                  'Mongo聚合查询失败',
+                  'Command failed',
+                  'MongoCommandException',
+                  'Invalid $project',
+                  'Path collision',
+              ]
+              if body_code not in ok_codes or any(token in body_msg for token in failure_tokens):
+                  raise ValueError(f"stage `{stage_name}` query failed: code={body_code}, msg={body_msg[:1200]}")
+
+
           def _ensure_primary_projection_fields_for_enrich(stage, plan, validated_ast, pipeline):
               if not isinstance(stage, dict) or str(stage.get('stage_type') or '') != 'primary_query' or str(stage.get('intent_type') or '') != 'aggregate_summary':
                   return validated_ast, pipeline
@@ -1045,6 +1116,8 @@
                   stage = _sanitize_stage_for_compile(stage)
                   validated_ast, pipeline, skip_query = _compile_stage(stage, schema_context, stage_outputs, prior_stages, compiler_autofix_warnings)
                   validated_ast, pipeline = _ensure_primary_projection_fields_for_enrich(stage, normalized_execution_plan, validated_ast, pipeline)
+                  validated_ast = _dedupe_validated_ast_projection(validated_ast)
+                  pipeline = _dedupe_pipeline_project_path_collisions(pipeline)
                   pipeline = _dedupe_equivalent_project(_assert_safe_pipeline(pipeline))
                   validated_ast = _sync_limit(validated_ast, pipeline)
                   pipeline_json = json.dumps(pipeline, ensure_ascii=False, indent=2)
@@ -1071,6 +1144,7 @@
                       if status_code < 200 or status_code >= 300:
                           raise ValueError(f"stage `{stage['stage_name']}` query failed: status={status_code}, body={response_body[:1200]}")
                       response_json = _read_json_text(response_body)
+                      _raise_if_business_error(stage['stage_name'], response_json)
                       expected_row_fields = _collect_expected_row_fields(stage, validated_ast, normalized_execution_plan)
                       rows = _find_best_rows(response_json, expected_row_fields)
                   else:
