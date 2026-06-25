@@ -291,11 +291,27 @@
                   fields = parsed_fields if isinstance(parsed_fields, list) else []
               if not fields:
                   fields = _fields(source_rows, [])[:50]
-              count = _safe_int(qr.get('row_count'), -1) if isinstance(qr, dict) else -1
+              count_source = ''
+              count = _safe_int(profile.get('row_count'), -1) if isinstance(profile, dict) else -1
+              if count >= 0:
+                  count_source = 'query_result_profile.row_count'
+              if count < 0 and isinstance(qr, dict):
+                  count = _safe_int(qr.get('row_count'), -1)
+                  if count >= 0:
+                      count_source = 'query_result.row_count'
               if count < 0:
                   count = _safe_int(row_count, -1)
+                  if count >= 0:
+                      count_source = 'row_count_input'
+              if count < 0 and isinstance(qr, dict):
+                  query_rows = qr.get('rows') if isinstance(qr.get('rows'), list) else []
+                  count = len(query_rows) if query_rows else -1
+                  if count >= 0:
+                      count_source = 'query_result.rows'
               if count < 0:
-                  count = len(_rows(rows))
+                  merged_rows = _rows(rows)
+                  count = len(merged_rows)
+                  count_source = 'rows'
               numeric_fields = profile.get('numeric_fields') if isinstance(profile.get('numeric_fields'), list) else []
               dimension_fields = profile.get('dimension_fields') if isinstance(profile.get('dimension_fields'), list) else []
               if (not numeric_fields and not dimension_fields) and source_rows:
@@ -311,6 +327,7 @@
                   'preview_rows': [r for r in source_rows[:5] if isinstance(r, dict)],
                   'numeric_fields': [str(x) for x in numeric_fields[:40]],
                   'dimension_fields': [str(x) for x in dimension_fields[:40]],
+                  'row_count_source': count_source,
               }
 
 
@@ -479,11 +496,37 @@
               lines = ['| ' + ' | '.join(_table_field_label(f) for f in columns) + ' |', '| ' + ' | '.join(['---:' if f in numeric else '---' for f in columns]) + ' |']
               for r in flat[:limit]:
                   lines.append('| ' + ' | '.join(_escape_md(r.get(f, '')) for f in columns) + ' |')
-              total = _safe_int(row_count, len(flat)) or len(flat)
-              if total > limit:
-                  lines.append('')
-                  lines.append('仅展示前 %s 行，共 %s 条结果。' % (limit, total))
               return '\n'.join(lines)
+
+          def _current_row_count(query_result_json, chart_profile, result_rows, query_profile):
+              qr = _loads_any(query_result_json, {})
+              query_source = str((query_profile or {}).get('row_count_source') or '')
+              if query_source in ('query_result_profile.row_count', 'query_result.row_count', 'row_count_input'):
+                  return _safe_int((query_profile or {}).get('row_count'), 0)
+              count = _safe_int(chart_profile.get('row_count'), -1) if isinstance(chart_profile, dict) else -1
+              if count >= 0:
+                  return count
+              if isinstance(result_rows, list) and result_rows:
+                  return len(result_rows)
+              if isinstance(qr, dict) and isinstance(qr.get('rows'), list):
+                  return len(qr.get('rows') or [])
+              return _safe_int((query_profile or {}).get('row_count'), 0)
+
+          def _rendered_table_row_count(table_md):
+              lines = [line.strip() for line in str(table_md or '').splitlines() if line.strip().startswith('|')]
+              return max(0, len(lines) - 2) if len(lines) >= 2 else 0
+
+          def _result_detail_title(table_md, current_row_count):
+              rendered = _rendered_table_row_count(table_md)
+              total = _safe_int(current_row_count, 0)
+              if rendered > 0 and total > rendered:
+                  return '结果明细（仅展示前 %s 条，共 %s 条结果）：' % (rendered, total)
+              return '结果明细：'
+
+          def _table_section(table_md, current_row_count):
+              if not table_md:
+                  return ''
+              return '\n\n' + _result_detail_title(table_md, current_row_count) + '\n\n' + table_md
 
           def _answer_presentation_contract(plan, rows, chart_payload):
               fm = plan.get('final_merge') if isinstance(plan, dict) and isinstance(plan.get('final_merge'), dict) else {}
@@ -513,7 +556,7 @@
                   chart_available = bool(chart_enabled and chart)
                   query_profile = _query_result_profile(query_result_json, result_rows, fields_json, row_count)
                   chart_profile = chart_payload.get('data_profile') if isinstance(chart_payload, dict) and isinstance(chart_payload.get('data_profile'), dict) else {}
-                  current_row_count = query_profile.get('row_count') or _safe_int(chart_profile.get('row_count'), 0) or len(result_rows)
+                  current_row_count = _current_row_count(query_result_json, chart_profile, result_rows, query_profile)
                   success = _query_success(query_result_json, execution_success)
 
                   answer_presentation = _answer_presentation_contract(normalized_plan, result_rows, chart_payload if isinstance(chart_payload, dict) else {})
@@ -540,7 +583,7 @@
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True) if _needs_analysis(question, mode) else ''
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       table_md = _markdown_table(query_profile.get('preview_rows') or result_rows, answer_presentation.get('attach_as'), chart_payload, query_profile.get('fields'), current_row_count) if answer_presentation.get('show_table') else ''
-                      table_section = ('\n\n结果明细：\n\n' + table_md) if table_md else ''
+                      table_section = _table_section(table_md, current_row_count)
                       answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + table_section + '\n\n图表：')[:4000]
                       chart_markdown = chart
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
@@ -554,7 +597,7 @@
                           warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or '图表字段未匹配或图表配置不可用'
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       table_md = _markdown_table(query_profile.get('preview_rows') or result_rows, answer_presentation.get('attach_as'), chart_payload, query_profile.get('fields'), current_row_count) if answer_presentation.get('show_table') else ''
-                      table_section = ('\n\n结果明细：\n\n' + table_md) if table_md else ''
+                      table_section = _table_section(table_md, current_row_count)
                       answer_text = ('已完成查询。\n' + _normalize_result_summary_prefix(result_summary) + (('\n\n' + analysis_text) if analysis_text else '') + table_section + (('\n\n图表说明：本次未生成图表，原因：' + str(warning)) if warning else ''))[:4000]
                       chart_markdown = ''
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
