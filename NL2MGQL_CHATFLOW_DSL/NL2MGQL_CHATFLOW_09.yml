@@ -435,6 +435,41 @@
               text = '' if value is None else str(value)
               return text.replace('|', '\\|').replace('\n', ' ')[:200]
 
+          def _compact_display_text(value, max_len=160):
+              text = '' if value is None else str(value)
+              return text.replace('\n', ' ').strip()[:max_len]
+
+          def _format_list_cell(value, field_name=''):
+              if not isinstance(value, list):
+                  return value
+              if not value:
+                  return ''
+              if not all(isinstance(item, dict) for item in value):
+                  try:
+                      return json.dumps(value, ensure_ascii=False, default=str)[:200]
+                  except Exception:
+                      return str(value)[:200]
+              priority_tokens = ('id', 'key', 'code', 'no', 'number', 'name', 'title', 'label', 'category', 'type', 'status', 'brand')
+              parts = []
+              for item in value[:3]:
+                  keys = []
+                  for k in item.keys():
+                      lk = str(k or '').lower()
+                      if any(t in lk for t in priority_tokens):
+                          keys.append(k)
+                  if not keys:
+                      keys = list(item.keys())[:4]
+                  else:
+                      for k in item.keys():
+                          if k not in keys and len(keys) < 4 and _is_scalar_cell(item.get(k)):
+                              keys.append(k)
+                  vals = [_compact_display_text(item.get(k), 80) for k in keys[:4] if _is_scalar_cell(item.get(k)) and _compact_display_text(item.get(k), 80)]
+                  if vals:
+                      parts.append(' / '.join(vals))
+              if len(value) > 3:
+                  parts.append('等 %s 项' % len(value))
+              return '；'.join(parts)[:300]
+
           def _flatten_display_row(row, attach_as=''):
               out = {}
               if not isinstance(row, dict):
@@ -446,6 +481,9 @@
                       nested_keys.append(name)
                       continue
                   if isinstance(value, list):
+                      cell = _format_list_cell(value, name)
+                      if cell:
+                          out[name] = cell
                       continue
                   out[name] = value
               for key in ([attach_as] if attach_as else []) + nested_keys:
@@ -475,12 +513,15 @@
               x_field, y_field = _chart_fields(chart_payload if isinstance(chart_payload, dict) else {})
               declared = [str(f) for f in (fields or []) if str(f or '').strip()]
               available = []
+              list_display_fields = []
               for r in flat:
                   for k, v in r.items():
                       if k not in available and _is_scalar_cell(v) and not _is_sensitive_field(k):
                           available.append(k)
+                      if k not in list_display_fields and isinstance(v, str) and ('；' in v or v.startswith('等 ')) and not _is_sensitive_field(k):
+                          list_display_fields.append(k)
               columns = []
-              for group in ([x_field], declared, [y_field], available):
+              for group in ([x_field], list_display_fields, declared, [y_field], available):
                   for f in group:
                       if f and f in available and f not in columns:
                           columns.append(f)
@@ -534,6 +575,8 @@
               has_attach = any(isinstance(r, dict) and attach_as in r and (r.get(attach_as) is None or isinstance(r.get(attach_as), dict)) for r in (rows or []))
               has_numeric = any(isinstance(r, dict) and any(isinstance(v, (int, float)) and not isinstance(v, bool) for v in r.values()) for r in (rows or []))
               enriched = str(plan.get('execution_mode') or '') == 'multi_stage' and str(fm.get('merge_mode') or '') == 'enrich' and has_attach and has_numeric
+              chart_req = plan.get('chart_request') if isinstance(plan, dict) and isinstance(plan.get('chart_request'), dict) else {}
+              requested = bool((plan.get('needs_chart') if isinstance(plan, dict) else False) or chart_req.get('enabled'))
               return {
                   'contract_version': 'answer_presentation_contract',
                   'answer_type': 'query_with_optional_chart',
@@ -541,8 +584,40 @@
                   'show_table': True,
                   'table_mode': 'flatten_enriched_rows' if enriched else 'rows',
                   'attach_as': attach_as,
-                  'chart_policy': {'requested': bool(chart_payload.get('enabled') if isinstance(chart_payload, dict) else False), 'enabled': bool(chart_payload.get('enabled') if isinstance(chart_payload, dict) else False), 'role': 'auxiliary'},
+                  'chart_policy': {'requested': requested, 'enabled': bool(chart_payload.get('enabled') if isinstance(chart_payload, dict) else False), 'role': 'auxiliary'},
               }
+
+          def _schema_collection_label(schema_metadata_json, collection):
+              collection = str(collection or '').strip()
+              meta = _loads_any(schema_metadata_json, {})
+              collections = meta.get('collections') if isinstance(meta, dict) else None
+              vals = collections.values() if isinstance(collections, dict) else (collections if isinstance(collections, list) else [])
+              for coll in vals:
+                  if isinstance(coll, dict) and str(coll.get('collection_name') or coll.get('name') or '').strip() == collection:
+                      return str(coll.get('collection_label') or coll.get('label') or '').strip()
+              return ''
+
+          def _result_count_label(plan, row_count, schema_metadata_json=''):
+              stage = _first_stage_for_context(plan) if isinstance(plan, dict) else {}
+              intent = str(stage.get('intent_type') or '').strip()
+              group_fields = stage.get('group_fields') if isinstance(stage.get('group_fields'), list) else []
+              has_metric = bool(stage.get('metric_alias') or stage.get('metric_function') or stage.get('metric_field'))
+              if group_fields or has_metric or intent in {'aggregate_summary', 'group_top_entity', 'group_top_record'}:
+                  return '查询完成，共返回 %s 条统计结果。' % row_count
+              if intent == 'detail_query':
+                  primary = str((plan or {}).get('primary_collection') or stage.get('primary_collection') or stage.get('collection') or '').strip()
+                  label = _schema_collection_label(schema_metadata_json, primary)
+                  return '查询完成，共返回 %s 条%s。' % (row_count, (label + '明细') if label else '明细结果')
+              return '查询完成，共返回 %s 条结果。' % row_count
+
+          def _current_turn_chart_requested(normalized_plan, semantic_plan, answer_presentation):
+              for plan in (normalized_plan, semantic_plan):
+                  if isinstance(plan, dict):
+                      chart_req = plan.get('chart_request') if isinstance(plan.get('chart_request'), dict) else {}
+                      if _safe_bool(plan.get('needs_chart')) or _safe_bool(chart_req.get('enabled')):
+                          return True
+              policy = answer_presentation.get('chart_policy') if isinstance(answer_presentation, dict) and isinstance(answer_presentation.get('chart_policy'), dict) else {}
+              return _safe_bool(policy.get('requested'))
 
           def main(question: str = '', semantic_plan_json: str = '{}', normalized_semantic_plan_json: str = '{}', rows='[]', chart_echarts_markdown: str = '', chart_payload_json: str = '', answer_mode: str = '', schema_metadata_json: str = '', collection_catalog_json: str = '', collection_selection_json: str = '', query_result_json: str = '{}', row_count=0, fields_json: str = '', execution_success=True, execution_error: str = '', patch_route: str = '', last_context_json: str = '{}', schema_runtime_context_json: str = '{}', selected_schema_context_ref_json: str = '{}', validator_result_json: str = '{}'):
               try:
@@ -579,7 +654,7 @@
                       compact_rows = []
                   elif chart_available:
                       answer_type = 'query_with_chart'
-                      summary_text = '结果摘要：\n- 查询完成，共返回 %s 条统计结果。' % current_row_count
+                      summary_text = '结果摘要：\n- ' + _result_count_label(normalized_plan, current_row_count, schema_metadata_json)
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True) if _needs_analysis(question, mode) else ''
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       table_md = _markdown_table(query_profile.get('preview_rows') or result_rows, answer_presentation.get('attach_as'), chart_payload, query_profile.get('fields'), current_row_count) if answer_presentation.get('show_table') else ''
@@ -589,12 +664,12 @@
                       compact_rows = query_profile.get('preview_rows') or result_rows[:5]
                   else:
                       answer_type = 'query_only'
-                      summary_text = '结果摘要：\n- 查询完成，共返回 %s 条统计结果。' % current_row_count
+                      summary_text = '结果摘要：\n- ' + _result_count_label(normalized_plan, current_row_count, schema_metadata_json)
                       analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, False) if _needs_analysis(question, mode) else ''
                       warning = ''
-                      requested_chart = bool((_chart_request(normalized_plan).get('enabled') if isinstance(_chart_request(normalized_plan), dict) else False) or (_chart_request(semantic_plan).get('enabled') if isinstance(_chart_request(semantic_plan), dict) else False))
-                      if requested_chart and _plan_needs_chart(normalized_plan, semantic_plan, question):
-                          warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '') or '图表字段未匹配或图表配置不可用'
+                      requested_chart = _current_turn_chart_requested(normalized_plan, semantic_plan, answer_presentation)
+                      if requested_chart:
+                          warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '')
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       table_md = _markdown_table(query_profile.get('preview_rows') or result_rows, answer_presentation.get('attach_as'), chart_payload, query_profile.get('fields'), current_row_count) if answer_presentation.get('show_table') else ''
                       table_section = _table_section(table_md, current_row_count)
