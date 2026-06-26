@@ -82,10 +82,18 @@
               }
 
 
+          def _disabled_chart_request():
+              return {'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''}
+
           def _compact_chart_request(chart_request):
               chart_request = chart_request if isinstance(chart_request, dict) else {}
+              if chart_request.get('enabled') is False:
+                  return _disabled_chart_request()
+              enabled = bool(chart_request.get('enabled'))
+              if not enabled:
+                  return _disabled_chart_request()
               return {
-                  'enabled': bool(chart_request.get('enabled') or chart_request.get('chart_type') or chart_request.get('type')),
+                  'enabled': True,
                   'chart_type': str(chart_request.get('chart_type') or chart_request.get('type') or ''),
                   'x_field': str(chart_request.get('x_field') or chart_request.get('x') or ''),
                   'y_field': str(chart_request.get('y_field') or chart_request.get('y') or ''),
@@ -652,7 +660,7 @@
                   elif query_profile.get('row_count', 0) == 0:
                       answer_type = 'empty_result'
                       answer_text = '已完成查询，但当前条件下没有查到结果。'
-                      detail = _summary(question, [], normalized_plan)
+                      detail = _summary(question, [], normalized_plan, schema_metadata_json)
                       if detail and detail != answer_text:
                           answer_text = (answer_text + '\n结果摘要：' + detail)[:4000]
                       result_summary = answer_text
@@ -661,7 +669,7 @@
                   elif chart_available:
                       answer_type = 'query_with_chart'
                       summary_text = '结果摘要：\n- ' + _result_count_label(normalized_plan, current_row_count, schema_metadata_json)
-                      analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True) if _needs_analysis(question, mode) else ''
+                      analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, True, schema_metadata_json) if _needs_analysis(question, mode) else ''
                       result_summary = (summary_text or '已返回查询结果。')[:1200]
                       table_md = _markdown_table(query_profile.get('preview_rows') or result_rows, answer_presentation.get('attach_as'), chart_payload, query_profile.get('fields'), current_row_count) if answer_presentation.get('show_table') else ''
                       table_section = _table_section(table_md, current_row_count)
@@ -671,7 +679,7 @@
                   else:
                       answer_type = 'query_only'
                       summary_text = '结果摘要：\n- ' + _result_count_label(normalized_plan, current_row_count, schema_metadata_json)
-                      analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, False) if _needs_analysis(question, mode) else ''
+                      analysis_text = _analysis(query_profile.get('preview_rows') or result_rows[:5], normalized_plan, False, schema_metadata_json) if _needs_analysis(question, mode) else ''
                       warning = ''
                       if current_turn_chart_requested:
                           warning = (chart_payload.get('warning') if isinstance(chart_payload, dict) else '')
@@ -691,9 +699,9 @@
                       compact_context = _compact_context_contract(question, normalized_plan, _chart_request(normalized_plan), compact_rows, result_summary or answer_text, schema_metadata_json, collection_catalog_json, collection_selection_json)
                       compact_context['last_result_profile'] = query_profile
                   if not current_turn_chart_requested:
-                      compact_context['last_chart_request'] = {'enabled': False, 'chart_type': '', 'x_field': '', 'y_field': '', 'series_name': '', 'title': ''}
-                  elif answer_type != 'execution_error' and isinstance(chart_payload, dict) and chart_payload.get('summary'):
-                      compact_context['last_chart_request'].update({k: chart_payload.get(k) for k in ('chart_type', 'title', 'x_field', 'y_field') if chart_payload.get(k)})
+                      compact_context['last_chart_request'] = _disabled_chart_request()
+                  elif answer_type != 'execution_error' and chart_available and isinstance(chart_payload, dict) and chart_payload.get('summary'):
+                      compact_context['last_chart_request'] = _compact_chart_request({**_chart_request(normalized_plan), **{k: chart_payload.get(k) for k in ('chart_type', 'title', 'x_field', 'y_field', 'series_name') if chart_payload.get(k)}, 'enabled': True})
 
                   # Prefer hydrated/selected validator runtime schema ref; never let empty compiler metadata overwrite prior non-empty ref.
                   runtime_ctx = _loads_any(schema_runtime_context_json, {})

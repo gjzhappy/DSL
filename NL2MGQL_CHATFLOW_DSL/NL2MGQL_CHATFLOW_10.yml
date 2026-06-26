@@ -357,10 +357,10 @@
 
           def _chart_from(value):
               obj = _loads(value, {})
-              if not isinstance(obj, dict):
-                  obj = {}
+              if not isinstance(obj, dict) or obj.get('enabled') is not True:
+                  return _default_chart_request()
               return {
-                  'enabled': bool(obj.get('enabled') or obj.get('chart_type') or obj.get('type')),
+                  'enabled': True,
                   'chart_type': _text(obj.get('chart_type') or obj.get('type')),
                   'x_field': _text(obj.get('x_field') or obj.get('x')),
                   'y_field': _text(obj.get('y_field') or obj.get('y')),
