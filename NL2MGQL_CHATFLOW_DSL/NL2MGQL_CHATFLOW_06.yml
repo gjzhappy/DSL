@@ -27,12 +27,12 @@
               raw_chart_request = normalized_execution_plan.get('chart_request') if isinstance(normalized_execution_plan.get('chart_request'), dict) else (normalized_execution_plan.get('visualization') if isinstance(normalized_execution_plan.get('visualization'), dict) else {})
               chart_request_flat = {
                   'enabled': bool(raw_chart_request.get('enabled')),
-                  'chart_type': str(raw_chart_request.get('chart_type') or ''),
-                  'x_field': str(raw_chart_request.get('x_field') or ''),
-                  'y_field': str(raw_chart_request.get('y_field') or ''),
-                  'series_name': str(raw_chart_request.get('series_name') or ''),
-                  'title': str(raw_chart_request.get('title') or ''),
-                  'field_labels': raw_chart_request.get('field_labels') if isinstance(raw_chart_request.get('field_labels'), dict) else {},
+                  'chart_type': str(raw_chart_request.get('chart_type') or '') if bool(raw_chart_request.get('enabled')) else '',
+                  'x_field': str(raw_chart_request.get('x_field') or '') if bool(raw_chart_request.get('enabled')) else '',
+                  'y_field': str(raw_chart_request.get('y_field') or '') if bool(raw_chart_request.get('enabled')) else '',
+                  'series_name': str(raw_chart_request.get('series_name') or '') if bool(raw_chart_request.get('enabled')) else '',
+                  'title': str(raw_chart_request.get('title') or '') if bool(raw_chart_request.get('enabled')) else '',
+                  'field_labels': raw_chart_request.get('field_labels') if bool(raw_chart_request.get('enabled')) and isinstance(raw_chart_request.get('field_labels'), dict) else {},
               }
 
               no_data_message = ''
@@ -54,7 +54,7 @@
                   'stage_count': len(normalized_execution_plan.get('stages') or []),
                   'merged_row_count': len(merged_rows or []),
                   'has_chart': bool((chart_payload or {}).get('enabled')),
-                  'chart_type': str(chart_decision.get('chart_type') or ''),
+                  'chart_type': str(chart_decision.get('chart_type') or '') if bool((chart_payload or {}).get('enabled')) else '',
                   'stage_names': [str((s or {}).get('stage_name') or '') for s in (normalized_execution_plan.get('stages') or [])],
               }
 
