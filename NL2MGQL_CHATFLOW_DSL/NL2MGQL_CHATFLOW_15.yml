@@ -542,7 +542,7 @@
           from typing import Any, Dict, List, Tuple
 
           VALID_ROUTES = {"valid", "needs_replan", "requires_clarification", "blocked", "invalid"}
-          ALLOWED_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte", "in", "nin", "contains", "regex", "between"}
+          ALLOWED_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in", "contains", "regex", "between"}
           SUPPORTED_CHART_TYPES = {"", "bar", "line", "pie", "table", "area", "scatter", "柱状图", "折线图", "饼图", "表格"}
           PII_WORDS = ("手机", "手机号", "电话", "身份证", "邮箱", "email", "phone", "mobile", "id_card")
 
@@ -612,6 +612,20 @@
                   or bool(stage.get("metric_alias"))
                   or bool(metrics)
               )
+
+
+          FILTER_OPERATOR_ALIASES = {
+              "=": "eq", "==": "eq", "eq": "eq",
+              "!=": "ne", "<>": "ne", "ne": "ne",
+              ">": "gt", ">=": "gte", "<": "lt", "<=": "lte",
+              "like": "contains", "contains": "contains", "regex": "regex",
+              "in": "in", "not_in": "not_in", "nin": "not_in", "between": "between",
+          }
+
+
+          def _canonicalize_filter_operator(raw_op: Any) -> Tuple[str, str]:
+              raw = _str(raw_op).lower()
+              return FILTER_OPERATOR_ALIASES.get(raw, ""), raw
 
 
           def canonicalize_intent_type(intent_type: Any, stage: Dict[str, Any] | None = None) -> str:

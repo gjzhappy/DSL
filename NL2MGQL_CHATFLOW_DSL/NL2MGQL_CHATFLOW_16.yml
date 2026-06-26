@@ -124,10 +124,19 @@
                       fname = _canonical_field(_str(nf.get("field")), schema, coll, "filters", errors, warnings, autofixes, "filterable")
                       nf["field"] = fname
                       field = _field(schema, coll, fname)
-                      op = _str(nf.get("operator") or nf.get("op") or "eq")
-                      if op not in ALLOWED_OPERATORS:
-                          errors.append(f"filter operator={op} 不在允许范围。")
-                      nf["operator"] = op
+                      raw_op = nf.get("op")
+                      if raw_op is None or _str(raw_op) == "":
+                          raw_op = nf.get("operator")
+                      if raw_op is None or _str(raw_op) == "":
+                          raw_op = "eq"
+                      op, raw_op_text = _canonicalize_filter_operator(raw_op)
+                      if not op or op not in ALLOWED_OPERATORS:
+                          errors.append(f"filter operator={raw_op_text or '<empty>'} 不在允许范围。")
+                      else:
+                          if raw_op_text != op:
+                              autofixes.append({"type": "filter_operator_canonicalized", "field": fname, "from": raw_op_text, "to": op})
+                          nf["op"] = op
+                          nf["operator"] = op
                       if _is_sensitive(field) and not bool((rules.get("allow_sensitive_filter") or rules.get("allow_pii_filter"))):
                           errors.append(f"敏感/PII 字段 {fname} 默认不允许 filter。")
                       if "value" in nf:
@@ -136,7 +145,7 @@
                               autofixes.append({"type": "value_alias_canonicalize", "field": fname, "from": nf.get("value"), "to": new_value})
                               nf["value"] = new_value
                           allowed_values = [_str(x) for x in _list(field.get("allowed_values"))]
-                          vals = _list(nf.get("value")) if op in {"in", "nin"} else [nf.get("value")]
+                          vals = _list(nf.get("value")) if op in {"in", "not_in"} else [nf.get("value")]
                           if allowed_values:
                               for val in vals:
                                   if _str(val) not in allowed_values:
