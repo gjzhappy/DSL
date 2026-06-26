@@ -385,6 +385,38 @@
                   'metric_field': first.get('metric_field') or first.get('field') or first.get('source_field') or '',
               }
 
+          FILTER_OPERATOR_ALIASES = {
+              '=': 'eq', '==': 'eq', 'eq': 'eq',
+              '!=': 'ne', '<>': 'ne', 'ne': 'ne',
+              '>': 'gt', '>=': 'gte', '<': 'lt', '<=': 'lte',
+              'like': 'contains', 'contains': 'contains', 'regex': 'regex',
+              'in': 'in', 'not_in': 'not_in', 'nin': 'not_in', 'between': 'between',
+          }
+
+          def _canonicalize_filter_operator(raw_op):
+              key = str(raw_op or '').strip().lower()
+              return FILTER_OPERATOR_ALIASES.get(key, ''), key
+
+          def _normalize_filter_operators(value, warnings, path='filters'):
+              if isinstance(value, list):
+                  return [_normalize_filter_operators(item, warnings, f'{path}[]') for item in value]
+              if not isinstance(value, dict):
+                  return value
+              item = dict(value)
+              raw_op = item.get('op')
+              if raw_op is None or str(raw_op).strip() == '':
+                  raw_op = item.get('operator')
+              canonical_op, raw_text = _canonicalize_filter_operator(raw_op if raw_op is not None else 'eq')
+              if canonical_op:
+                  if raw_text and raw_text != canonical_op:
+                      warnings.append({'type': 'filter_operator_canonicalized', 'field': str(item.get('field') or '').strip(), 'from': raw_text, 'to': canonical_op})
+                  item['op'] = canonical_op
+                  item['operator'] = canonical_op
+              for key in ('conditions', 'and', 'or', '$and', '$or'):
+                  if key in item:
+                      item[key] = _normalize_filter_operators(item.get(key), warnings, f'{path}.{key}')
+              return item
+
           def _normalize_time_range(value):
               tr = value if isinstance(value, dict) else {}
               try:
@@ -393,7 +425,7 @@
                   relative_days = 0
               return {'field': str(tr.get('field') or '').strip(), 'mode': str(tr.get('mode') or '').strip(), 'relative_days': relative_days, 'start': str(tr.get('start') or '').strip(), 'end': str(tr.get('end') or '').strip()}
 
-          def _normalize_stage(raw_stage, idx, primary_collection):
+          def _normalize_stage(raw_stage, idx, primary_collection, warnings=None):
               stage = _deepcopy_json(raw_stage) if isinstance(raw_stage, dict) else {}
               metric = _metric_from_metrics(stage)
               collection = str(stage.get('collection') or stage.get('primary_collection') or primary_collection or '').strip()
@@ -402,7 +434,7 @@
               stage['collection'] = collection
               stage.setdefault('intent_type', '')
               stage['time_range'] = _normalize_time_range(stage.get('time_range'))
-              stage['filters'] = _as_list(stage.get('filters'))
+              stage['filters'] = _normalize_filter_operators(_as_list(stage.get('filters')), warnings if isinstance(warnings, list) else [])
               stage['group_fields'] = _as_list(stage.get('group_fields'))
               stage['metric_function'] = str(stage.get('metric_function') or metric.get('metric_function') or '').strip()
               stage['metric_field'] = str(stage.get('metric_field') or metric.get('metric_field') or '').strip()
@@ -443,7 +475,7 @@
                   raw_stages = plan.get('stages') if isinstance(plan.get('stages'), list) else []
                   if not primary_collection and raw_stages and isinstance(raw_stages[0], dict):
                       primary_collection = str(raw_stages[0].get('collection') or raw_stages[0].get('primary_collection') or '').strip()
-                  stages = [_normalize_stage(s, i, primary_collection) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
+                  stages = [_normalize_stage(s, i, primary_collection, warnings) for i, s in enumerate(raw_stages) if isinstance(s, dict)]
                   if not primary_collection and stages:
                       primary_collection = str(stages[0].get('collection') or '').strip()
                   chart_request = _default_chart_request(plan.get('chart_request'))
