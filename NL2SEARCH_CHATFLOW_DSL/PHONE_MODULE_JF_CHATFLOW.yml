@@ -41,6 +41,12 @@
         "name": "MONGO_QUERY_API_URL",
         "value": "",
         "value_type": "string"
+      },
+      {
+        "id": "REPORT_LLM_MODE",
+        "name": "REPORT_LLM_MODE",
+        "value": "full",
+        "value_type": "string"
       }
     ],
     "features": {},
@@ -83,7 +89,9 @@
                 "label": "pending_missing_slots_json",
                 "required": false
               }
-            ]
+            ],
+            "desc": "",
+            "selected": false
           },
           "position": {
             "x": 0,
@@ -94,7 +102,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 1
         },
         {
           "id": "ctx",
@@ -108,7 +119,10 @@
               "context_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -119,7 +133,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 2
         },
         {
           "id": "kr",
@@ -131,10 +148,24 @@
               "start",
               "question"
             ],
-            "dataset_ids": [],
-            "retrieval_mode": "single",
+            "dataset_ids": [
+              "4d7c7b04-e8d5-47cf-8bd1-dfdfe6022cb7"
+            ],
+            "retrieval_mode": "multiple",
             "single_retrieval_config": {
               "top_k": 1
+            },
+            "desc": "",
+            "selected": false,
+            "multiple_retrieval_config": {
+              "top_k": 3,
+              "score_threshold": null,
+              "reranking_enable": false,
+              "reranking_model": {
+                "provider": "",
+                "model": ""
+              },
+              "weights": null
             }
           },
           "position": {
@@ -146,7 +177,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 3
         },
         {
           "id": "route",
@@ -155,12 +189,15 @@
             "title": "代码执行_选择并解析RouteCard",
             "type": "code",
             "code_language": "python3",
-            "source_code": "import json, re\nFALLBACK_ROUTE_CARD_JSON = '{\"route_id\":\"phone_module_jf_compare\",\"route_desc\":\"两个或多个手机的摄像头模组在指定范围、指定维度下做竞分对比，并生成指定形式的结果\",\"trigger_examples\":[\"请对比A手机与B手机的主摄CIS基础规格，包括靶面，像素大小，像素数量等\",\"请生成A手机与B手机的CIS规格对比报告\",\"请对比Iphone17与Xiaomi17的主摄CIS基础规格\",\"请对比A手机与B手机的主摄供电拓扑\",\"请对比A手机与B手机的主摄功耗\",\"请对比Iphone17、Xiaomi17、OPPO17的主摄规格，并输出对比表\"],\"required_slots\":[{\"slot\":\"target_objects\",\"desc\":\"参与对比的手机，至少2个\",\"min_items\":2,\"placeholder\":\"{{target_objects}}\",\"values\":[{\"value\":\"iphone17\",\"aliases\":[\"iphone17\",\"iPhone17\",\"iphone 17\",\"iPhone 17\",\"苹果17\",\"苹果 iPhone17\",\"苹果 iPhone 17\"]},{\"value\":\"xiaomi17\",\"aliases\":[\"xiaomi17\",\"Xiaomi17\",\"xiaomi 17\",\"Xiaomi 17\",\"小米17\",\"小米 17\"]},{\"value\":\"oppo17\",\"aliases\":[\"oppo17\",\"OPPO17\",\"oppo 17\",\"OPPO 17\",\"欧珀17\",\"欧珀 17\"]}]},{\"slot\":\"object_scope\",\"desc\":\"对比对象范围\",\"placeholder\":\"{{object_scope}}\",\"values\":[{\"value\":\"主摄\",\"aliases\":[\"主摄\",\"主摄像头\",\"主相机\",\"main camera\",\"main_camera\",\"main cam\"]},{\"value\":\"长焦\",\"aliases\":[\"长焦\",\"长焦镜头\",\"潜望长焦\",\"tele\",\"telephoto\",\"tele camera\",\"telephoto camera\"]},{\"value\":\"广角\",\"aliases\":[\"广角\",\"超广角\",\"广角镜头\",\"超广角镜头\",\"wide\",\"wide camera\",\"ultra wide\",\"ultra-wide\",\"ultrawide\"]}]},{\"slot\":\"analysis_dimension\",\"desc\":\"对比内容\",\"placeholder\":\"{{analysis_dimension}}\",\"values\":[{\"value\":\"规格\",\"aliases\":[\"规格\",\"基础规格\",\"CIS规格\",\"CIS基础规格\",\"Sensor规格\",\"Sensor基础规格\",\"传感器规格\",\"模组规格\",\"镜头规格\",\"马达规格\"]},{\"value\":\"供电拓扑\",\"aliases\":[\"供电拓扑\",\"供电架构\",\"电源拓扑\",\"电源架构\",\"power topology\",\"power tree\",\"BTB map\",\"btb map\"]},{\"value\":\"功耗\",\"aliases\":[\"功耗\",\"模式功耗\",\"平均功耗\",\"峰值功耗\",\"power\",\"power consumption\",\"mW\"]}]},{\"slot\":\"output_type\",\"desc\":\"希望输出的结果形式\",\"placeholder\":\"{{output_type}}\",\"values\":[{\"value\":\"对比报告\",\"aliases\":[\"对比报告\",\"报告\",\"分析报告\",\"生成报告\",\"规格对比报告\",\"CIS规格对比报告\"]},{\"value\":\"对比表\",\"aliases\":[\"对比表\",\"表格\",\"明细表\",\"对比明细\",\"结果表\"]},{\"value\":\"趋势分析\",\"aliases\":[\"趋势分析\",\"趋势\",\"演进\",\"变化趋势\",\"趋势报告\"]},{\"value\":\"Excel\",\"aliases\":[\"Excel\",\"excel\",\"xlsx\",\"导出Excel\",\"导出 excel\",\"Excel表\",\"Excel表格\"]}]}],\"template_selector\":{\"规格\":\"template_spec_compare\",\"供电拓扑\":\"template_power_topology_compare\",\"功耗\":\"template_power_compare\"}}'\n\ndef main(context_json: str, retrieval_result: list = None) -> dict:\n    def loads(x, default):\n        try: return json.loads(x) if x else default\n        except Exception: return default\n    ctx = loads(context_json, {})\n    card = ctx.get('pending_route_card')\n    confidence = 1.0 if card else 0.0\n    if not card and retrieval_result:\n        item = retrieval_result[0]\n        raw = item.get('content') or item.get('text') or item.get('segment',{}).get('content') or ''\n        m = re.search(r'\\{.*\\}', raw, re.S)\n        card = loads(m.group(0) if m else raw, None)\n        confidence = float(item.get('score') or item.get('metadata',{}).get('score') or 0.0)\n    if not card:\n        card = loads(FALLBACK_ROUTE_CARD_JSON, None)\n    ok = isinstance(card, dict) and card.get('route_id') == 'phone_module_jf_compare' and isinstance(card.get('required_slots'), list) and isinstance(card.get('template_selector'), dict)\n    if not ok:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"route_not_found\",\"message\":\"未识别到适合当前问题的手机模组竞分任务卡片\"}\n    else:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"ok\",\"route_id\":card['route_id'],\"route_card\":card,\"route_confidence\":confidence}\n    return {\"route_card_json\": json.dumps(out, ensure_ascii=False)}",
+            "source_code": "import json, re\nFALLBACK_ROUTE_CARD_JSON = '{\"route_id\":\"phone_module_jf_compare\",\"route_desc\":\"两个或多个手机的摄像头模组在指定范围、指定维度下做竞分对比，并生成指定形式的结果\",\"trigger_examples\":[\"请对比A手机与B手机的主摄CIS基础规格，包括靶面，像素大小，像素数量等\",\"请生成A手机与B手机的CIS规格对比报告\",\"请对比Iphone17与Xiaomi17的主摄CIS基础规格\",\"请对比A手机与B手机的主摄供电拓扑\",\"请对比A手机与B手机的主摄功耗\",\"请对比Iphone17、Xiaomi17、OPPO17的主摄规格，并输出对比表\"],\"required_slots\":[{\"slot\":\"target_objects\",\"desc\":\"参与对比的手机，至少2个\",\"min_items\":2,\"placeholder\":\"{{target_objects}}\",\"values\":[{\"value\":\"iphone17\",\"aliases\":[\"iphone17\",\"iPhone17\",\"iphone 17\",\"iPhone 17\",\"苹果17\",\"苹果 iPhone17\",\"苹果 iPhone 17\"]},{\"value\":\"xiaomi17\",\"aliases\":[\"xiaomi17\",\"Xiaomi17\",\"xiaomi 17\",\"Xiaomi 17\",\"小米17\",\"小米 17\"]},{\"value\":\"oppo17\",\"aliases\":[\"oppo17\",\"OPPO17\",\"oppo 17\",\"OPPO 17\",\"欧珀17\",\"欧珀 17\"]}]},{\"slot\":\"object_scope\",\"desc\":\"对比对象范围\",\"placeholder\":\"{{object_scope}}\",\"values\":[{\"value\":\"主摄\",\"aliases\":[\"主摄\",\"主摄像头\",\"主相机\",\"main camera\",\"main_camera\",\"main cam\"]},{\"value\":\"长焦\",\"aliases\":[\"长焦\",\"长焦镜头\",\"潜望长焦\",\"tele\",\"telephoto\",\"tele camera\",\"telephoto camera\"]},{\"value\":\"广角\",\"aliases\":[\"广角\",\"超广角\",\"广角镜头\",\"超广角镜头\",\"wide\",\"wide camera\",\"ultra wide\",\"ultra-wide\",\"ultrawide\"]}]},{\"slot\":\"analysis_dimension\",\"desc\":\"对比内容\",\"placeholder\":\"{{analysis_dimension}}\",\"values\":[{\"value\":\"规格\",\"aliases\":[\"规格\",\"基础规格\",\"CIS规格\",\"CIS基础规格\",\"Sensor规格\",\"Sensor基础规格\",\"传感器规格\",\"模组规格\",\"镜头规格\",\"马达规格\"]},{\"value\":\"供电拓扑\",\"aliases\":[\"供电拓扑\",\"供电架构\",\"电源拓扑\",\"电源架构\",\"power topology\",\"power tree\",\"BTB map\",\"btb map\"]},{\"value\":\"功耗\",\"aliases\":[\"功耗\",\"模式功耗\",\"平均功耗\",\"峰值功耗\",\"power\",\"power consumption\",\"mW\"]}]},{\"slot\":\"output_type\",\"desc\":\"希望输出的结果形式\",\"placeholder\":\"{{output_type}}\",\"values\":[{\"value\":\"对比报告\",\"aliases\":[\"对比报告\",\"报告\",\"分析报告\",\"生成报告\",\"规格对比报告\",\"CIS规格对比报告\"]},{\"value\":\"对比表\",\"aliases\":[\"对比表\",\"表格\",\"明细表\",\"对比明细\",\"结果表\"]},{\"value\":\"趋势分析\",\"aliases\":[\"趋势分析\",\"趋势\",\"演进\",\"变化趋势\",\"趋势报告\"]},{\"value\":\"Excel\",\"aliases\":[\"Excel\",\"excel\",\"xlsx\",\"导出Excel\",\"导出 excel\",\"Excel表\",\"Excel表格\"]}]}],\"template_selector\":{\"规格\":\"template_spec_compare\",\"供电拓扑\":\"template_power_topology_compare\",\"功耗\":\"template_power_compare\"}}'\n\ndef main(context_json: str, retrieval_result: list = None) -> dict:\n    def loads(x, default):\n        try: return json.loads(x) if x else default\n        except Exception: return default\n    ctx = loads(context_json, {})\n    card = ctx.get('pending_route_card')\n    confidence = 1.0 if card else 0.0\n    route_card_source = 'pending' if card else 'fallback'\n    if not card and retrieval_result:\n        item = retrieval_result[0]\n        raw = item.get('content') or item.get('text') or item.get('segment',{}).get('content') or ''\n        m = re.search(r'\\{.*\\}', raw, re.S)\n        card = loads(m.group(0) if m else raw, None)\n        confidence = float(item.get('score') or item.get('metadata',{}).get('score') or 0.0)\n        route_card_source = 'knowledge_retrieval'\n    if not card:\n        card = loads(FALLBACK_ROUTE_CARD_JSON, None)\n        route_card_source = 'fallback'\n    ok = isinstance(card, dict) and card.get('route_id') == 'phone_module_jf_compare' and isinstance(card.get('required_slots'), list) and isinstance(card.get('template_selector'), dict)\n    if not ok:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"route_not_found\",\"message\":\"未识别到适合当前问题的手机模组竞分任务卡片\"}\n    else:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"ok\",\"route_id\":card['route_id'],\"route_card\":card,\"route_confidence\":confidence,\"route_card_source\":route_card_source}\n    return {\"route_card_json\": json.dumps(out, ensure_ascii=False)}",
             "outputs": {
               "route_card_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -171,7 +208,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 4
         },
         {
           "id": "parse",
@@ -188,7 +228,10 @@
               "placeholder_values_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -199,7 +242,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 5
         },
         {
           "id": "validate",
@@ -216,7 +262,10 @@
               "selected_template_id": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -227,7 +276,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 6
         },
         {
           "id": "ifslot",
@@ -250,7 +302,9 @@
                 ],
                 "logical_operator": "or"
               }
-            ]
+            ],
+            "desc": "",
+            "selected": false
           },
           "position": {
             "x": 0,
@@ -261,7 +315,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 7
         },
         {
           "id": "fill",
@@ -290,7 +347,10 @@
               "final_answer": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -301,7 +361,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 8
         },
         {
           "id": "ansslot",
@@ -309,7 +372,10 @@
           "data": {
             "title": "结束_返回填槽请求",
             "type": "answer",
-            "answer": "{{#fill.final_answer#}}"
+            "answer": "{{#fill.final_answer#}}",
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -320,7 +386,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 9
         },
         {
           "id": "plan",
@@ -334,7 +403,10 @@
               "query_plan_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -345,7 +417,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 10
         },
         {
           "id": "mongo",
@@ -359,7 +434,10 @@
               "mongo_request_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -370,7 +448,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 11
         },
         {
           "id": "http",
@@ -383,6 +464,19 @@
             "body": {
               "type": "json",
               "data": "{{#mongo.mongo_request_json#}}"
+            },
+            "desc": "",
+            "selected": false,
+            "headers": "",
+            "params": "",
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
             }
           },
           "position": {
@@ -394,7 +488,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 12
         },
         {
           "id": "norm",
@@ -408,7 +505,10 @@
               "normalized_query_result_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -419,7 +519,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 13
         },
         {
           "id": "analysis",
@@ -433,7 +536,10 @@
               "analysis_result_json": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -444,7 +550,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 14
         },
         {
           "id": "ifreport",
@@ -467,7 +576,9 @@
                 ],
                 "logical_operator": "and"
               }
-            ]
+            ],
+            "desc": "",
+            "selected": false
           },
           "position": {
             "x": 0,
@@ -478,7 +589,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 15
         },
         {
           "id": "llmfull",
@@ -489,7 +603,8 @@
             "model": {
               "provider": "openai",
               "name": "gpt-4o",
-              "mode": "chat"
+              "mode": "chat",
+              "completion_params": {}
             },
             "prompt_template": [
               {
@@ -500,7 +615,18 @@
                 "role": "user",
                 "text": "analysis_result_json:\n{{#analysis.analysis_result_json#}}"
               }
-            ]
+            ],
+            "desc": "",
+            "selected": false,
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            },
+            "memory": null,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -511,7 +637,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 16
         },
         {
           "id": "llmlocal",
@@ -522,7 +651,8 @@
             "model": {
               "provider": "ollama",
               "name": "qwen2.5:7b",
-              "mode": "chat"
+              "mode": "chat",
+              "completion_params": {}
             },
             "prompt_template": [
               {
@@ -533,7 +663,18 @@
                 "role": "user",
                 "text": "{{#analysis.analysis_result_json#}}"
               }
-            ]
+            ],
+            "desc": "",
+            "selected": false,
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            },
+            "memory": null,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -544,7 +685,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 17
         },
         {
           "id": "final",
@@ -553,12 +697,15 @@
             "title": "代码执行_合并最终回答",
             "type": "code",
             "code_language": "python3",
-            "source_code": "import json\n\ndef main(analysis_result_json: str = '', llm_report_markdown: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=json.loads(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=json.loads(analysis_result_json or '{}'); status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        ans=llm_report_markdown or ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type')}}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}",
+            "source_code": "import json\n\ndef main(analysis_result_json: str = '', llm_report_markdown: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=json.loads(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=json.loads(analysis_result_json or '{}'); status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        ans=llm_report_markdown or ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type')},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "final_answer": {
                 "type": "string"
               }
-            }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -569,7 +716,10 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 18
         },
         {
           "id": "ans",
@@ -577,7 +727,10 @@
           "data": {
             "title": "结束_返回最终回答",
             "type": "answer",
-            "answer": "{{#final.final_answer#}}"
+            "answer": "{{#final.final_answer#}}",
+            "desc": "",
+            "selected": false,
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -588,7 +741,63 @@
             "y": 0
           },
           "width": 244,
-          "height": 54
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 19
+        },
+        {
+          "id": "ifllm",
+          "type": "custom",
+          "data": {
+            "title": "IF_REPORT_LLM_MODE选择",
+            "type": "if-else",
+            "desc": "REPORT_LLM_MODE=full走满血版；local走本地版",
+            "selected": false,
+            "cases": [
+              {
+                "id": "full",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "env",
+                      "REPORT_LLM_MODE"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "full"
+                  }
+                ],
+                "logical_operator": "and"
+              },
+              {
+                "id": "local",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "env",
+                      "REPORT_LLM_MODE"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "local"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ]
+          },
+          "position": {
+            "x": 3640,
+            "y": 120
+          },
+          "positionAbsolute": {
+            "x": 3640,
+            "y": 120
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 99
         }
       ],
       "edges": [
@@ -597,200 +806,294 @@
           "source": "start",
           "target": "ctx",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "start",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e1",
           "source": "ctx",
           "target": "kr",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "knowledge-retrieval",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e2",
           "source": "kr",
           "target": "route",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "knowledge-retrieval",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e3",
           "source": "route",
           "target": "parse",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e4",
           "source": "parse",
           "target": "validate",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e5",
           "source": "validate",
           "target": "ifslot",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "if-else",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e6",
           "source": "ifslot",
           "target": "fill",
           "type": "custom",
+          "sourceHandle": "need",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "if-else",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e7",
           "source": "fill",
           "target": "ansslot",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "answer",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e8",
           "source": "ifslot",
           "target": "plan",
           "type": "custom",
+          "sourceHandle": "false",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "if-else",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e9",
           "source": "plan",
           "target": "mongo",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e10",
           "source": "mongo",
           "target": "http",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "http-request",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e11",
           "source": "http",
           "target": "norm",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "http-request",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e12",
           "source": "norm",
           "target": "analysis",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e13",
           "source": "analysis",
           "target": "ifreport",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "code",
+            "targetType": "if-else",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e14",
           "source": "ifreport",
-          "target": "llmfull",
+          "target": "ifllm",
           "type": "custom",
+          "sourceHandle": "report",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "if-else",
+            "targetType": "",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e15",
-          "source": "llmfull",
-          "target": "final",
+          "source": "ifllm",
+          "target": "llmfull",
           "type": "custom",
+          "sourceHandle": "full",
+          "targetHandle": "target",
           "data": {
             "sourceType": "",
-            "targetType": ""
-          }
+            "targetType": "llm",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e16",
-          "source": "ifreport",
-          "target": "final",
+          "source": "ifllm",
+          "target": "llmlocal",
           "type": "custom",
+          "sourceHandle": "local",
+          "targetHandle": "target",
           "data": {
             "sourceType": "",
-            "targetType": ""
-          }
+            "targetType": "llm",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e17",
-          "source": "final",
-          "target": "ans",
+          "source": "ifreport",
+          "target": "final",
           "type": "custom",
+          "sourceHandle": "false",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "if-else",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e18",
-          "source": "ifreport",
-          "target": "llmlocal",
+          "source": "llmfull",
+          "target": "final",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "llm",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
         },
         {
           "id": "e19",
           "source": "llmlocal",
           "target": "final",
           "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
           "data": {
-            "sourceType": "",
-            "targetType": ""
-          }
+            "sourceType": "llm",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e20",
+          "source": "final",
+          "target": "ans",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "answer",
+            "isInLoop": false
+          },
+          "zIndex": 0
         }
       ]
     }
