@@ -63,13 +63,41 @@ def main() -> int:
             fail(f"Overlapping node position: {xy}")
         seen_positions.add(xy)
 
+
+    ifslot = titles.get("IF_是否缺槽") or fail("IF_是否缺槽 node missing")
+    if ifslot.get("data", {}).get("type") != "if-else":
+        fail("IF_是否缺槽 must be an if-else node")
+    cases = ifslot.get("data", {}).get("cases", [])
+    case_ids = {case.get("id") for case in cases}
+    if not {"need_slot", "success"}.issubset(case_ids):
+        fail("IF_是否缺槽 cases must include need_slot and success")
+    outgoing = [edge for edge in edges if edge.get("source") == ifslot.get("id")]
+    if len(outgoing) < 2:
+        fail("IF_是否缺槽 must have at least two outgoing edges")
+    outgoing_by_target = {edge.get("target"): edge for edge in outgoing}
+    fill = titles.get("代码执行_生成填槽请求") or fail("代码执行_生成填槽请求 node missing")
+    plan = titles.get("代码执行_构建QueryPlan") or fail("代码执行_构建QueryPlan node missing")
+    ansslot = titles.get("结束_返回填槽请求") or fail("结束_返回填槽请求 node missing")
+    fill_edge = outgoing_by_target.get(fill.get("id"))
+    plan_edge = outgoing_by_target.get(plan.get("id"))
+    if not fill_edge:
+        fail("IF_是否缺槽 need_slot branch must connect to 代码执行_生成填槽请求")
+    if fill_edge.get("sourceHandle") != "need_slot" or fill_edge.get("targetHandle") != "target":
+        fail("IF_是否缺槽 -> 代码执行_生成填槽请求 must use sourceHandle=need_slot and targetHandle=target")
+    if not plan_edge:
+        fail("IF_是否缺槽 success branch must connect to 代码执行_构建QueryPlan")
+    if plan_edge.get("sourceHandle") != "success" or plan_edge.get("targetHandle") != "target":
+        fail("IF_是否缺槽 -> 代码执行_构建QueryPlan must use sourceHandle=success and targetHandle=target")
+    if not any(edge.get("source") == fill.get("id") and edge.get("target") == ansslot.get("id") for edge in edges):
+        fail("代码执行_生成填槽请求 must connect to 结束_返回填槽请求")
+
     dataset_ids = []
     for node in nodes:
         dataset_ids.extend(node.get("data", {}).get("dataset_ids", []) or [])
     if DATASET_ID not in dataset_ids:
         fail(f"dataset_ids must include {DATASET_ID}")
 
-    print(f"OK: {len(nodes)} nodes, {len(edges)} edges, code/http/layout checks passed")
+    print(f"OK: {len(nodes)} nodes, {len(edges)} edges, code/http/layout/IF branch checks passed")
     return 0
 
 
