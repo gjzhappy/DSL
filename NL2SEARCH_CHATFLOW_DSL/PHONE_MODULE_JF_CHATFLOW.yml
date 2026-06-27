@@ -293,7 +293,7 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "need",
+                "id": "need_slot",
                 "conditions": [
                   {
                     "variable_selector": [
@@ -302,6 +302,20 @@
                     ],
                     "comparison_operator": "contains",
                     "value": "\"ready_to_query\": false"
+                  }
+                ],
+                "logical_operator": "or"
+              },
+              {
+                "id": "success",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "validate",
+                      "slot_validate_result_json"
+                    ],
+                    "comparison_operator": "contains",
+                    "value": "\"ready_to_query\": true"
                   }
                 ],
                 "logical_operator": "or"
@@ -903,7 +917,7 @@
           "source": "ifslot",
           "target": "fill",
           "type": "custom",
-          "sourceHandle": "need",
+          "sourceHandle": "need_slot",
           "targetHandle": "target",
           "data": {
             "sourceType": "if-else",
@@ -931,7 +945,7 @@
           "source": "ifslot",
           "target": "plan",
           "type": "custom",
-          "sourceHandle": "false",
+          "sourceHandle": "success",
           "targetHandle": "target",
           "data": {
             "sourceType": "if-else",
