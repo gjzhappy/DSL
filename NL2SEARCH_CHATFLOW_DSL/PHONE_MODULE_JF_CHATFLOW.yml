@@ -95,11 +95,11 @@
           },
           "position": {
             "x": 80,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 80,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -127,11 +127,11 @@
           },
           "position": {
             "x": 360,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 360,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -171,11 +171,11 @@
           },
           "position": {
             "x": 640,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 640,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -203,11 +203,11 @@
           },
           "position": {
             "x": 920,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 920,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -238,11 +238,11 @@
           },
           "position": {
             "x": 1200,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 1200,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -273,11 +273,11 @@
           },
           "position": {
             "x": 1480,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 1480,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -326,11 +326,11 @@
           },
           "position": {
             "x": 1760,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 1760,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -372,12 +372,12 @@
             "code": "import json\n\ndef main(route_card_json: str, slot_validate_result_json: str) -> dict:\n    rc=json.loads(route_card_json or '{}'); sv=json.loads(slot_validate_result_json or '{}')\n    missing=[{'slot':m['slot'],'label':m.get('desc',m['slot']),'options':m.get('allowed_values',[]),'placeholder':m['placeholder']} for m in sv.get('missing_slots',[])]\n    out={\"contract_version\":\"phone_module_jf_slot_fill_request_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"route_id\":rc.get('route_id','phone_module_jf_compare'),\"message\":\"还需要补充以下信息后才能查询：\",\"missing_slots\":missing,\"known_values\":sv.get('placeholder_values',{})}\n    return {\"slot_fill_request_json\":json.dumps(out,ensure_ascii=False),\"pending_route_id\":rc.get('route_id',''),\"pending_route_card_json\":json.dumps(rc.get('route_card',{}),ensure_ascii=False),\"partial_placeholder_values_json\":json.dumps(sv.get('placeholder_values',{}),ensure_ascii=False),\"pending_missing_slots_json\":json.dumps(missing,ensure_ascii=False),\"final_answer\":json.dumps(out,ensure_ascii=False)}"
           },
           "position": {
-            "x": 1760,
-            "y": 420
+            "x": 2040,
+            "y": 40
           },
           "positionAbsolute": {
-            "x": 1760,
-            "y": 420
+            "x": 2040,
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -397,12 +397,12 @@
             "variables": []
           },
           "position": {
-            "x": 1760,
-            "y": 640
+            "x": 2320,
+            "y": 40
           },
           "positionAbsolute": {
-            "x": 1760,
-            "y": 640
+            "x": 2320,
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -430,11 +430,11 @@
           },
           "position": {
             "x": 2040,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2040,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -465,11 +465,11 @@
           },
           "position": {
             "x": 2320,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2320,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -505,11 +505,11 @@
           },
           "position": {
             "x": 2600,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2600,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -537,11 +537,11 @@
           },
           "position": {
             "x": 2880,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2880,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -569,11 +569,11 @@
           },
           "position": {
             "x": 3160,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 3160,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -608,11 +608,11 @@
           },
           "position": {
             "x": 3440,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 3440,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -656,11 +656,11 @@
           },
           "position": {
             "x": 5400,
-            "y": 380
+            "y": 180
           },
           "positionAbsolute": {
             "x": 5400,
-            "y": 380
+            "y": 180
           },
           "width": 244,
           "height": 54,
@@ -688,11 +688,11 @@
           },
           "position": {
             "x": 6520,
-            "y": 220
+            "y": 300
           },
           "positionAbsolute": {
             "x": 6520,
-            "y": 220
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -713,11 +713,11 @@
           },
           "position": {
             "x": 6800,
-            "y": 220
+            "y": 300
           },
           "positionAbsolute": {
             "x": 6800,
-            "y": 220
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -752,11 +752,11 @@
           },
           "position": {
             "x": 4000,
-            "y": 200
+            "y": 40
           },
           "positionAbsolute": {
             "x": 4000,
-            "y": 200
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -784,11 +784,11 @@
           },
           "position": {
             "x": 3720,
-            "y": 200
+            "y": 40
           },
           "positionAbsolute": {
             "x": 3720,
-            "y": 200
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -819,11 +819,11 @@
           },
           "position": {
             "x": 4280,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 4280,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -859,11 +859,11 @@
           },
           "position": {
             "x": 4560,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 4560,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -897,11 +897,11 @@
           },
           "position": {
             "x": 4840,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 4840,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -936,11 +936,11 @@
           },
           "position": {
             "x": 5120,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 5120,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -971,11 +971,11 @@
           },
           "position": {
             "x": 5400,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 5400,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -1011,11 +1011,11 @@
           },
           "position": {
             "x": 5680,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 5680,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -1049,11 +1049,11 @@
           },
           "position": {
             "x": 5960,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 5960,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -1088,11 +1088,11 @@
           },
           "position": {
             "x": 6240,
-            "y": 80
+            "y": 40
           },
           "positionAbsolute": {
             "x": 6240,
-            "y": 80
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -1128,12 +1128,12 @@
             "code": "import json\n\ndef main(llm_report_markdown: str = '', full_llm_fallback_reason: str = '') -> dict:\n    reason=full_llm_fallback_reason or 'full_llm_disabled'\n    out={\"contract_version\":\"phone_module_jf_local_llm_result_v1\",\"status\":\"ok\",\"llm_report_markdown\":llm_report_markdown or '',\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}\n    return {\"local_llm_result_json\":json.dumps(out,ensure_ascii=False),\"local_llm_report_markdown\":out[\"llm_report_markdown\"],\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}"
           },
           "position": {
-            "x": 5680,
-            "y": 380
+            "x": 5960,
+            "y": 180
           },
           "positionAbsolute": {
-            "x": 5680,
-            "y": 380
+            "x": 5960,
+            "y": 180
           },
           "width": 244,
           "height": 54,
@@ -1335,20 +1335,6 @@
           "data": {
             "sourceType": "code",
             "targetType": "if-else",
-            "isInLoop": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e20",
-          "source": "final",
-          "target": "ans",
-          "type": "custom",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "sourceType": "code",
-            "targetType": "answer",
             "isInLoop": false
           },
           "zIndex": 0
@@ -1587,6 +1573,20 @@
           "data": {
             "sourceType": "code",
             "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e20",
+          "source": "final",
+          "target": "ans",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "answer",
             "isInLoop": false
           },
           "zIndex": 0

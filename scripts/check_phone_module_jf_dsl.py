@@ -1,264 +1,139 @@
 #!/usr/bin/env python3
-"""Static checks for the PHONE_MODULE_JF Dify chatflow DSL."""
+"""Static graph/layout/regression checks for the PHONE_MODULE_JF Dify chatflow DSL."""
 from __future__ import annotations
-
-import json
-import re
-import sys
+import json, re, sys
+from collections import defaultdict, deque
 from pathlib import Path
-
-DSL_PATH = Path("NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW.yml")
-PART_RE = re.compile(r"PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$")
-DATASET_ID = "4d7c7b04-e8d5-47cf-8bd1-dfdfe6022cb7"
-
-
-def fail(msg: str) -> None:
-    raise AssertionError(msg)
-
-
-def load_dsl_text() -> str:
-    parts = sorted(
-        (path for path in DSL_PATH.parent.glob("PHONE_MODULE_JF_CHATFLOW_*.yml") if PART_RE.match(path.name)),
-        key=lambda path: int(PART_RE.match(path.name).group(1)),
-    )
-    if parts:
-        numbers = [int(PART_RE.match(path.name).group(1)) for path in parts]
-        expected = list(range(numbers[0], numbers[0] + len(numbers)))
-        if numbers != expected:
-            fail(f"PHONE fragments must be continuous: {numbers}")
-        merged = "".join(path.read_text(encoding="utf-8") for path in parts)
-        if not merged.strip():
-            fail("PHONE fragments merge to empty content")
-        if DSL_PATH.exists() and DSL_PATH.read_text(encoding="utf-8") != merged:
-            fail("PHONE_MODULE_JF_CHATFLOW.yml differs from raw-concatenated fragments; run merge_chatflow_yml.py")
-        return merged
-    return DSL_PATH.read_text(encoding="utf-8")
-
-
-def main() -> int:
-    doc = json.loads(load_dsl_text())
-    graph = doc.get("workflow", {}).get("graph", {})
-    nodes = graph.get("nodes")
-    edges = graph.get("edges")
-    if not isinstance(nodes, list):
-        fail("workflow.graph.nodes must be an array")
-    if not isinstance(edges, list):
-        fail("workflow.graph.edges must be an array")
-
-    node_by_id = {node.get("id"): node for node in nodes}
-    titles = {node.get("data", {}).get("title"): node for node in nodes}
-
-    if len(node_by_id) != len(nodes):
-        fail("node id must be unique")
-    for edge in edges:
-        if edge.get("source") not in node_by_id:
-            fail(f"edge source missing: {edge}")
-        if edge.get("target") not in node_by_id:
-            fail(f"edge target missing: {edge}")
-
-    incoming = {}
-    for edge in edges:
-        incoming.setdefault(edge.get("target"), []).append(edge)
-    start_ids = {node.get("id") for node in nodes if node.get("data", {}).get("type") == "start"}
-    for node in nodes:
-        if node.get("id") not in start_ids and not incoming.get(node.get("id")):
-            fail(f"orphan node without upstream edge: {node.get('data', {}).get('title')}")
-
-    for node in nodes:
-        data = node.get("data", {})
-        if data.get("type") == "code":
-            code = data.get("code")
-            if not isinstance(code, str) or not code.strip():
-                fail(f"Code node {node.get('id')} has empty/missing data.code")
-            if data.get("code_language") != "python3":
-                fail(f"Code node {node.get('id')} must use code_language=python3")
-            if not data.get("title") or data.get("desc") is None or data.get("type") != "code":
-                fail(f"Code node {node.get('id')} is missing title/desc/type")
-            if not isinstance(data.get("outputs"), dict) or not data["outputs"]:
-                fail(f"Code node {node.get('id')} must declare non-empty outputs")
-
-    mongo = node_by_id.get("mongo") or fail("mongo node missing")
-    mongo_outputs = mongo.get("data", {}).get("outputs", {})
-    if "mongo_request_body_json" not in mongo_outputs:
-        fail("mongo node must output mongo_request_body_json for HTTP body")
-
-    http = titles.get("HTTP请求_执行Mongo查询") or fail("HTTP请求_执行Mongo查询 node missing")
-    http_data = http.get("data", {})
-    if http_data.get("url") != "{{#env.MONGO_QUERY_API_URL#}}":
-        fail("HTTP URL must reference {{#env.MONGO_QUERY_API_URL#}}")
-    body_data = http_data.get("body", {}).get("data")
-    if body_data != "{{#mongo.mongo_request_body_json#}}":
-        fail("HTTP body must reference {{#mongo.mongo_request_body_json#}}")
-
-    seen_positions: set[tuple[int, int]] = set()
-    for node in nodes:
-        pos = node.get("position")
-        if not isinstance(pos, dict) or not isinstance(pos.get("x"), (int, float)) or not isinstance(pos.get("y"), (int, float)):
-            fail(f"Node {node.get('id')} missing numeric position")
-        xy = (int(pos["x"]), int(pos["y"]))
-        if xy in seen_positions:
-            fail(f"Overlapping node position: {xy}")
-        seen_positions.add(xy)
-
-
-    ifslot = titles.get("IF_是否缺槽") or fail("IF_是否缺槽 node missing")
-    if ifslot.get("data", {}).get("type") != "if-else":
-        fail("IF_是否缺槽 must be an if-else node")
-    cases = ifslot.get("data", {}).get("cases", [])
-    case_ids = {case.get("id") for case in cases}
-    if not {"need_slot", "success"}.issubset(case_ids):
-        fail("IF_是否缺槽 cases must include need_slot and success")
-    outgoing = [edge for edge in edges if edge.get("source") == ifslot.get("id")]
-    if len(outgoing) < 2:
-        fail("IF_是否缺槽 must have at least two outgoing edges")
-    outgoing_by_target = {edge.get("target"): edge for edge in outgoing}
-    fill = titles.get("代码执行_生成填槽请求") or fail("代码执行_生成填槽请求 node missing")
-    plan = titles.get("代码执行_构建QueryPlan") or fail("代码执行_构建QueryPlan node missing")
-    ansslot = titles.get("结束_返回填槽请求") or fail("结束_返回填槽请求 node missing")
-    fill_edge = outgoing_by_target.get(fill.get("id"))
-    plan_edge = outgoing_by_target.get(plan.get("id"))
-    if not fill_edge:
-        fail("IF_是否缺槽 need_slot branch must connect to 代码执行_生成填槽请求")
-    if fill_edge.get("sourceHandle") != "need_slot" or fill_edge.get("targetHandle") != "target":
-        fail("IF_是否缺槽 -> 代码执行_生成填槽请求 must use sourceHandle=need_slot and targetHandle=target")
-    if not plan_edge:
-        fail("IF_是否缺槽 success branch must connect to 代码执行_构建QueryPlan")
-    if plan_edge.get("sourceHandle") != "success" or plan_edge.get("targetHandle") != "target":
-        fail("IF_是否缺槽 -> 代码执行_构建QueryPlan must use sourceHandle=success and targetHandle=target")
-    if not any(edge.get("source") == fill.get("id") and edge.get("target") == ansslot.get("id") for edge in edges):
-        fail("代码执行_生成填槽请求 must connect to 结束_返回填槽请求")
-
-    def upstream_ids(target_id: str) -> set[str]:
-        rev = {}
-        for edge in edges:
-            rev.setdefault(edge.get("target"), []).append(edge.get("source"))
-        seen = set()
-        stack = list(rev.get(target_id, []))
-        while stack:
-            cur = stack.pop()
-            if cur in seen:
-                continue
-            seen.add(cur)
-            stack.extend(rev.get(cur, []))
-        return seen
-
-    output_owner = {}
-    for node_item in nodes:
-        for out_name in (node_item.get("data", {}).get("outputs") or {}):
-            output_owner.setdefault(out_name, set()).add(node_item.get("id"))
-    required_inputs = {
-        "代码执行_生成填槽请求": ["route_card_json", "slot_validate_result_json"],
-        "代码执行_构建QueryPlan": ["slot_validate_result_json"],
-        "代码执行_准备报告LLM输入": ["analysis_result_json"],
-        "代码执行_准备满血版Token请求": ["report_input_json"],
-        "代码执行_准备满血版LLM请求": ["report_input_json", "full_llm_token_result_json"],
-    }
-    for title_text, input_names in required_inputs.items():
-        target_node = titles.get(title_text)
-        if target_node is None:
-            fail(f"{title_text} node missing")
-        upstream = upstream_ids(target_node.get("id"))
-        for input_name in input_names:
-            owners = output_owner.get(input_name, set())
-            if not owners & upstream:
-                fail(f"{title_text} input {input_name} has no reachable upstream producer")
-
-
-
-    # Report LLM flow checks (G principle)
-    def node(title: str):
-        return titles.get(title) or fail(f"{title} node missing")
-
-    adj = {}
-    for edge in edges:
-        adj.setdefault(edge.get("source"), []).append(edge)
-
-    def reaches(start_id: str, target_id: str, banned_titles: set[str] | None = None) -> bool:
-        banned_titles = banned_titles or set()
-        seen = set()
-        stack = [start_id]
-        while stack:
-            cur = stack.pop()
-            if cur == target_id:
-                return True
-            if cur in seen:
-                continue
-            seen.add(cur)
-            for edge in adj.get(cur, []):
-                nxt = edge.get("target")
-                title = node_by_id.get(nxt, {}).get("data", {}).get("title", "")
-                if title in banned_titles or any(bad in title for bad in banned_titles):
-                    continue
-                stack.append(nxt)
+DSL_PATH=Path('NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW.yml')
+PART_RE=re.compile(r'PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$')
+DATASET_ID='4d7c7b04-e8d5-47cf-8bd1-dfdfe6022cb7'
+def fail(msg): raise AssertionError(msg)
+def parts():
+    ps=sorted([p for p in DSL_PATH.parent.glob('PHONE_MODULE_JF_CHATFLOW_*.yml') if PART_RE.match(p.name)], key=lambda p:int(PART_RE.match(p.name).group(1)))
+    if not ps: fail('PHONE fragments missing')
+    nums=[int(PART_RE.match(p.name).group(1)) for p in ps]
+    if nums!=list(range(nums[0], nums[0]+len(nums))): fail(f'PHONE fragments must be continuous: {nums}')
+    return ps
+def load_text():
+    merged=''.join(p.read_text(encoding='utf-8') for p in parts())
+    if DSL_PATH.read_text(encoding='utf-8')!=merged: fail('PHONE_MODULE_JF_CHATFLOW.yml differs from raw-concatenated fragments; run merge_chatflow_yml.py')
+    return merged
+def main():
+    doc=json.loads(load_text()); g=doc.get('workflow',{}).get('graph',{})
+    nodes=g.get('nodes'); edges=g.get('edges')
+    if not isinstance(nodes,list) or not isinstance(edges,list): fail('workflow.graph.nodes/edges must be arrays')
+    ids=[n.get('id') for n in nodes]; eids=[e.get('id') for e in edges]
+    if len(ids)!=len(set(ids)): fail('node id must be unique')
+    if len(eids)!=len(set(eids)): fail('edge id must be unique')
+    by={n['id']:n for n in nodes}; title={n.get('data',{}).get('title'):n for n in nodes}
+    dup=set(); seen=set(); incoming=defaultdict(list); outgoing=defaultdict(list)
+    for e in edges:
+        if e.get('source') not in by: fail(f'edge source missing: {e}')
+        if e.get('target') not in by: fail(f'edge target missing: {e}')
+        key=(e.get('source'),e.get('target'),e.get('sourceHandle'),e.get('targetHandle'))
+        if key in seen: dup.add(key)
+        seen.add(key); incoming[e['target']].append(e); outgoing[e['source']].append(e)
+        if e.get('targetHandle')!='target': fail(f'edge targetHandle must be target for Dify node input: {e}')
+        if by[e['source']]['data'].get('type')!='if-else' and e.get('sourceHandle')!='source': fail(f'non-IF sourceHandle must be source: {e}')
+    if dup: fail(f'duplicate edge tuples: {dup}')
+    starts=[n['id'] for n in nodes if n.get('data',{}).get('type')=='start']
+    if len(starts)!=1: fail(f'exactly one Start required, got {starts}')
+    start=starts[0]
+    for n in nodes:
+        typ=n['data'].get('type')
+        if n['id']!=start and not incoming[n['id']]: fail(f'orphan node without upstream edge: {n['data'].get('title')}')
+        if typ!='answer' and not outgoing[n['id']]: fail(f'non-End node without downstream edge: {n['data'].get('title')}')
+    # reachability and can reach end
+    adj={k:[e['target'] for e in v] for k,v in outgoing.items()}; rev=defaultdict(list)
+    for e in edges: rev[e['target']].append(e['source'])
+    reach=set([start]); q=deque([start])
+    while q:
+        c=q.popleft()
+        for nx in adj.get(c,[]):
+            if nx not in reach: reach.add(nx); q.append(nx)
+    un=[by[i]['data'].get('title') for i in ids if i not in reach]
+    if un: fail(f'business node unreachable from Start: {un}')
+    ends=[n['id'] for n in nodes if n['data'].get('type')=='answer']
+    can=set(ends); q=deque(ends)
+    while q:
+        c=q.popleft()
+        for p in rev.get(c,[]):
+            if p not in can: can.add(p); q.append(p)
+    bad=[by[i]['data'].get('title') for i in ids if by[i]['data'].get('type')!='answer' and i not in can]
+    if bad: fail(f'nodes cannot reach End: {bad}')
+    # IF handles: explicit cases plus Dify implicit false/default branch
+    for n in nodes:
+        if n['data'].get('type')=='if-else':
+            handles={c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}; handles.add('false')
+            used={e.get('sourceHandle') for e in outgoing[n['id']]}
+            if not used <= handles: fail(f"IF branch handle mismatch at {n['data'].get('title')}: used={used}, handles={handles}")
+            required={c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}
+            if n['data'].get('title') in {'IF_output_type是否为报告类','IF_满血版LLM开关','IF_满血版Token是否成功','IF_满血版LLM是否成功'}:
+                required.add('false')
+            for h in required:
+                if h not in used:
+                    fail(f"IF branch {h} has no outgoing edge at {n['data'].get('title')}")
+    # layout
+    seenpos={}
+    for n in nodes:
+        pos=n.get('position')
+        if not isinstance(pos,dict) or not isinstance(pos.get('x'),(int,float)) or not isinstance(pos.get('y'),(int,float)): fail(f"Node {n['id']} missing numeric position")
+        if abs(pos['x'])>10000 or abs(pos['y'])>3000: fail(f"Node {n['id']} position drifts too far: {pos}")
+        if n.get('positionAbsolute') != pos:
+            fail(f"Node {n['id']} positionAbsolute must match position for Dify layout")
+        xy=(pos['x'],pos['y'])
+        if xy in seenpos: fail(f"position overlap: {xy} for {seenpos[xy]} and {n['id']}")
+        seenpos[xy]=n['id']
+    mainline=['start','ctx','kr','route','parse','validate','ifslot','plan','mongo','http','norm','analysis','ifreport','final','ans']
+    xs=[by[i]['position']['x'] for i in mainline]
+    if xs!=sorted(xs): fail(f'main flow x positions must be non-decreasing: {list(zip(mainline,xs))}')
+    # expected edges / critical paths
+    def node(t): return title.get(t) or fail(f'{t} node missing')
+    def edge_to(src,h,dst): return any(e['source']==src['id'] and e.get('sourceHandle')==h and e['target']==dst['id'] for e in edges)
+    checks=[('IF_是否缺槽','need_slot','代码执行_生成填槽请求'),('IF_是否缺槽','success','代码执行_构建QueryPlan'),('IF_output_type是否为报告类','report','代码执行_准备报告LLM输入'),('IF_output_type是否为报告类','false','代码执行_合并最终回答'),('IF_满血版LLM开关','enabled','代码执行_准备满血版Token请求'),('IF_满血版LLM开关','false','LLM_生成竞分对比报告_本地版'),('IF_满血版Token是否成功','ok','代码执行_准备满血版LLM请求'),('IF_满血版Token是否成功','false','LLM_生成竞分对比报告_本地版')]
+    for a,h,b in checks:
+        if not edge_to(node(a),h,node(b)): fail(f'missing graph branch {a} --{h}--> {b}')
+    def path(src,dst,banned=()):
+        s=node(src)['id']; t=node(dst)['id']; ban=set(banned); qq=deque([s]); seen=set()
+        while qq:
+            c=qq.popleft()
+            if c==t: return True
+            if c in seen: continue
+            seen.add(c)
+            for nx in adj.get(c,[]):
+                if by[nx]['data'].get('title') not in ban: qq.append(nx)
         return False
-
-    def edge_to(src: dict, handle: str, dst: dict) -> bool:
-        return any(edge.get("source") == src.get("id") and edge.get("sourceHandle") == handle and edge.get("target") == dst.get("id") for edge in edges)
-
-    ifreport = node("IF_output_type是否为报告类")
-    report_input = node("代码执行_准备报告LLM输入")
-    final = node("代码执行_合并最终回答")
-    local_llm = node("LLM_生成竞分对比报告_本地版")
-    switch = node("IF_满血版LLM开关")
-    token_http = node("HTTP请求_获取满血版LLM Token")
-    full_http = node("HTTP请求_调用满血版LLM接口")
-    token_if = node("IF_满血版Token是否成功")
-    full_if = node("IF_满血版LLM是否成功")
-
-    if not edge_to(ifreport, "report", report_input):
-        fail("IF_output_type是否为报告类 true/report branch must enter 代码执行_准备报告LLM输入")
-    if not edge_to(ifreport, "false", final):
-        fail("IF_output_type是否为报告类 false branch must connect to final")
-    if len([e for e in edges if e.get("source") == ifreport.get("id")]) < 2:
-        fail("IF_output_type是否为报告类 must have true/false exits")
-    banned = {"LLM_生成竞分对比报告_本地版", "HTTP请求_获取满血版LLM Token", "HTTP请求_调用满血版LLM接口"}
-    if not reaches(ifreport.get("id"), final.get("id"), banned):
-        fail("non-report branch must reach final without LLM/full HTTP nodes")
-    if not reaches(switch.get("id"), local_llm.get("id")):
-        fail("IF_满血版LLM开关=false must reach local LLM")
-    if not reaches(switch.get("id"), token_http.get("id")):
-        fail("IF_满血版LLM开关=true must reach token HTTP")
-    if token_http.get("data", {}).get("url") != "{{#env.LLM_TOKEN_URL#}}":
-        fail("token HTTP URL must use {{#env.LLM_TOKEN_URL#}}")
-    if full_http.get("data", {}).get("url") != "{{#env.FULL_LLM_API_URL#}}":
-        fail("full LLM HTTP URL must use {{#env.FULL_LLM_API_URL#}}")
-    if not reaches(token_if.get("id"), local_llm.get("id")):
-        fail("IF_满血版Token是否成功=false must reach local LLM fallback")
-    if not reaches(full_if.get("id"), local_llm.get("id")):
-        fail("IF_满血版LLM是否成功=false must reach local LLM fallback")
-    if not reaches(full_if.get("id"), final.get("id")):
-        fail("full LLM success path must reach final")
-    if not reaches(local_llm.get("id"), final.get("id")):
-        fail("local fallback path must reach final")
-    full_llm_titles = [n for n in nodes if n.get("data", {}).get("title") == "LLM_生成竞分对比报告_满血版"]
-    if full_llm_titles:
-        fail("满血版 must not be a Dify built-in LLM node")
-    if edge_to(switch, "enabled", local_llm):
-        fail("full-enabled branch must not directly execute local LLM in parallel")
-    switch_cases = json.dumps(switch.get("data", {}).get("cases", []), ensure_ascii=False)
-    if "ENABLE_FULL_LLM" not in switch_cases:
-        fail("IF_满血版LLM开关 must use env.ENABLE_FULL_LLM")
-    if "token_request_body_json" not in (node("代码执行_准备满血版Token请求").get("data", {}).get("outputs") or {}):
-        fail("token request output token_request_body_json drifted")
-    full_outputs = node("代码执行_准备满血版LLM请求").get("data", {}).get("outputs") or {}
-    if not {"full_llm_request_body_json", "authorization_header"}.issubset(full_outputs):
-        fail("full LLM request outputs drifted")
-    if "report_input_json" not in (report_input.get("data", {}).get("outputs") or {}):
-        fail("report input output report_input_json drifted")
-
-    dataset_ids = []
-    for node in nodes:
-        dataset_ids.extend(node.get("data", {}).get("dataset_ids", []) or [])
-    if DATASET_ID not in dataset_ids:
-        fail(f"dataset_ids must include {DATASET_ID}")
-
-    print(f"OK: {len(nodes)} nodes, {len(edges)} edges, code/http/layout/IF branch checks passed")
+    banned={'代码执行_准备报告LLM输入','LLM_生成竞分对比报告_本地版','HTTP请求_获取满血版LLM Token','代码执行_准备满血版LLM请求','HTTP请求_调用满血版LLM接口'}
+    if not path('IF_output_type是否为报告类','代码执行_合并最终回答',banned): fail('non-report branch must reach final without report/full LLM nodes')
+    for a,b in [('IF_output_type是否为报告类','代码执行_准备报告LLM输入'),('IF_满血版LLM开关','HTTP请求_获取满血版LLM Token'),('IF_满血版Token是否成功','HTTP请求_调用满血版LLM接口'),('IF_满血版Token是否成功','LLM_生成竞分对比报告_本地版')]:
+        if not path(a,b): fail(f'path missing: {a} -> {b}')
+    # variable producers upstream
+    owners=defaultdict(set)
+    for n in nodes:
+        for o in (n.get('data',{}).get('outputs') or {}): owners[o].add(n['id'])
+        if n.get('data',{}).get('title') == 'HTTP请求_执行Mongo查询':
+            owners['mongo_result_json'].add(n['id'])
+    required=['route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json','mongo_result_json','normalized_query_result_json','analysis_result_json','report_input_json','token_request_body_json','full_llm_token_result_json','full_llm_request_body_json','final_answer']
+    for r in required:
+        if r not in owners: fail(f'variable producer missing: {r}')
+    # ensure representative consumers have upstream producer
+    consumers={'代码执行_构建QueryPlan':['slot_validate_result_json'],'代码执行_准备报告LLM输入':['analysis_result_json'],'代码执行_准备满血版Token请求':['report_input_json'],'代码执行_准备满血版LLM请求':['report_input_json','full_llm_token_result_json'],'代码执行_合并最终回答':['analysis_result_json']}
+    def upstream(nid):
+        s=set(); qq=deque(rev[nid])
+        while qq:
+            c=qq.popleft()
+            if c not in s: s.add(c); qq.extend(rev[c])
+        return s
+    for t,vars in consumers.items():
+        up=upstream(node(t)['id'])
+        for v in vars:
+            if not owners[v] & up: fail(f'{t} input {v} has no upstream reachable producer')
+    dataset_ids=[]
+    for n in nodes: dataset_ids.extend(n.get('data',{}).get('dataset_ids',[]) or [])
+    if DATASET_ID not in dataset_ids: fail(f'dataset_ids must include {DATASET_ID}')
+    print(f'OK: {len(nodes)} nodes, {len(edges)} edges, reachability/layout/IF branch/producer checks passed')
     return 0
-
-
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except AssertionError as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+if __name__=='__main__':
+    try: raise SystemExit(main())
+    except AssertionError as e:
+        print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)

@@ -95,11 +95,11 @@
           },
           "position": {
             "x": 80,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 80,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -127,11 +127,11 @@
           },
           "position": {
             "x": 360,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 360,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -171,11 +171,11 @@
           },
           "position": {
             "x": 640,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 640,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -203,11 +203,11 @@
           },
           "position": {
             "x": 920,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 920,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -238,11 +238,11 @@
           },
           "position": {
             "x": 1200,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 1200,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -273,11 +273,11 @@
           },
           "position": {
             "x": 1480,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 1480,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -326,11 +326,11 @@
           },
           "position": {
             "x": 1760,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 1760,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -372,12 +372,12 @@
             "code": "import json\n\ndef main(route_card_json: str, slot_validate_result_json: str) -> dict:\n    rc=json.loads(route_card_json or '{}'); sv=json.loads(slot_validate_result_json or '{}')\n    missing=[{'slot':m['slot'],'label':m.get('desc',m['slot']),'options':m.get('allowed_values',[]),'placeholder':m['placeholder']} for m in sv.get('missing_slots',[])]\n    out={\"contract_version\":\"phone_module_jf_slot_fill_request_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"route_id\":rc.get('route_id','phone_module_jf_compare'),\"message\":\"还需要补充以下信息后才能查询：\",\"missing_slots\":missing,\"known_values\":sv.get('placeholder_values',{})}\n    return {\"slot_fill_request_json\":json.dumps(out,ensure_ascii=False),\"pending_route_id\":rc.get('route_id',''),\"pending_route_card_json\":json.dumps(rc.get('route_card',{}),ensure_ascii=False),\"partial_placeholder_values_json\":json.dumps(sv.get('placeholder_values',{}),ensure_ascii=False),\"pending_missing_slots_json\":json.dumps(missing,ensure_ascii=False),\"final_answer\":json.dumps(out,ensure_ascii=False)}"
           },
           "position": {
-            "x": 1760,
-            "y": 420
+            "x": 2040,
+            "y": 40
           },
           "positionAbsolute": {
-            "x": 1760,
-            "y": 420
+            "x": 2040,
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -397,12 +397,12 @@
             "variables": []
           },
           "position": {
-            "x": 1760,
-            "y": 640
+            "x": 2320,
+            "y": 40
           },
           "positionAbsolute": {
-            "x": 1760,
-            "y": 640
+            "x": 2320,
+            "y": 40
           },
           "width": 244,
           "height": 54,
@@ -430,11 +430,11 @@
           },
           "position": {
             "x": 2040,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2040,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -465,11 +465,11 @@
           },
           "position": {
             "x": 2320,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2320,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -505,11 +505,11 @@
           },
           "position": {
             "x": 2600,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2600,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -537,11 +537,11 @@
           },
           "position": {
             "x": 2880,
-            "y": 200
+            "y": 300
           },
           "positionAbsolute": {
             "x": 2880,
-            "y": 200
+            "y": 300
           },
           "width": 244,
           "height": 54,
@@ -550,3 +550,251 @@
           "zIndex": 13
         },
         {
+          "id": "analysis",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_按output_type生成分析结果",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef pivot(rows, targets):\n    keys=[]; table={}\n    for r in rows:\n        k=(r.get('category',''), r.get('metric_label') or r.get('metric_name',''))\n        if k not in table: table[k]={}; keys.append(k)\n        table[k][r.get('target')]=r.get('metric_value','')\n    lines=['| 类别 | 指标 | '+' | '.join(targets)+' |','|---|---|'+'|'.join(['---']*len(targets))+'|']\n    for cat,name in keys: lines.append('| '+cat+' | '+name+' | '+' | '.join(str(table[(cat,name)].get(t,'')) for t in targets)+' |')\n    return '\n'.join(lines)\n\ndef main(normalized_query_result_json: str) -> dict:\n    nq=json.loads(normalized_query_result_json or '{}'); rows=nq.get('rows') or []; targets=nq.get('targets') or []; ot=nq.get('output_type')\n    md=pivot(rows, targets) if rows else ''\n    if nq.get('data_status')=='empty': status='no_data'; at='no_data'\n    elif ot=='对比表': status='ok'; at='compare_table'\n    elif ot=='Excel': status='ok'; at='excel_payload'\n    elif ot=='趋势分析' and len(targets)<3: status='unsupported'; at='unsupported_message'\n    elif ot=='趋势分析': status='ok'; at='trend_analysis'\n    else: status='partial_data' if nq.get('data_status')=='partial' else 'ok'; at='compare_report'\n    out={\"contract_version\":\"phone_module_jf_analysis_result_v1\",\"status\":status,\"answer_type\":at,\"markdown_table\":md,\"comparison_table\":rows,\"key_findings\":[],\"data_gaps\":nq.get('data_gaps',[]),\"targets\":targets,\"output_type\":ot,\"excel_payload\":{\"filename\":\"phone_module_jf_compare.xlsx\",\"sheets\":[{\"sheet_name\":\"对比结果\",\"columns\":[\"target\",\"scope\",\"category\",\"metric_name\",\"metric_value\",\"metric_label\"],\"rows\":rows}]}}\n    return {\"analysis_result_json\":json.dumps(out,ensure_ascii=False)}",
+            "outputs": {
+              "analysis_result_json": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef pivot(rows, targets):\n    keys=[]; table={}\n    for r in rows:\n        k=(r.get('category',''), r.get('metric_label') or r.get('metric_name',''))\n        if k not in table: table[k]={}; keys.append(k)\n        table[k][r.get('target')]=r.get('metric_value','')\n    lines=['| 类别 | 指标 | '+' | '.join(targets)+' |','|---|---|'+'|'.join(['---']*len(targets))+'|']\n    for cat,name in keys: lines.append('| '+cat+' | '+name+' | '+' | '.join(str(table[(cat,name)].get(t,'')) for t in targets)+' |')\n    return '\n'.join(lines)\n\ndef main(normalized_query_result_json: str) -> dict:\n    nq=json.loads(normalized_query_result_json or '{}'); rows=nq.get('rows') or []; targets=nq.get('targets') or []; ot=nq.get('output_type')\n    md=pivot(rows, targets) if rows else ''\n    if nq.get('data_status')=='empty': status='no_data'; at='no_data'\n    elif ot=='对比表': status='ok'; at='compare_table'\n    elif ot=='Excel': status='ok'; at='excel_payload'\n    elif ot=='趋势分析' and len(targets)<3: status='unsupported'; at='unsupported_message'\n    elif ot=='趋势分析': status='ok'; at='trend_analysis'\n    else: status='partial_data' if nq.get('data_status')=='partial' else 'ok'; at='compare_report'\n    out={\"contract_version\":\"phone_module_jf_analysis_result_v1\",\"status\":status,\"answer_type\":at,\"markdown_table\":md,\"comparison_table\":rows,\"key_findings\":[],\"data_gaps\":nq.get('data_gaps',[]),\"targets\":targets,\"output_type\":ot,\"excel_payload\":{\"filename\":\"phone_module_jf_compare.xlsx\",\"sheets\":[{\"sheet_name\":\"对比结果\",\"columns\":[\"target\",\"scope\",\"category\",\"metric_name\",\"metric_value\",\"metric_label\"],\"rows\":rows}]}}\n    return {\"analysis_result_json\":json.dumps(out,ensure_ascii=False)}"
+          },
+          "position": {
+            "x": 3160,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 3160,
+            "y": 300
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 14
+        },
+        {
+          "id": "ifreport",
+          "type": "custom",
+          "data": {
+            "title": "IF_output_type是否为报告类",
+            "type": "if-else",
+            "cases": [
+              {
+                "id": "report",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "analysis",
+                      "analysis_result_json"
+                    ],
+                    "comparison_operator": "contains",
+                    "value": "\"output_type\": \"对比报告\""
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "desc": "",
+            "selected": false
+          },
+          "position": {
+            "x": 3440,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 3440,
+            "y": 300
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 15
+        },
+        {
+          "id": "llmlocal",
+          "type": "custom",
+          "data": {
+            "title": "LLM_生成竞分对比报告_本地版",
+            "type": "llm",
+            "model": {
+              "provider": "ollama",
+              "name": "qwen2.5:7b",
+              "mode": "chat",
+              "completion_params": {}
+            },
+            "prompt_template": [
+              {
+                "role": "system",
+                "text": "只按输入 JSON 写简短 Markdown 报告；不得补充不存在的数据；有 data_gaps 必须列出。"
+              },
+              {
+                "role": "user",
+                "text": "report_input_json:\n{{#report_input.report_input_json#}}"
+              }
+            ],
+            "desc": "",
+            "selected": false,
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            },
+            "memory": null,
+            "variables": []
+          },
+          "position": {
+            "x": 5400,
+            "y": 180
+          },
+          "positionAbsolute": {
+            "x": 5400,
+            "y": 180
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 17
+        },
+        {
+          "id": "final",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_合并最终回答",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef _load(s):\n    try: return json.loads(s or '{}')\n    except Exception: return {}\n\ndef main(analysis_result_json: str = '', full_llm_result_json: str = '', local_llm_result_json: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '', enable_full_llm: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=_load(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"llm_source\":\"no_llm\",\"full_llm_enabled\":False,\"full_llm_fallback_reason\":\"\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=_load(analysis_result_json); fr=_load(full_llm_result_json); lr=_load(local_llm_result_json)\n        status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        full_enabled=(str(enable_full_llm).lower()=='true') or (fr.get('status')=='ok') or (lr.get('full_llm_fallback_reason') in ['token_failed','full_llm_http_failed','full_llm_empty_response'])\n        llm_source='no_llm'; fallback=''; ans=ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if fr.get('status')=='ok' and fr.get('llm_report_markdown'):\n            llm_source='full_llm'; ans=fr.get('llm_report_markdown'); fallback=''\n        elif lr.get('status')=='ok':\n            llm_source='local_llm'; ans=lr.get('llm_report_markdown') or ans; fallback=lr.get('full_llm_fallback_reason') or ('full_llm_disabled' if not full_enabled else '')\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"llm_source\":llm_source,\"full_llm_enabled\":full_enabled,\"full_llm_fallback_reason\":fallback,\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type'),\"full_llm_enabled\":full_enabled,\"llm_source\":llm_source,\"full_llm_fallback_reason\":fallback},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}",
+            "outputs": {
+              "final_answer": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef _load(s):\n    try: return json.loads(s or '{}')\n    except Exception: return {}\n\ndef main(analysis_result_json: str = '', full_llm_result_json: str = '', local_llm_result_json: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '', enable_full_llm: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=_load(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"llm_source\":\"no_llm\",\"full_llm_enabled\":False,\"full_llm_fallback_reason\":\"\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=_load(analysis_result_json); fr=_load(full_llm_result_json); lr=_load(local_llm_result_json)\n        status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        full_enabled=(str(enable_full_llm).lower()=='true') or (fr.get('status')=='ok') or (lr.get('full_llm_fallback_reason') in ['token_failed','full_llm_http_failed','full_llm_empty_response'])\n        llm_source='no_llm'; fallback=''; ans=ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if fr.get('status')=='ok' and fr.get('llm_report_markdown'):\n            llm_source='full_llm'; ans=fr.get('llm_report_markdown'); fallback=''\n        elif lr.get('status')=='ok':\n            llm_source='local_llm'; ans=lr.get('llm_report_markdown') or ans; fallback=lr.get('full_llm_fallback_reason') or ('full_llm_disabled' if not full_enabled else '')\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"llm_source\":llm_source,\"full_llm_enabled\":full_enabled,\"full_llm_fallback_reason\":fallback,\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type'),\"full_llm_enabled\":full_enabled,\"llm_source\":llm_source,\"full_llm_fallback_reason\":fallback},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}"
+          },
+          "position": {
+            "x": 6520,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 6520,
+            "y": 300
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 18
+        },
+        {
+          "id": "ans",
+          "type": "custom",
+          "data": {
+            "title": "结束_返回最终回答",
+            "type": "answer",
+            "answer": "{{#final.final_answer#}}",
+            "desc": "",
+            "selected": false,
+            "variables": []
+          },
+          "position": {
+            "x": 6800,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 6800,
+            "y": 300
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 19
+        },
+        {
+          "id": "ifllm",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版LLM开关",
+            "type": "if-else",
+            "desc": "ENABLE_FULL_LLM=true 时走 token + 满血版 HTTP；否则走本地 LLM",
+            "selected": false,
+            "cases": [
+              {
+                "id": "enabled",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "env",
+                      "ENABLE_FULL_LLM"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "true"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ]
+          },
+          "position": {
+            "x": 4000,
+            "y": 40
+          },
+          "positionAbsolute": {
+            "x": 4000,
+            "y": 40
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 99
+        },
+        {
+          "id": "report_input",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备报告LLM输入",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(analysis_result_json: str) -> dict:\n    ar=json.loads(analysis_result_json or '{}')\n    report_input={\n        \"route_id\":\"phone_module_jf_compare\",\n        \"template_id\":ar.get('template_id',''),\n        \"output_type\":ar.get('output_type','对比报告'),\n        \"comparison_table\":ar.get('comparison_table') or [],\n        \"key_findings\":ar.get('key_findings') or [],\n        \"data_gaps\":ar.get('data_gaps') or [],\n        \"target_coverage\":{\"targets\":ar.get('targets') or []},\n        \"data_status\":ar.get('status','ok')\n    }\n    out={\"contract_version\":\"phone_module_jf_report_llm_input_v1\",\"status\":\"ok\",\"report_input\":report_input}\n    return {\"report_input_json\":json.dumps(out,ensure_ascii=False)}",
+            "outputs": {
+              "report_input_json": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(analysis_result_json: str) -> dict:\n    ar=json.loads(analysis_result_json or '{}')\n    report_input={\n        \"route_id\":\"phone_module_jf_compare\",\n        \"template_id\":ar.get('template_id',''),\n        \"output_type\":ar.get('output_type','对比报告'),\n        \"comparison_table\":ar.get('comparison_table') or [],\n        \"key_findings\":ar.get('key_findings') or [],\n        \"data_gaps\":ar.get('data_gaps') or [],\n        \"target_coverage\":{\"targets\":ar.get('targets') or []},\n        \"data_status\":ar.get('status','ok')\n    }\n    out={\"contract_version\":\"phone_module_jf_report_llm_input_v1\",\"status\":\"ok\",\"report_input\":report_input}\n    return {\"report_input_json\":json.dumps(out,ensure_ascii=False)}"
+          },
+          "position": {
+            "x": 3720,
+            "y": 40
+          },
+          "positionAbsolute": {
+            "x": 3720,
+            "y": 40
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "token_req",
