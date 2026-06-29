@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Validate or print split-only PHONE_MODULE_JF_CHATFLOW fragments.
+"""Merge, validate, or print PHONE_MODULE_JF_CHATFLOW fragments.
 
-Default and --check never write PHONE_MODULE_JF_CHATFLOW.yml.  Fragments are
-raw-concatenated in memory in numeric order.
+PHONE_MODULE_JF_CHATFLOW_*.yml fragments are the source of truth.  The full
+PHONE_MODULE_JF_CHATFLOW.yml file is a local generated Dify import artifact and
+must not be maintained as source.
 """
 from __future__ import annotations
 import argparse, json, re, sys
 from collections import defaultdict, deque
 from pathlib import Path
+
 BASE_DIR=Path(__file__).resolve().parent
+FULL_FILE=BASE_DIR/'PHONE_MODULE_JF_CHATFLOW.yml'
 PART_RE=re.compile(r'PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$')
 
+
 def fail(msg): raise SystemExit(f'FAIL: {msg}')
+
 def discover_parts():
     numbered=[]
     for p in BASE_DIR.glob('PHONE_MODULE_JF_CHATFLOW_*.yml'):
@@ -23,6 +28,7 @@ def discover_parts():
     if nums != list(range(nums[0], nums[0]+len(nums))): fail(f'fragment numbering must be continuous; found {nums}')
     if nums[0] != 0: fail(f'fragment numbering must start at 0; found {nums[0]}')
     return [p for _,p in numbered]
+
 def merged_text(parts):
     chunks=[]
     for p in parts:
@@ -32,9 +38,19 @@ def merged_text(parts):
     text=''.join(chunks)
     if not text.strip(): fail('merged output is empty')
     return text
+
 def load_doc(text):
-    try: return json.loads(text)
-    except json.JSONDecodeError as e: fail(f'merged DSL is not parseable YAML/JSON subset: {e}')
+    try:
+        import yaml
+        doc=yaml.safe_load(text)
+    except ModuleNotFoundError:
+        try: doc=json.loads(text)
+        except json.JSONDecodeError as e: fail(f'merged DSL is not parseable YAML/JSON: {e}')
+    except Exception as e:
+        fail(f'merged DSL is not parseable YAML/JSON: {e}')
+    if not isinstance(doc,dict): fail('merged DSL root must be a mapping/object')
+    return doc
+
 def validate(doc):
     if doc.get('version')!='0.6.0': fail('version must be 0.6.0')
     if doc.get('kind')!='app': fail('kind must be app')
@@ -96,14 +112,31 @@ def validate(doc):
         for k in (n.get('data',{}).get('outputs') or {}): producers[k].add(n['id'])
     for var in ['route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json','mongo_result_json','normalized_query_result_json','analysis_result_json','report_input_json','full_llm_token_request_body_json','full_llm_token_result_json','full_llm_request_body_json','full_llm_result_json','local_llm_result_json','final_answer']:
         if var not in producers: fail(f'variable producer missing: {var}')
-    print(f'OK: split-only PHONE DSL valid ({len(nodes)} nodes, {len(edges)} edges, {len(discover_parts())} fragments)')
+    return len(nodes),len(edges)
+
+def check_full_consistency(text):
+    if not FULL_FILE.exists():
+        return False
+    if FULL_FILE.read_text(encoding='utf-8') != text:
+        fail('PHONE_MODULE_JF_CHATFLOW.yml exists but does not match raw-concatenated fragments')
+    return True
+
 def main(argv=None):
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--check',action='store_true',help='validate raw-concatenated fragments in memory')
-    ap.add_argument('--stdout',action='store_true',help='print raw-concatenated full DSL to stdout')
+    mode=ap.add_mutually_exclusive_group()
+    mode.add_argument('--check',action='store_true',help='validate fragments and compare existing generated full file if present')
+    mode.add_argument('--stdout',action='store_true',help='print raw-concatenated full DSL to stdout without writing')
     args=ap.parse_args(argv)
-    parts=discover_parts(); text=merged_text(parts); doc=load_doc(text)
+    parts=discover_parts(); text=merged_text(parts); doc=load_doc(text); nodes,edges=validate(doc)
     if args.stdout:
         sys.stdout.write(text); return 0
-    validate(doc); return 0
+    if args.check:
+        if check_full_consistency(text):
+            print(f'OK: PHONE split fragments valid; full file matches fragments ({len(parts)} fragments, {nodes} nodes, {edges} edges)')
+        else:
+            print('OK: PHONE split fragments valid; full file not found, run merge to generate local import file')
+        return 0
+    FULL_FILE.write_text(text,encoding='utf-8')
+    print(f'OK: generated local PHONE_MODULE_JF_CHATFLOW.yml from {len(parts)} fragments ({nodes} nodes, {edges} edges)')
+    return 0
 if __name__=='__main__': raise SystemExit(main())
