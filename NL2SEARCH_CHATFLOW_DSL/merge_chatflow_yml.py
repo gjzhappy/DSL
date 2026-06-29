@@ -124,7 +124,9 @@ def validate_env(doc):
     if deprecated: fail(f'deprecated PHONE env names found; use roadmap env names instead: {deprecated}')
     for name in REQUIRED_ENV_NAMES:
         e=defs.get(name,{})
-        if e.get('selector') != ['env', name]: fail(f'environment variable selector mismatch for {name}: {e.get('selector')}')
+        selector = e.get("selector")
+        if selector != ["env", name]:
+            fail(f"environment variable selector mismatch for {name}: {selector}")
     if defs.get('ENABLE_FULL_LLM',{}).get('value_type') != 'string': fail('ENABLE_FULL_LLM value_type must be string')
     if defs.get('LLM_STATIC_TOKEN',{}).get('value_type') != 'secret' or defs.get('LLM_STATIC_TOKEN',{}).get('value') != '': fail('LLM_STATIC_TOKEN must be secret with empty value')
     nodes=doc.get('workflow',{}).get('graph',{}).get('nodes') or []
