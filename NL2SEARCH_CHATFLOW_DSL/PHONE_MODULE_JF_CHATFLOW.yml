@@ -7,7 +7,7 @@
     "name": "PHONE_MODULE_JF_CHATFLOW"
   },
   "kind": "app",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "workflow": {
     "conversation_variables": [
       {
@@ -101,8 +101,8 @@
             "x": 80,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 212,
           "selected": false,
           "dragging": false,
           "zIndex": 1
@@ -133,8 +133,8 @@
             "x": 360,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 2
@@ -177,8 +177,8 @@
             "x": 640,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 90,
           "selected": false,
           "dragging": false,
           "zIndex": 3
@@ -209,8 +209,8 @@
             "x": 920,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 4
@@ -244,8 +244,8 @@
             "x": 1200,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 5
@@ -279,8 +279,8 @@
             "x": 1480,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 6
@@ -293,29 +293,27 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "need_slot",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"ready_to_query\": false",
                     "variable_selector": [
                       "validate",
                       "slot_validate_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"ready_to_query\": false"
+                    ]
                   }
                 ],
                 "logical_operator": "or"
               },
               {
-                "id": "success",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"ready_to_query\": true",
                     "variable_selector": [
                       "validate",
                       "slot_validate_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"ready_to_query\": true"
+                    ]
                   }
                 ],
                 "logical_operator": "or"
@@ -332,8 +330,8 @@
             "x": 1760,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 220,
           "selected": false,
           "dragging": false,
           "zIndex": 7
@@ -379,8 +377,8 @@
             "x": 2040,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 8
@@ -404,8 +402,8 @@
             "x": 2320,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 103,
           "selected": false,
           "dragging": false,
           "zIndex": 9
@@ -436,8 +434,8 @@
             "x": 2040,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 10
@@ -471,8 +469,8 @@
             "x": 2320,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 11
@@ -511,8 +509,8 @@
             "x": 2600,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 126,
           "selected": false,
           "dragging": false,
           "zIndex": 12
@@ -543,8 +541,8 @@
             "x": 2880,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 13
@@ -575,8 +573,8 @@
             "x": 3160,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 14
@@ -589,15 +587,14 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "report",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"output_type\": \"对比报告\"",
                     "variable_selector": [
                       "analysis",
                       "analysis_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"output_type\": \"对比报告\""
+                    ]
                   }
                 ],
                 "logical_operator": "and"
@@ -614,8 +611,8 @@
             "x": 3440,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 148,
           "selected": false,
           "dragging": false,
           "zIndex": 15
@@ -655,15 +652,15 @@
             "variables": []
           },
           "position": {
-            "x": 5400,
-            "y": 180
+            "x": 5365.260047943533,
+            "y": 245.61990943999194
           },
           "positionAbsolute": {
-            "x": 5400,
-            "y": 180
+            "x": 5365.260047943533,
+            "y": 245.61990943999194
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 94,
           "selected": false,
           "dragging": false,
           "zIndex": 17
@@ -694,8 +691,8 @@
             "x": 6520,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 18
@@ -719,8 +716,8 @@
             "x": 6800,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 103,
           "selected": false,
           "dragging": false,
           "zIndex": 19
@@ -735,15 +732,14 @@
             "selected": false,
             "cases": [
               {
-                "id": "enabled",
                 "conditions": [
                   {
+                    "comparison_operator": "is",
+                    "value": "true",
                     "variable_selector": [
                       "env",
                       "ENABLE_FULL_LLM"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "true"
+                    ]
                   }
                 ],
                 "logical_operator": "and"
@@ -758,8 +754,8 @@
             "x": 4000,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 168,
           "selected": false,
           "dragging": false,
           "zIndex": 99
@@ -790,8 +786,8 @@
             "x": 3720,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
@@ -825,8 +821,8 @@
             "x": 4280,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
@@ -865,8 +861,8 @@
             "x": 4560,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 126,
           "selected": false,
           "dragging": false,
           "zIndex": 52
@@ -903,8 +899,8 @@
             "x": 4840,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
@@ -917,17 +913,17 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "ok",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"status\": \"ok\"",
                     "variable_selector": [
                       "token_parse",
                       "full_llm_token_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"status\": \"ok\""
+                    ]
                   }
                 ],
+                "id": "ok",
                 "logical_operator": "and"
               }
             ],
@@ -942,8 +938,8 @@
             "x": 5120,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 148,
           "selected": false,
           "dragging": false,
           "zIndex": 51
@@ -977,8 +973,8 @@
             "x": 5400,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
@@ -1017,8 +1013,8 @@
             "x": 5680,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 126,
           "selected": false,
           "dragging": false,
           "zIndex": 52
@@ -1055,8 +1051,8 @@
             "x": 5960,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
@@ -1069,15 +1065,14 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "ok",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"status\": \"ok\"",
                     "variable_selector": [
                       "full_parse",
                       "full_llm_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"status\": \"ok\""
+                    ]
                   }
                 ],
                 "logical_operator": "and"
@@ -1087,16 +1082,16 @@
             "selected": false
           },
           "position": {
-            "x": 6240,
-            "y": 40
+            "x": 6255,
+            "y": -5.9999999999998295
           },
           "positionAbsolute": {
-            "x": 6240,
-            "y": 40
+            "x": 6255,
+            "y": -5.9999999999998295
           },
-          "width": 244,
-          "height": 54,
-          "selected": false,
+          "width": 242,
+          "height": 148,
+          "selected": true,
           "dragging": false,
           "zIndex": 51
         },
@@ -1128,15 +1123,15 @@
             "code": "import json\n\ndef main(llm_report_markdown: str = '', full_llm_fallback_reason: str = '') -> dict:\n    reason=full_llm_fallback_reason or 'full_llm_disabled'\n    out={\"contract_version\":\"phone_module_jf_local_llm_result_v1\",\"status\":\"ok\",\"llm_report_markdown\":llm_report_markdown or '',\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}\n    return {\"local_llm_result_json\":json.dumps(out,ensure_ascii=False),\"local_llm_report_markdown\":out[\"llm_report_markdown\"],\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}"
           },
           "position": {
-            "x": 5960,
-            "y": 180
+            "x": 5984.446632928624,
+            "y": 252.0532338948932
           },
           "positionAbsolute": {
-            "x": 5960,
-            "y": 180
+            "x": 5984.446632928624,
+            "y": 252.0532338948932
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
@@ -1590,8 +1585,97 @@
             "isInLoop": false
           },
           "zIndex": 0
+        },
+        {
+          "data": {
+            "isInLoop": false,
+            "sourceType": "if-else",
+            "targetType": "code"
+          },
+          "id": "ifslot-null-fill-target",
+          "source": "ifslot",
+          "sourceHandle": null,
+          "target": "fill",
+          "targetHandle": "target",
+          "type": "custom",
+          "zIndex": 0
+        },
+        {
+          "data": {
+            "isInLoop": false,
+            "sourceType": "if-else",
+            "targetType": "code"
+          },
+          "id": "ifslot-null-plan-target",
+          "source": "ifslot",
+          "sourceHandle": null,
+          "target": "plan",
+          "targetHandle": "target",
+          "type": "custom",
+          "zIndex": 0
+        },
+        {
+          "data": {
+            "isInLoop": false,
+            "sourceType": "if-else",
+            "targetType": "code"
+          },
+          "id": "ifreport-null-report_input-target",
+          "source": "ifreport",
+          "sourceHandle": null,
+          "target": "report_input",
+          "targetHandle": "target",
+          "type": "custom",
+          "zIndex": 0
+        },
+        {
+          "data": {
+            "isInLoop": false,
+            "sourceType": "if-else",
+            "targetType": "code"
+          },
+          "id": "ifllm-null-token_req-target",
+          "source": "ifllm",
+          "sourceHandle": null,
+          "target": "token_req",
+          "targetHandle": "target",
+          "type": "custom",
+          "zIndex": 0
+        },
+        {
+          "data": {
+            "isInLoop": false,
+            "sourceType": "if-else",
+            "targetType": "code"
+          },
+          "id": "if_token-null-full_req-target",
+          "source": "if_token",
+          "sourceHandle": null,
+          "target": "full_req",
+          "targetHandle": "target",
+          "type": "custom",
+          "zIndex": 0
+        },
+        {
+          "data": {
+            "isInLoop": false,
+            "sourceType": "if-else",
+            "targetType": "code"
+          },
+          "id": "if_full-null-final-target",
+          "source": "if_full",
+          "sourceHandle": null,
+          "target": "final",
+          "targetHandle": "target",
+          "type": "custom",
+          "zIndex": 0
         }
-      ]
+      ],
+      "viewport": {
+        "x": -770.4707768996122,
+        "y": 280.37131952901615,
+        "zoom": 0.4694654630250833
+      }
     }
   }
 }

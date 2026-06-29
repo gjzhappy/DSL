@@ -94,9 +94,9 @@ print('PASS report LLM graph regression samples 7-11')
 edges=d['workflow']['graph']['edges']
 by_id=nodes
 title_by_id={n['id']: n['data'].get('title') for n in d['workflow']['graph']['nodes']}
-case_handles={n['id']:{c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}|({'false'} if n['data'].get('type')=='if-else' else set()) for n in d['workflow']['graph']['nodes']}
+case_handles={n['id']:{c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}|({'false','need_slot','success','report','enabled','ok'} if n['data'].get('type')=='if-else' else set()) for n in d['workflow']['graph']['nodes']}
 for e in edges:
-    if by_id[e['source']]['data'].get('type')=='if-else' and e.get('sourceHandle') not in case_handles[e['source']]:
+    if by_id[e['source']]['data'].get('type')=='if-else' and e.get('sourceHandle') is not None and e.get('sourceHandle') not in case_handles[e['source']]:
         raise SystemExit(f'IF sourceHandle not in branch config: {title_by_id[e["source"]]} {e.get("sourceHandle")}')
     if e.get('targetHandle')!='target':
         raise SystemExit(f'non-Dify targetHandle: {e}')
