@@ -44,7 +44,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(question='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    return {'context_json': json.dumps({'question': question or '', 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n"
+            "source_code": "def main(question='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    return {'context_json': json.dumps({'question': question or '', 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(question='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    return {'context_json': json.dumps({'question': question or '', 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 360,
@@ -69,7 +72,14 @@
             "query_variable_selector": [
               "ctx",
               "context_json"
-            ]
+            ],
+            "query_attachment_selector": [],
+            "retrieval_mode": "multiple",
+            "multiple_retrieval_config": {
+              "top_k": 4,
+              "score_threshold": null,
+              "reranking_enable": false
+            }
           },
           "position": {
             "x": 720,
@@ -93,7 +103,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(context_json='', retrieval_result=None):\n    import json\n    return {'route_card_json': json.dumps({'route_id':'phone_jf','module':'PHONE','required_slots':['target_objects','object_scope'],'default_output_type':'table','templates':[{'id':'phone_cis_compare','keywords':['cis','规格','主摄']},{'id':'phone_power_compare','keywords':['功耗','供电']}], 'mongo': {'collection':'phone_jf'}}, ensure_ascii=False)}\n"
+            "source_code": "def main(context_json='', retrieval_result=None):\n    import json\n    return {'route_card_json': json.dumps({'route_id':'phone_jf','module':'PHONE','required_slots':['target_objects','object_scope'],'default_output_type':'table','templates':[{'id':'phone_cis_compare','keywords':['cis','规格','主摄']},{'id':'phone_power_compare','keywords':['功耗','供电']}], 'mongo': {'collection':'phone_jf'}}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(context_json='', retrieval_result=None):\n    import json\n    return {'route_card_json': json.dumps({'route_id':'phone_jf','module':'PHONE','required_slots':['target_objects','object_scope'],'default_output_type':'table','templates':[{'id':'phone_cis_compare','keywords':['cis','规格','主摄']},{'id':'phone_power_compare','keywords':['功耗','供电']}], 'mongo': {'collection':'phone_jf'}}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 1080,
@@ -117,7 +130,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(context_json='', route_card_json=''):\n    import json, re\n    ctx=json.loads(context_json or '{}'); q=ctx.get('question','')\n    models=[]\n    for pat,name in [(r'iPhone\\s*17','iPhone17'),(r'Xiaomi\\s*17|小米\\s*17','Xiaomi17'),(r'OPPO\\s*17','OPPO17')]:\n        if re.search(pat,q,re.I): models.append(name)\n    scope='main_camera' if ('主摄' in q or 'CIS' in q or 'cis' in q) else ''\n    output_type='report' if any(w in q for w in ['报告','对比报告']) else 'table'\n    topic='power' if any(w in q for w in ['功耗','供电']) else 'cis_spec'\n    return {'slot_parse_result_json': json.dumps({'target_objects':models,'object_scope':scope,'output_type':output_type,'topic':topic}, ensure_ascii=False)}\n"
+            "source_code": "def main(context_json='', route_card_json=''):\n    import json, re\n    ctx=json.loads(context_json or '{}'); q=ctx.get('question','')\n    models=[]\n    for pat,name in [(r'iPhone\\s*17','iPhone17'),(r'Xiaomi\\s*17|小米\\s*17','Xiaomi17'),(r'OPPO\\s*17','OPPO17')]:\n        if re.search(pat,q,re.I): models.append(name)\n    scope='main_camera' if ('主摄' in q or 'CIS' in q or 'cis' in q) else ''\n    output_type='report' if any(w in q for w in ['报告','对比报告']) else 'table'\n    topic='power' if any(w in q for w in ['功耗','供电']) else 'cis_spec'\n    return {'slot_parse_result_json': json.dumps({'target_objects':models,'object_scope':scope,'output_type':output_type,'topic':topic}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(context_json='', route_card_json=''):\n    import json, re\n    ctx=json.loads(context_json or '{}'); q=ctx.get('question','')\n    models=[]\n    for pat,name in [(r'iPhone\\s*17','iPhone17'),(r'Xiaomi\\s*17|小米\\s*17','Xiaomi17'),(r'OPPO\\s*17','OPPO17')]:\n        if re.search(pat,q,re.I): models.append(name)\n    scope='main_camera' if ('主摄' in q or 'CIS' in q or 'cis' in q) else ''\n    output_type='report' if any(w in q for w in ['报告','对比报告']) else 'table'\n    topic='power' if any(w in q for w in ['功耗','供电']) else 'cis_spec'\n    return {'slot_parse_result_json': json.dumps({'target_objects':models,'object_scope':scope,'output_type':output_type,'topic':topic}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 1440,
@@ -141,7 +157,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False)}\n"
+            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 1800,
@@ -216,7 +235,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); missing=[m.get('message') for m in v.get('missing_slots',[])]\n    return {'slot_fill_request_json': json.dumps({'answer':'还需要补充：'+'；'.join(missing),'missing_slots':v.get('missing_slots',[])}, ensure_ascii=False)}\n"
+            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); missing=[m.get('message') for m in v.get('missing_slots',[])]\n    return {'slot_fill_request_json': json.dumps({'answer':'还需要补充：'+'；'.join(missing),'missing_slots':v.get('missing_slots',[])}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); missing=[m.get('message') for m in v.get('missing_slots',[])]\n    return {'slot_fill_request_json': json.dumps({'answer':'还需要补充：'+'；'.join(missing),'missing_slots':v.get('missing_slots',[])}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 2520,
@@ -236,7 +258,8 @@
             "title": "结束_返回填槽请求",
             "type": "answer",
             "answer": "{{#fill.slot_fill_request_json#}}",
-            "outputs": []
+            "outputs": [],
+            "variables": []
           },
           "position": {
             "x": 2880,
@@ -260,7 +283,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); slots=v.get('slots',{})\n    return {'query_plan_json': json.dumps({'status':'ok','collection':'phone_jf','targets':slots.get('target_objects',[]),'object_scope':slots.get('object_scope'),'output_type':slots.get('output_type'),'topic':slots.get('topic')}, ensure_ascii=False)}\n"
+            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); slots=v.get('slots',{})\n    return {'query_plan_json': json.dumps({'status':'ok','collection':'phone_jf','targets':slots.get('target_objects',[]),'object_scope':slots.get('object_scope'),'output_type':slots.get('output_type'),'topic':slots.get('topic')}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); slots=v.get('slots',{})\n    return {'query_plan_json': json.dumps({'status':'ok','collection':'phone_jf','targets':slots.get('target_objects',[]),'object_scope':slots.get('object_scope'),'output_type':slots.get('output_type'),'topic':slots.get('topic')}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 2520,
@@ -284,7 +310,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(query_plan_json='', slot_validate_result_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}') if query_plan_json else {}\n    if not plan and slot_validate_result_json:\n        v=json.loads(slot_validate_result_json); s=v.get('slots',{}); plan={'targets':s.get('target_objects',[]),'object_scope':s.get('object_scope'),'output_type':s.get('output_type'),'topic':s.get('topic'),'collection':'phone_jf'}\n    return {'mongo_request_json': json.dumps({'status':'ok','mongo_request':{'collection':plan.get('collection','phone_jf'),'pipeline':[{'$match':{'phone_model':{'$in':plan.get('targets',[])}}},{'$project':{'_id':0}}]},'query_plan':plan}, ensure_ascii=False)}\n"
+            "source_code": "def main(query_plan_json='', slot_validate_result_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}') if query_plan_json else {}\n    if not plan and slot_validate_result_json:\n        v=json.loads(slot_validate_result_json); s=v.get('slots',{}); plan={'targets':s.get('target_objects',[]),'object_scope':s.get('object_scope'),'output_type':s.get('output_type'),'topic':s.get('topic'),'collection':'phone_jf'}\n    return {'mongo_request_json': json.dumps({'status':'ok','mongo_request':{'collection':plan.get('collection','phone_jf'),'pipeline':[{'$match':{'phone_model':{'$in':plan.get('targets',[])}}},{'$project':{'_id':0}}]},'query_plan':plan}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(query_plan_json='', slot_validate_result_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}') if query_plan_json else {}\n    if not plan and slot_validate_result_json:\n        v=json.loads(slot_validate_result_json); s=v.get('slots',{}); plan={'targets':s.get('target_objects',[]),'object_scope':s.get('object_scope'),'output_type':s.get('output_type'),'topic':s.get('topic'),'collection':'phone_jf'}\n    return {'mongo_request_json': json.dumps({'status':'ok','mongo_request':{'collection':plan.get('collection','phone_jf'),'pipeline':[{'$match':{'phone_model':{'$in':plan.get('targets',[])}}},{'$project':{'_id':0}}]},'query_plan':plan}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 2880,
@@ -310,7 +339,28 @@
             },
             "method": "POST",
             "url": "${MONGO_QUERY_URL}",
-            "body": "{{#mongo.mongo_request_json#}}"
+            "body": {
+              "type": "json",
+              "data": "{{#mongo.mongo_request_json#}}"
+            },
+            "headers": "",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 3,
+              "retry_interval": 100
+            }
           },
           "position": {
             "x": 3240,
@@ -334,7 +384,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(mongo_result_json=''):\n    import json\n    return {'normalized_query_result_json': json.dumps({'status':'ok','rows':[],'raw':mongo_result_json}, ensure_ascii=False)}\n"
+            "source_code": "def main(mongo_result_json=''):\n    import json\n    return {'normalized_query_result_json': json.dumps({'status':'ok','rows':[],'raw':mongo_result_json}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(mongo_result_json=''):\n    import json\n    return {'normalized_query_result_json': json.dumps({'status':'ok','rows':[],'raw':mongo_result_json}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 3600,
@@ -358,7 +411,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}')\n    return {'analysis_result_json': json.dumps({'status':'ok','output_type':plan.get('output_type','table'),'summary':'PHONE 查询分析完成','query_plan':plan}, ensure_ascii=False)}\n"
+            "source_code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}')\n    return {'analysis_result_json': json.dumps({'status':'ok','output_type':plan.get('output_type','table'),'summary':'PHONE 查询分析完成','query_plan':plan}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}')\n    return {'analysis_result_json': json.dumps({'status':'ok','output_type':plan.get('output_type','table'),'summary':'PHONE 查询分析完成','query_plan':plan}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 3960,
@@ -418,7 +474,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(analysis_result_json=''):\n    import json\n    return {'report_input_json': json.dumps({'status':'ok','analysis':json.loads(analysis_result_json or '{}'),'prompt':'生成竞分对比报告'}, ensure_ascii=False)}\n"
+            "source_code": "def main(analysis_result_json=''):\n    import json\n    return {'report_input_json': json.dumps({'status':'ok','analysis':json.loads(analysis_result_json or '{}'),'prompt':'生成竞分对比报告'}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(analysis_result_json=''):\n    import json\n    return {'report_input_json': json.dumps({'status':'ok','analysis':json.loads(analysis_result_json or '{}'),'prompt':'生成竞分对比报告'}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 4680,
@@ -477,7 +536,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(report_input_json=''):\n    import json\n    return {'full_llm_token_request_body_json': json.dumps({'grant_type':'client_credentials','scope':'phone_report'}, ensure_ascii=False)}\n"
+            "source_code": "def main(report_input_json=''):\n    import json\n    return {'full_llm_token_request_body_json': json.dumps({'grant_type':'client_credentials','scope':'phone_report'}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(report_input_json=''):\n    import json\n    return {'full_llm_token_request_body_json': json.dumps({'grant_type':'client_credentials','scope':'phone_report'}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 5400,
@@ -498,7 +560,28 @@
             "type": "http-request",
             "method": "POST",
             "url": "${FULL_LLM_TOKEN_URL}",
-            "body": "{{#token_req.full_llm_token_request_body_json#}}"
+            "body": {
+              "type": "json",
+              "data": "{{#token_req.full_llm_token_request_body_json#}}"
+            },
+            "headers": "",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 3,
+              "retry_interval": 100
+            }
           },
           "position": {
             "x": 5760,
@@ -522,7 +605,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':'${token}' if ok else ''}, ensure_ascii=False)}\n"
+            "source_code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':'${token}' if ok else ''}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':'${token}' if ok else ''}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 6120,
@@ -582,7 +668,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(report_input_json='', full_llm_token_result_json=''):\n    import json\n    return {'full_llm_request_body_json': json.dumps({'report_input':json.loads(report_input_json or '{}'),'token':json.loads(full_llm_token_result_json or '{}').get('access_token','')}, ensure_ascii=False)}\n"
+            "source_code": "def main(report_input_json='', full_llm_token_result_json=''):\n    import json\n    return {'full_llm_request_body_json': json.dumps({'report_input':json.loads(report_input_json or '{}'),'token':json.loads(full_llm_token_result_json or '{}').get('access_token','')}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(report_input_json='', full_llm_token_result_json=''):\n    import json\n    return {'full_llm_request_body_json': json.dumps({'report_input':json.loads(report_input_json or '{}'),'token':json.loads(full_llm_token_result_json or '{}').get('access_token','')}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 6840,
@@ -603,7 +692,28 @@
             "type": "http-request",
             "method": "POST",
             "url": "${FULL_LLM_CHAT_URL}",
-            "body": "{{#full_req.full_llm_request_body_json#}}"
+            "body": {
+              "type": "json",
+              "data": "{{#full_req.full_llm_request_body_json#}}"
+            },
+            "headers": "",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 3,
+              "retry_interval": 100
+            }
           },
           "position": {
             "x": 7200,
@@ -627,7 +737,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(body='', status_code=200):\n    import json\n    return {'full_llm_result_json': json.dumps({'status':'ok' if str(status_code).startswith('2') else 'error','answer':body or '满血版报告'}, ensure_ascii=False)}\n"
+            "source_code": "def main(body='', status_code=200):\n    import json\n    return {'full_llm_result_json': json.dumps({'status':'ok' if str(status_code).startswith('2') else 'error','answer':body or '满血版报告'}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(body='', status_code=200):\n    import json\n    return {'full_llm_result_json': json.dumps({'status':'ok' if str(status_code).startswith('2') else 'error','answer':body or '满血版报告'}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 7560,
@@ -701,7 +814,14 @@
                 "role": "user",
                 "text": "{{#report_input.report_input_json#}}"
               }
-            ]
+            ],
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            }
           },
           "position": {
             "x": 6120,
@@ -725,7 +845,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(text=''):\n    import json\n    return {'local_llm_result_json': json.dumps({'status':'ok','answer':text or '本地版竞分对比报告'}, ensure_ascii=False)}\n"
+            "source_code": "def main(text=''):\n    import json\n    return {'local_llm_result_json': json.dumps({'status':'ok','answer':text or '本地版竞分对比报告'}, ensure_ascii=False)}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(text=''):\n    import json\n    return {'local_llm_result_json': json.dumps({'status':'ok','answer':text or '本地版竞分对比报告'}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 6480,
@@ -749,7 +872,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(analysis_result_json='', full_llm_result_json='', local_llm_result_json=''):\n    import json\n    for raw in (full_llm_result_json, local_llm_result_json, analysis_result_json):\n        if raw:\n            obj=json.loads(raw); return {'final_answer': obj.get('answer') or obj.get('summary') or json.dumps(obj, ensure_ascii=False)}\n    return {'final_answer':'PHONE 查询完成'}\n"
+            "source_code": "def main(analysis_result_json='', full_llm_result_json='', local_llm_result_json=''):\n    import json\n    for raw in (full_llm_result_json, local_llm_result_json, analysis_result_json):\n        if raw:\n            obj=json.loads(raw); return {'final_answer': obj.get('answer') or obj.get('summary') or json.dumps(obj, ensure_ascii=False)}\n    return {'final_answer':'PHONE 查询完成'}\n",
+            "variables": [],
+            "code_language": "python3",
+            "code": "def main(analysis_result_json='', full_llm_result_json='', local_llm_result_json=''):\n    import json\n    for raw in (full_llm_result_json, local_llm_result_json, analysis_result_json):\n        if raw:\n            obj=json.loads(raw); return {'final_answer': obj.get('answer') or obj.get('summary') or json.dumps(obj, ensure_ascii=False)}\n    return {'final_answer':'PHONE 查询完成'}\n"
           },
           "position": {
             "x": 7200,
@@ -769,7 +895,8 @@
             "title": "结束_返回最终回答",
             "type": "answer",
             "answer": "{{#final.final_answer#}}",
-            "outputs": []
+            "outputs": [],
+            "variables": []
           },
           "position": {
             "x": 7560,
