@@ -33,10 +33,10 @@ def load_phone_dsl_text(text):
     shadowing the global yaml module name.
     """
     try:
-        import yaml
+        import yaml as pyyaml
     except ModuleNotFoundError:
         return json.loads(text)
-    return yaml.safe_load(text)
+    return pyyaml.safe_load(text)
 
 def load_doc():
     text=merged_text()
@@ -87,6 +87,9 @@ def check_frontend_checkvalid_schema(doc):
                         missing.append(f'{nid}({title}) if-else.data.cases[{idx}].logical_operator missing')
         elif t == 'answer':
             need_list('outputs')
+            need_list('variables')
+        elif t == 'code':
+            need_list('variables')
     if missing:
         raise AssertionError('frontend checkValid schema failed:\n' + '\n'.join(missing))
 
