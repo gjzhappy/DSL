@@ -9,7 +9,7 @@
   "workflow": {
     "environment_variables": [
       {
-        "description": "Controls whether report generation uses the full LLM HTTP path. Keep false unless token and chat URLs are configured.",
+        "description": "Controls whether PHONE report generation uses the full LLM HTTP path; set to \"true\" to enable after configuring LLM env values.",
         "id": "env-phone-enable-full-llm",
         "name": "ENABLE_FULL_LLM",
         "selector": [
@@ -20,36 +20,146 @@
         "value_type": "string"
       },
       {
-        "description": "HTTP endpoint used by PHONE DSL to execute Mongo query requests.",
-        "id": "env-phone-mongo-query-url",
-        "name": "MONGO_QUERY_URL",
+        "description": "Roadmap-aligned HTTP endpoint used by PHONE DSL to execute Mongo query requests.",
+        "id": "env-phone-sn-mongodb-query-urls",
+        "name": "SN_MONGODB_QUERY_URLS",
         "selector": [
           "env",
-          "MONGO_QUERY_URL"
+          "SN_MONGODB_QUERY_URLS"
         ],
         "value": "",
         "value_type": "string"
       },
       {
-        "description": "Token endpoint for the optional full LLM HTTP path.",
-        "id": "env-phone-full-llm-token-url",
-        "name": "FULL_LLM_TOKEN_URL",
+        "description": "Roadmap-aligned token endpoint for the optional full LLM HTTP path.",
+        "id": "env-phone-llm-token-url",
+        "name": "LLM_TOKEN_URL",
         "selector": [
           "env",
-          "FULL_LLM_TOKEN_URL"
+          "LLM_TOKEN_URL"
         ],
         "value": "",
         "value_type": "string"
       },
       {
-        "description": "Chat/completion endpoint for the optional full LLM HTTP path.",
-        "id": "env-phone-full-llm-chat-url",
-        "name": "FULL_LLM_CHAT_URL",
+        "description": "Roadmap-aligned chat/completion endpoint for the optional full LLM HTTP path.",
+        "id": "env-phone-llm-chat-url",
+        "name": "LLM_CHAT_URL",
         "selector": [
           "env",
-          "FULL_LLM_CHAT_URL"
+          "LLM_CHAT_URL"
         ],
         "value": "",
+        "value_type": "string"
+      },
+      {
+        "description": "Application id sent to full LLM request builders when required.",
+        "id": "env-phone-llm-app-id",
+        "name": "LLM_APP_ID",
+        "selector": [
+          "env",
+          "LLM_APP_ID"
+        ],
+        "value": "",
+        "value_type": "string"
+      },
+      {
+        "description": "Optional static token for the full LLM path. Keep empty unless deployment provides a secret value.",
+        "id": "env-phone-llm-static-token",
+        "name": "LLM_STATIC_TOKEN",
+        "selector": [
+          "env",
+          "LLM_STATIC_TOKEN"
+        ],
+        "value": "",
+        "value_type": "secret"
+      },
+      {
+        "description": "Model name for the optional full LLM chat request.",
+        "id": "env-phone-llm-model",
+        "name": "LLM_MODEL",
+        "selector": [
+          "env",
+          "LLM_MODEL"
+        ],
+        "value": "",
+        "value_type": "string"
+      },
+      {
+        "description": "User identifier for the optional full LLM chat request.",
+        "id": "env-phone-llm-user",
+        "name": "LLM_USER",
+        "selector": [
+          "env",
+          "LLM_USER"
+        ],
+        "value": "phone_module_jf",
+        "value_type": "string"
+      },
+      {
+        "description": "Optional Basic Authorization header value for the full LLM HTTP path; leave empty when not required.",
+        "id": "env-phone-llm-basic-auth",
+        "name": "LLM_BASIC_AUTH",
+        "selector": [
+          "env",
+          "LLM_BASIC_AUTH"
+        ],
+        "value": "",
+        "value_type": "string"
+      },
+      {
+        "description": "Timeout in milliseconds propagated into full LLM request payloads when supported.",
+        "id": "env-phone-llm-timeout-ms",
+        "name": "LLM_TIMEOUT_MS",
+        "selector": [
+          "env",
+          "LLM_TIMEOUT_MS"
+        ],
+        "value": "30000",
+        "value_type": "string"
+      },
+      {
+        "description": "Temperature parameter for the optional full LLM chat request.",
+        "id": "env-phone-llm-temperature",
+        "name": "LLM_TEMPERATURE",
+        "selector": [
+          "env",
+          "LLM_TEMPERATURE"
+        ],
+        "value": "0.2",
+        "value_type": "string"
+      },
+      {
+        "description": "Top-p parameter for the optional full LLM chat request.",
+        "id": "env-phone-llm-top-p",
+        "name": "LLM_TOP_P",
+        "selector": [
+          "env",
+          "LLM_TOP_P"
+        ],
+        "value": "0.9",
+        "value_type": "string"
+      },
+      {
+        "description": "Maximum completion tokens for the optional full LLM chat request.",
+        "id": "env-phone-llm-max-completion-tokens",
+        "name": "LLM_MAX_COMPLETION_TOKENS",
+        "selector": [
+          "env",
+          "LLM_MAX_COMPLETION_TOKENS"
+        ],
+        "value": "4096",
+        "value_type": "string"
+      },
+      {
+        "description": "Whether the optional full LLM chat request should stream responses.",
+        "id": "env-phone-llm-stream",
+        "name": "LLM_STREAM",
+        "selector": [
+          "env",
+          "LLM_STREAM"
+        ],
+        "value": "false",
         "value_type": "string"
       }
     ],
@@ -387,7 +497,7 @@
               }
             },
             "method": "POST",
-            "url": "${MONGO_QUERY_URL}",
+            "url": "{{#env.SN_MONGODB_QUERY_URLS#}}",
             "body": {
               "type": "json",
               "data": "{{#mongo.mongo_request_json#}}"
@@ -585,10 +695,32 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(report_input_json=''):\n    import json\n    return {'full_llm_token_request_body_json': json.dumps({'grant_type':'client_credentials','scope':'phone_report'}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(report_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth=''):\n    import json\n    body={'grant_type':'client_credentials','scope':'phone_report'}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    if llm_static_token:\n        body['static_token']=llm_static_token\n    if llm_basic_auth:\n        body['basic_auth_configured']=True\n    return {'full_llm_token_request_body_json': json.dumps(body, ensure_ascii=False)}\n",
+            "variables": [
+              {
+                "variable": "llm_app_id",
+                "value_selector": [
+                  "env",
+                  "LLM_APP_ID"
+                ]
+              },
+              {
+                "variable": "llm_static_token",
+                "value_selector": [
+                  "env",
+                  "LLM_STATIC_TOKEN"
+                ]
+              },
+              {
+                "variable": "llm_basic_auth",
+                "value_selector": [
+                  "env",
+                  "LLM_BASIC_AUTH"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(report_input_json=''):\n    import json\n    return {'full_llm_token_request_body_json': json.dumps({'grant_type':'client_credentials','scope':'phone_report'}, ensure_ascii=False)}\n"
+            "code": "def main(report_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth=''):\n    import json\n    body={'grant_type':'client_credentials','scope':'phone_report'}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    if llm_static_token:\n        body['static_token']=llm_static_token\n    if llm_basic_auth:\n        body['basic_auth_configured']=True\n    return {'full_llm_token_request_body_json': json.dumps(body, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 5400,
@@ -608,12 +740,12 @@
             "title": "HTTP请求_获取满血版LLM Token",
             "type": "http-request",
             "method": "POST",
-            "url": "${FULL_LLM_TOKEN_URL}",
+            "url": "{{#env.LLM_TOKEN_URL#}}",
             "body": {
               "type": "json",
               "data": "{{#token_req.full_llm_token_request_body_json#}}"
             },
-            "headers": "",
+            "headers": "Authorization: {{#env.LLM_BASIC_AUTH#}}",
             "params": "",
             "variables": [],
             "authorization": {
@@ -654,10 +786,10 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':'${token}' if ok else ''}, ensure_ascii=False)}\n",
+            "source_code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    token=''\n    if ok and body:\n        try:\n            payload=json.loads(body)\n            token=payload.get('access_token') or payload.get('token') or ''\n        except Exception:\n            token=''\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':token}, ensure_ascii=False)}\n",
             "variables": [],
             "code_language": "python3",
-            "code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':'${token}' if ok else ''}, ensure_ascii=False)}\n"
+            "code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    token=''\n    if ok and body:\n        try:\n            payload=json.loads(body)\n            token=payload.get('access_token') or payload.get('token') or ''\n        except Exception:\n            token=''\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':token}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 6120,
@@ -717,10 +849,67 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(report_input_json='', full_llm_token_result_json=''):\n    import json\n    return {'full_llm_request_body_json': json.dumps({'report_input':json.loads(report_input_json or '{}'),'token':json.loads(full_llm_token_result_json or '{}').get('access_token','')}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(report_input_json='', full_llm_token_result_json='', llm_app_id='', llm_model='', llm_user='', llm_timeout_ms='', llm_temperature='', llm_top_p='', llm_max_completion_tokens='', llm_stream=''):\n    import json\n    def as_float(v, default):\n        try: return float(v) if v not in (None,'') else default\n        except Exception: return default\n    def as_int(v, default):\n        try: return int(v) if v not in (None,'') else default\n        except Exception: return default\n    body={'report_input': json.loads(report_input_json or '{}'), 'token': json.loads(full_llm_token_result_json or '{}').get('access_token',''), 'model': llm_model or '', 'user': llm_user or '', 'stream': str(llm_stream).lower() == 'true', 'temperature': as_float(llm_temperature, 0.2), 'top_p': as_float(llm_top_p, 0.9), 'max_completion_tokens': as_int(llm_max_completion_tokens, 4096), 'timeout_ms': as_int(llm_timeout_ms, 30000)}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    return {'full_llm_request_body_json': json.dumps(body, ensure_ascii=False)}\n",
+            "variables": [
+              {
+                "variable": "llm_app_id",
+                "value_selector": [
+                  "env",
+                  "LLM_APP_ID"
+                ]
+              },
+              {
+                "variable": "llm_model",
+                "value_selector": [
+                  "env",
+                  "LLM_MODEL"
+                ]
+              },
+              {
+                "variable": "llm_user",
+                "value_selector": [
+                  "env",
+                  "LLM_USER"
+                ]
+              },
+              {
+                "variable": "llm_timeout_ms",
+                "value_selector": [
+                  "env",
+                  "LLM_TIMEOUT_MS"
+                ]
+              },
+              {
+                "variable": "llm_temperature",
+                "value_selector": [
+                  "env",
+                  "LLM_TEMPERATURE"
+                ]
+              },
+              {
+                "variable": "llm_top_p",
+                "value_selector": [
+                  "env",
+                  "LLM_TOP_P"
+                ]
+              },
+              {
+                "variable": "llm_max_completion_tokens",
+                "value_selector": [
+                  "env",
+                  "LLM_MAX_COMPLETION_TOKENS"
+                ]
+              },
+              {
+                "variable": "llm_stream",
+                "value_selector": [
+                  "env",
+                  "LLM_STREAM"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(report_input_json='', full_llm_token_result_json=''):\n    import json\n    return {'full_llm_request_body_json': json.dumps({'report_input':json.loads(report_input_json or '{}'),'token':json.loads(full_llm_token_result_json or '{}').get('access_token','')}, ensure_ascii=False)}\n"
+            "code": "def main(report_input_json='', full_llm_token_result_json='', llm_app_id='', llm_model='', llm_user='', llm_timeout_ms='', llm_temperature='', llm_top_p='', llm_max_completion_tokens='', llm_stream=''):\n    import json\n    def as_float(v, default):\n        try: return float(v) if v not in (None,'') else default\n        except Exception: return default\n    def as_int(v, default):\n        try: return int(v) if v not in (None,'') else default\n        except Exception: return default\n    body={'report_input': json.loads(report_input_json or '{}'), 'token': json.loads(full_llm_token_result_json or '{}').get('access_token',''), 'model': llm_model or '', 'user': llm_user or '', 'stream': str(llm_stream).lower() == 'true', 'temperature': as_float(llm_temperature, 0.2), 'top_p': as_float(llm_top_p, 0.9), 'max_completion_tokens': as_int(llm_max_completion_tokens, 4096), 'timeout_ms': as_int(llm_timeout_ms, 30000)}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    return {'full_llm_request_body_json': json.dumps(body, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 6840,
@@ -740,12 +929,12 @@
             "title": "HTTP请求_调用满血版LLM接口",
             "type": "http-request",
             "method": "POST",
-            "url": "${FULL_LLM_CHAT_URL}",
+            "url": "{{#env.LLM_CHAT_URL#}}",
             "body": {
               "type": "json",
               "data": "{{#full_req.full_llm_request_body_json#}}"
             },
-            "headers": "",
+            "headers": "Authorization: Bearer {{#token_parse.full_llm_token_result_json.access_token#}}\nX-Static-Token: {{#env.LLM_STATIC_TOKEN#}}\nAuthorization-Basic: {{#env.LLM_BASIC_AUTH#}}",
             "params": "",
             "variables": [],
             "authorization": {

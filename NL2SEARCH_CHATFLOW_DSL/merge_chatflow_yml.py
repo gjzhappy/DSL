@@ -56,6 +56,17 @@ def load_doc(text):
 ENV_BRACE_RE=re.compile(r'\{\{#env\.([A-Za-z_][A-Za-z0-9_]*)#\}\}')
 ENV_DOT_RE=re.compile(r'(?<![A-Za-z0-9_])env\.([A-Za-z_][A-Za-z0-9_]*)')
 ENV_DOLLAR_RE=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+REQUIRED_ENV_NAMES={
+    'ENABLE_FULL_LLM','SN_MONGODB_QUERY_URLS','LLM_TOKEN_URL','LLM_CHAT_URL',
+    'LLM_APP_ID','LLM_STATIC_TOKEN','LLM_MODEL','LLM_USER','LLM_BASIC_AUTH',
+    'LLM_TIMEOUT_MS','LLM_TEMPERATURE','LLM_TOP_P','LLM_MAX_COMPLETION_TOKENS','LLM_STREAM',
+}
+DEPRECATED_ENV_NAMES={'MONGO_QUERY_URL','FULL_LLM_TOKEN_URL','FULL_LLM_CHAT_URL'}
+EXPECTED_HTTP_URLS={
+    'HTTP请求_执行Mongo查询':'{{#env.SN_MONGODB_QUERY_URLS#}}',
+    'HTTP请求_获取满血版LLM Token':'{{#env.LLM_TOKEN_URL#}}',
+    'HTTP请求_调用满血版LLM接口':'{{#env.LLM_CHAT_URL#}}',
+}
 
 
 def node_label(node):
@@ -73,8 +84,7 @@ def collect_env_refs(doc):
         if isinstance(v, str):
             for m in ENV_BRACE_RE.finditer(v): add(m.group(1),'template-env',path,node,v)
             for m in ENV_DOT_RE.finditer(v): add(m.group(1),'dot-env',path,node,v)
-            if keyname == 'url':
-                for m in ENV_DOLLAR_RE.finditer(v): add(m.group(1),'http-url-env',path,node,v)
+            for m in ENV_DOLLAR_RE.finditer(v): add(m.group(1),'dollar-env',path,node,v)
         elif isinstance(v, list):
             if len(v) >= 2 and v[0] == 'env' and isinstance(v[1], str):
                 add(v[1],'selector-env',path,node,v)
@@ -97,7 +107,8 @@ def env_defs(doc):
         names.append(name)
         selector=e.get('selector')
         if selector is not None and selector != ['env', name]: fail(f'environment variable selector mismatch for {name}: {selector}')
-        if 'value_type' not in e: fail(f'environment variable missing value_type: {name}')
+        for field in ('description','id','name','selector','value','value_type'):
+            if field not in e: fail(f'environment variable missing {field}: {name}')
     dup=[n for n in set(names) if names.count(n)>1]
     if dup: fail(f'environment variable names must be unique: {sorted(dup)}')
     return {e['name']:e for e in envs}
@@ -107,9 +118,22 @@ def validate_env(doc):
     refs=collect_env_refs(doc); defs=env_defs(doc)
     missing=sorted(set(refs)-set(defs))
     if missing: fail(f'env references missing workflow.environment_variables definitions: {missing}')
-    if 'ENABLE_FULL_LLM' not in defs: fail('ENABLE_FULL_LLM environment variable is required')
-    http_missing=sorted({k for k,v in refs.items() for r in v if r['kind']=='http-url-env'}-set(defs))
-    if http_missing: fail(f'HTTP URL env references missing definitions: {http_missing}')
+    missing_required=sorted(REQUIRED_ENV_NAMES-set(defs))
+    if missing_required: fail(f'required environment variables missing: {missing_required}')
+    deprecated=sorted((set(refs)|set(defs)) & DEPRECATED_ENV_NAMES)
+    if deprecated: fail(f'deprecated PHONE env names found; use roadmap env names instead: {deprecated}')
+    for name in REQUIRED_ENV_NAMES:
+        e=defs.get(name,{})
+        if e.get('selector') != ['env', name]: fail(f'environment variable selector mismatch for {name}: {e.get('selector')}')
+    if defs.get('ENABLE_FULL_LLM',{}).get('value_type') != 'string': fail('ENABLE_FULL_LLM value_type must be string')
+    if defs.get('LLM_STATIC_TOKEN',{}).get('value_type') != 'secret' or defs.get('LLM_STATIC_TOKEN',{}).get('value') != '': fail('LLM_STATIC_TOKEN must be secret with empty value')
+    nodes=doc.get('workflow',{}).get('graph',{}).get('nodes') or []
+    actual={}
+    for n in nodes:
+        title=(n.get('data') or {}).get('title')
+        if title in EXPECTED_HTTP_URLS: actual[title]=(n.get('data') or {}).get('url')
+    for title,expected in EXPECTED_HTTP_URLS.items():
+        if actual.get(title) != expected: fail(f'HTTP URL for {title} must be {expected}, got {actual.get(title)!r}')
     return refs, defs
 
 
@@ -124,14 +148,26 @@ def full_file_ignored():
 def print_env_report(refs, defs):
     ref_names=sorted(refs)
     def_names=sorted(defs)
-    http_refs=sorted({k for k,v in refs.items() for r in v if r['kind']=='http-url-env'})
+    http_refs=sorted({k for k,v in refs.items() for r in v if r['kind'] in ('template-env','dollar-env') and '.url' in r['path']})
+    deprecated=sorted((set(refs)|set(defs)) & DEPRECATED_ENV_NAMES)
     print(f'all_env_refs: {ref_names}')
     print(f'defined_env_names: {def_names}')
     print(f'missing_env_defs: {sorted(set(ref_names)-set(def_names))}')
     print(f'unused_env_defs: {sorted(set(def_names)-set(ref_names))}')
+    print(f'deprecated_env_names: {deprecated}')
     print(f'http_env_refs: {http_refs}')
+    print('HTTP URL actual values:')
+    for title, expected in EXPECTED_HTTP_URLS.items():
+        actual=''
+        for refs_for_name in refs.values():
+            for r in refs_for_name:
+                if r.get('title') == title and '.url' in r.get('path',''):
+                    actual=r.get('value')
+        print(f'  {title}: {actual!r} (expected {expected!r})')
     e=defs.get('ENABLE_FULL_LLM',{})
     print(f'ENABLE_FULL_LLM default/value: {e.get("value")!r}, value_type: {e.get("value_type")!r}')
+    st=defs.get('LLM_STATIC_TOKEN',{})
+    print(f'LLM_STATIC_TOKEN value_type: {st.get("value_type")!r}, value: {st.get("value")!r}')
 
 def validate(doc):
     if doc.get('version')!='0.6.0': fail('version must be 0.6.0')
