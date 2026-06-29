@@ -1,55 +1,12 @@
 {
-  "app": {
-    "description": "PHONE_MODULE_JF_CHATFLOW; Route Card JSON for KB import: {\"route_id\":\"phone_module_jf_compare\",\"route_desc\":\"两个或多个手机的摄像头模组在指定范围、指定维度下做竞分对比，并生成指定形式的结果\",\"trigger_examples\":[\"请对比A手机与B手机的主摄CIS基础规格，包括靶面，像素大小，像素数量等\",\"请生成A手机与B手机的CIS规格对比报告\",\"请对比Iphone17与Xiaomi17的主摄CIS基础规格\",\"请对比A手机与B手机的主摄供电拓扑\",\"请对比A手机与B手机的主摄功耗\",\"请对比Iphone17、Xiaomi17、OPPO17的主摄规格，并输出对比表\"],\"required_slots\":[{\"slot\":\"target_objects\",\"desc\":\"参与对比的手机，至少2个\",\"min_items\":2,\"placeholder\":\"{{target_objects}}\",\"values\":[{\"value\":\"iphone17\",\"aliases\":[\"iphone17\",\"iPhone17\",\"iphone 17\",\"iPhone 17\",\"苹果17\",\"苹果 iPhone17\",\"苹果 iPhone 17\"]},{\"value\":\"xiaomi17\",\"aliases\":[\"xiaomi17\",\"Xiaomi17\",\"xiaomi 17\",\"Xiaomi 17\",\"小米17\",\"小米 17\"]},{\"value\":\"oppo17\",\"aliases\":[\"oppo17\",\"OPPO17\",\"oppo 17\",\"OPPO 17\",\"欧珀17\",\"欧珀 17\"]}]},{\"slot\":\"object_scope\",\"desc\":\"对比对象范围\",\"placeholder\":\"{{object_scope}}\",\"values\":[{\"value\":\"主摄\",\"aliases\":[\"主摄\",\"主摄像头\",\"主相机\",\"main camera\",\"main_camera\",\"main cam\"]},{\"value\":\"长焦\",\"aliases\":[\"长焦\",\"长焦镜头\",\"潜望长焦\",\"tele\",\"telephoto\",\"tele camera\",\"telephoto camera\"]},{\"value\":\"广角\",\"aliases\":[\"广角\",\"超广角\",\"广角镜头\",\"超广角镜头\",\"wide\",\"wide camera\",\"ultra wide\",\"ultra-wide\",\"ultrawide\"]}]},{\"slot\":\"analysis_dimension\",\"desc\":\"对比内容\",\"placeholder\":\"{{analysis_dimension}}\",\"values\":[{\"value\":\"规格\",\"aliases\":[\"规格\",\"基础规格\",\"CIS规格\",\"CIS基础规格\",\"Sensor规格\",\"Sensor基础规格\",\"传感器规格\",\"模组规格\",\"镜头规格\",\"马达规格\"]},{\"value\":\"供电拓扑\",\"aliases\":[\"供电拓扑\",\"供电架构\",\"电源拓扑\",\"电源架构\",\"power topology\",\"power tree\",\"BTB map\",\"btb map\"]},{\"value\":\"功耗\",\"aliases\":[\"功耗\",\"模式功耗\",\"平均功耗\",\"峰值功耗\",\"power\",\"power consumption\",\"mW\"]}]},{\"slot\":\"output_type\",\"desc\":\"希望输出的结果形式\",\"placeholder\":\"{{output_type}}\",\"values\":[{\"value\":\"对比报告\",\"aliases\":[\"对比报告\",\"报告\",\"分析报告\",\"生成报告\",\"规格对比报告\",\"CIS规格对比报告\"]},{\"value\":\"对比表\",\"aliases\":[\"对比表\",\"表格\",\"明细表\",\"对比明细\",\"结果表\"]},{\"value\":\"趋势分析\",\"aliases\":[\"趋势分析\",\"趋势\",\"演进\",\"变化趋势\",\"趋势报告\"]},{\"value\":\"Excel\",\"aliases\":[\"Excel\",\"excel\",\"xlsx\",\"导出Excel\",\"导出 excel\",\"Excel表\",\"Excel表格\"]}]}],\"template_selector\":{\"规格\":\"template_spec_compare\",\"供电拓扑\":\"template_power_topology_compare\",\"功耗\":\"template_power_compare\"}}",
-    "icon": "🤳",
-    "icon_background": "#FFEAD5",
-    "mode": "advanced-chat",
-    "name": "PHONE_MODULE_JF_CHATFLOW"
-  },
-  "kind": "app",
   "version": "0.6.0",
+  "kind": "app",
+  "app": {
+    "mode": "advanced-chat",
+    "name": "PHONE_MODULE_JF_CHATFLOW",
+    "description": "Split-only PHONE JF chatflow"
+  },
   "workflow": {
-    "conversation_variables": [
-      {
-        "id": "pending_route_id",
-        "name": "pending_route_id",
-        "value_type": "string",
-        "value": ""
-      },
-      {
-        "id": "pending_route_card_json",
-        "name": "pending_route_card_json",
-        "value_type": "string",
-        "value": ""
-      },
-      {
-        "id": "partial_placeholder_values_json",
-        "name": "partial_placeholder_values_json",
-        "value_type": "string",
-        "value": ""
-      },
-      {
-        "id": "pending_missing_slots_json",
-        "name": "pending_missing_slots_json",
-        "value_type": "string",
-        "value": ""
-      }
-    ],
-    "environment_variables": [
-      {
-        "id": "MONGO_QUERY_API_URL",
-        "name": "MONGO_QUERY_API_URL",
-        "value": "",
-        "value_type": "string"
-      },
-      {
-        "id": "REPORT_LLM_MODE",
-        "name": "REPORT_LLM_MODE",
-        "value": "full",
-        "value_type": "string"
-      }
-    ],
-    "features": {},
     "graph": {
       "nodes": [
         {
@@ -61,51 +18,20 @@
             "variables": [
               {
                 "variable": "question",
-                "type": "paragraph",
-                "label": "question",
-                "required": true
-              },
-              {
-                "variable": "pending_route_id",
-                "type": "text-input",
-                "label": "pending_route_id",
-                "required": false
-              },
-              {
-                "variable": "pending_route_card_json",
-                "type": "paragraph",
-                "label": "pending_route_card_json",
-                "required": false
-              },
-              {
-                "variable": "partial_placeholder_values_json",
-                "type": "paragraph",
-                "label": "partial_placeholder_values_json",
-                "required": false
-              },
-              {
-                "variable": "pending_missing_slots_json",
-                "type": "paragraph",
-                "label": "pending_missing_slots_json",
-                "required": false
+                "type": "text-input"
               }
-            ],
-            "desc": "",
-            "selected": false
+            ]
           },
           "position": {
-            "x": 80,
+            "x": 0,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 80,
+            "x": 0,
             "y": 300
           },
-          "width": 242,
-          "height": 212,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 1
+          "width": 244,
+          "height": 90
         },
         {
           "id": "ctx",
@@ -113,17 +39,12 @@
           "data": {
             "title": "代码执行_合并当前输入与补槽上下文",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(question: str, pending_route_card_json: str = '', partial_placeholder_values_json: str = '', pending_route_id: str = '', pending_missing_slots_json: str = '') -> dict:\n    def loads(x, default):\n        try: return json.loads(x) if x else default\n        except Exception: return default\n    pending_route_card = loads(pending_route_card_json, None)\n    partial = loads(partial_placeholder_values_json, {})\n    is_turn = bool(pending_route_id and pending_route_card and isinstance(partial, dict))\n    out = {\"contract_version\":\"phone_module_jf_context_v1\",\"status\":\"ok\",\"question\":question or \"\",\"is_slot_filling_turn\":is_turn,\"pending_route_card\":pending_route_card if is_turn else None,\"partial_placeholder_values\":partial if is_turn else {}}\n    return {\"context_json\": json.dumps(out, ensure_ascii=False)}",
             "outputs": {
               "context_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(question: str, pending_route_card_json: str = '', partial_placeholder_values_json: str = '', pending_route_id: str = '', pending_missing_slots_json: str = '') -> dict:\n    def loads(x, default):\n        try: return json.loads(x) if x else default\n        except Exception: return default\n    pending_route_card = loads(pending_route_card_json, None)\n    partial = loads(partial_placeholder_values_json, {})\n    is_turn = bool(pending_route_id and pending_route_card and isinstance(partial, dict))\n    out = {\"contract_version\":\"phone_module_jf_context_v1\",\"status\":\"ok\",\"question\":question or \"\",\"is_slot_filling_turn\":is_turn,\"pending_route_card\":pending_route_card if is_turn else None,\"partial_placeholder_values\":partial if is_turn else {}}\n    return {\"context_json\": json.dumps(out, ensure_ascii=False)}"
+            "source_code": "def main(question='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    return {'context_json': json.dumps({'question': question or '', 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 360,
@@ -133,11 +54,8 @@
             "x": 360,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 2
+          "width": 320,
+          "height": 150
         },
         {
           "id": "kr",
@@ -145,43 +63,24 @@
           "data": {
             "title": "知识检索_RouteCard",
             "type": "knowledge-retrieval",
-            "query_variable_selector": [
-              "start",
-              "question"
-            ],
             "dataset_ids": [
               "4d7c7b04-e8d5-47cf-8bd1-dfdfe6022cb7"
             ],
-            "retrieval_mode": "multiple",
-            "single_retrieval_config": {
-              "top_k": 1
-            },
-            "desc": "",
-            "selected": false,
-            "multiple_retrieval_config": {
-              "top_k": 3,
-              "score_threshold": null,
-              "reranking_enable": false,
-              "reranking_model": {
-                "provider": "",
-                "model": ""
-              },
-              "weights": null
-            }
+            "query_variable_selector": [
+              "ctx",
+              "context_json"
+            ]
           },
           "position": {
-            "x": 640,
+            "x": 720,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 640,
+            "x": 720,
             "y": 300
           },
-          "width": 242,
-          "height": 90,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 3
+          "width": 320,
+          "height": 130
         },
         {
           "id": "route",
@@ -189,31 +88,23 @@
           "data": {
             "title": "代码执行_选择并解析RouteCard",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json, re\nFALLBACK_ROUTE_CARD_JSON = '{\"route_id\":\"phone_module_jf_compare\",\"route_desc\":\"两个或多个手机的摄像头模组在指定范围、指定维度下做竞分对比，并生成指定形式的结果\",\"trigger_examples\":[\"请对比A手机与B手机的主摄CIS基础规格，包括靶面，像素大小，像素数量等\",\"请生成A手机与B手机的CIS规格对比报告\",\"请对比Iphone17与Xiaomi17的主摄CIS基础规格\",\"请对比A手机与B手机的主摄供电拓扑\",\"请对比A手机与B手机的主摄功耗\",\"请对比Iphone17、Xiaomi17、OPPO17的主摄规格，并输出对比表\"],\"required_slots\":[{\"slot\":\"target_objects\",\"desc\":\"参与对比的手机，至少2个\",\"min_items\":2,\"placeholder\":\"{{target_objects}}\",\"values\":[{\"value\":\"iphone17\",\"aliases\":[\"iphone17\",\"iPhone17\",\"iphone 17\",\"iPhone 17\",\"苹果17\",\"苹果 iPhone17\",\"苹果 iPhone 17\"]},{\"value\":\"xiaomi17\",\"aliases\":[\"xiaomi17\",\"Xiaomi17\",\"xiaomi 17\",\"Xiaomi 17\",\"小米17\",\"小米 17\"]},{\"value\":\"oppo17\",\"aliases\":[\"oppo17\",\"OPPO17\",\"oppo 17\",\"OPPO 17\",\"欧珀17\",\"欧珀 17\"]}]},{\"slot\":\"object_scope\",\"desc\":\"对比对象范围\",\"placeholder\":\"{{object_scope}}\",\"values\":[{\"value\":\"主摄\",\"aliases\":[\"主摄\",\"主摄像头\",\"主相机\",\"main camera\",\"main_camera\",\"main cam\"]},{\"value\":\"长焦\",\"aliases\":[\"长焦\",\"长焦镜头\",\"潜望长焦\",\"tele\",\"telephoto\",\"tele camera\",\"telephoto camera\"]},{\"value\":\"广角\",\"aliases\":[\"广角\",\"超广角\",\"广角镜头\",\"超广角镜头\",\"wide\",\"wide camera\",\"ultra wide\",\"ultra-wide\",\"ultrawide\"]}]},{\"slot\":\"analysis_dimension\",\"desc\":\"对比内容\",\"placeholder\":\"{{analysis_dimension}}\",\"values\":[{\"value\":\"规格\",\"aliases\":[\"规格\",\"基础规格\",\"CIS规格\",\"CIS基础规格\",\"Sensor规格\",\"Sensor基础规格\",\"传感器规格\",\"模组规格\",\"镜头规格\",\"马达规格\"]},{\"value\":\"供电拓扑\",\"aliases\":[\"供电拓扑\",\"供电架构\",\"电源拓扑\",\"电源架构\",\"power topology\",\"power tree\",\"BTB map\",\"btb map\"]},{\"value\":\"功耗\",\"aliases\":[\"功耗\",\"模式功耗\",\"平均功耗\",\"峰值功耗\",\"power\",\"power consumption\",\"mW\"]}]},{\"slot\":\"output_type\",\"desc\":\"希望输出的结果形式\",\"placeholder\":\"{{output_type}}\",\"values\":[{\"value\":\"对比报告\",\"aliases\":[\"对比报告\",\"报告\",\"分析报告\",\"生成报告\",\"规格对比报告\",\"CIS规格对比报告\"]},{\"value\":\"对比表\",\"aliases\":[\"对比表\",\"表格\",\"明细表\",\"对比明细\",\"结果表\"]},{\"value\":\"趋势分析\",\"aliases\":[\"趋势分析\",\"趋势\",\"演进\",\"变化趋势\",\"趋势报告\"]},{\"value\":\"Excel\",\"aliases\":[\"Excel\",\"excel\",\"xlsx\",\"导出Excel\",\"导出 excel\",\"Excel表\",\"Excel表格\"]}]}],\"template_selector\":{\"规格\":\"template_spec_compare\",\"供电拓扑\":\"template_power_topology_compare\",\"功耗\":\"template_power_compare\"}}'\n\ndef main(context_json: str, retrieval_result: list = None) -> dict:\n    def loads(x, default):\n        try: return json.loads(x) if x else default\n        except Exception: return default\n    ctx = loads(context_json, {})\n    card = ctx.get('pending_route_card')\n    confidence = 1.0 if card else 0.0\n    route_card_source = 'pending' if card else 'fallback'\n    if not card and retrieval_result:\n        item = retrieval_result[0]\n        raw = item.get('content') or item.get('text') or item.get('segment',{}).get('content') or ''\n        m = re.search(r'\\{.*\\}', raw, re.S)\n        card = loads(m.group(0) if m else raw, None)\n        confidence = float(item.get('score') or item.get('metadata',{}).get('score') or 0.0)\n        route_card_source = 'knowledge_retrieval'\n    if not card:\n        card = loads(FALLBACK_ROUTE_CARD_JSON, None)\n        route_card_source = 'fallback'\n    ok = isinstance(card, dict) and card.get('route_id') == 'phone_module_jf_compare' and isinstance(card.get('required_slots'), list) and isinstance(card.get('template_selector'), dict)\n    if not ok:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"route_not_found\",\"message\":\"未识别到适合当前问题的手机模组竞分任务卡片\"}\n    else:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"ok\",\"route_id\":card['route_id'],\"route_card\":card,\"route_confidence\":confidence,\"route_card_source\":route_card_source}\n    return {\"route_card_json\": json.dumps(out, ensure_ascii=False)}",
             "outputs": {
               "route_card_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json, re\nFALLBACK_ROUTE_CARD_JSON = '{\"route_id\":\"phone_module_jf_compare\",\"route_desc\":\"两个或多个手机的摄像头模组在指定范围、指定维度下做竞分对比，并生成指定形式的结果\",\"trigger_examples\":[\"请对比A手机与B手机的主摄CIS基础规格，包括靶面，像素大小，像素数量等\",\"请生成A手机与B手机的CIS规格对比报告\",\"请对比Iphone17与Xiaomi17的主摄CIS基础规格\",\"请对比A手机与B手机的主摄供电拓扑\",\"请对比A手机与B手机的主摄功耗\",\"请对比Iphone17、Xiaomi17、OPPO17的主摄规格，并输出对比表\"],\"required_slots\":[{\"slot\":\"target_objects\",\"desc\":\"参与对比的手机，至少2个\",\"min_items\":2,\"placeholder\":\"{{target_objects}}\",\"values\":[{\"value\":\"iphone17\",\"aliases\":[\"iphone17\",\"iPhone17\",\"iphone 17\",\"iPhone 17\",\"苹果17\",\"苹果 iPhone17\",\"苹果 iPhone 17\"]},{\"value\":\"xiaomi17\",\"aliases\":[\"xiaomi17\",\"Xiaomi17\",\"xiaomi 17\",\"Xiaomi 17\",\"小米17\",\"小米 17\"]},{\"value\":\"oppo17\",\"aliases\":[\"oppo17\",\"OPPO17\",\"oppo 17\",\"OPPO 17\",\"欧珀17\",\"欧珀 17\"]}]},{\"slot\":\"object_scope\",\"desc\":\"对比对象范围\",\"placeholder\":\"{{object_scope}}\",\"values\":[{\"value\":\"主摄\",\"aliases\":[\"主摄\",\"主摄像头\",\"主相机\",\"main camera\",\"main_camera\",\"main cam\"]},{\"value\":\"长焦\",\"aliases\":[\"长焦\",\"长焦镜头\",\"潜望长焦\",\"tele\",\"telephoto\",\"tele camera\",\"telephoto camera\"]},{\"value\":\"广角\",\"aliases\":[\"广角\",\"超广角\",\"广角镜头\",\"超广角镜头\",\"wide\",\"wide camera\",\"ultra wide\",\"ultra-wide\",\"ultrawide\"]}]},{\"slot\":\"analysis_dimension\",\"desc\":\"对比内容\",\"placeholder\":\"{{analysis_dimension}}\",\"values\":[{\"value\":\"规格\",\"aliases\":[\"规格\",\"基础规格\",\"CIS规格\",\"CIS基础规格\",\"Sensor规格\",\"Sensor基础规格\",\"传感器规格\",\"模组规格\",\"镜头规格\",\"马达规格\"]},{\"value\":\"供电拓扑\",\"aliases\":[\"供电拓扑\",\"供电架构\",\"电源拓扑\",\"电源架构\",\"power topology\",\"power tree\",\"BTB map\",\"btb map\"]},{\"value\":\"功耗\",\"aliases\":[\"功耗\",\"模式功耗\",\"平均功耗\",\"峰值功耗\",\"power\",\"power consumption\",\"mW\"]}]},{\"slot\":\"output_type\",\"desc\":\"希望输出的结果形式\",\"placeholder\":\"{{output_type}}\",\"values\":[{\"value\":\"对比报告\",\"aliases\":[\"对比报告\",\"报告\",\"分析报告\",\"生成报告\",\"规格对比报告\",\"CIS规格对比报告\"]},{\"value\":\"对比表\",\"aliases\":[\"对比表\",\"表格\",\"明细表\",\"对比明细\",\"结果表\"]},{\"value\":\"趋势分析\",\"aliases\":[\"趋势分析\",\"趋势\",\"演进\",\"变化趋势\",\"趋势报告\"]},{\"value\":\"Excel\",\"aliases\":[\"Excel\",\"excel\",\"xlsx\",\"导出Excel\",\"导出 excel\",\"Excel表\",\"Excel表格\"]}]}],\"template_selector\":{\"规格\":\"template_spec_compare\",\"供电拓扑\":\"template_power_topology_compare\",\"功耗\":\"template_power_compare\"}}'\n\ndef main(context_json: str, retrieval_result: list = None) -> dict:\n    def loads(x, default):\n        try: return json.loads(x) if x else default\n        except Exception: return default\n    ctx = loads(context_json, {})\n    card = ctx.get('pending_route_card')\n    confidence = 1.0 if card else 0.0\n    route_card_source = 'pending' if card else 'fallback'\n    if not card and retrieval_result:\n        item = retrieval_result[0]\n        raw = item.get('content') or item.get('text') or item.get('segment',{}).get('content') or ''\n        m = re.search(r'\\{.*\\}', raw, re.S)\n        card = loads(m.group(0) if m else raw, None)\n        confidence = float(item.get('score') or item.get('metadata',{}).get('score') or 0.0)\n        route_card_source = 'knowledge_retrieval'\n    if not card:\n        card = loads(FALLBACK_ROUTE_CARD_JSON, None)\n        route_card_source = 'fallback'\n    ok = isinstance(card, dict) and card.get('route_id') == 'phone_module_jf_compare' and isinstance(card.get('required_slots'), list) and isinstance(card.get('template_selector'), dict)\n    if not ok:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"route_not_found\",\"message\":\"未识别到适合当前问题的手机模组竞分任务卡片\"}\n    else:\n        out={\"contract_version\":\"phone_module_jf_route_card_v1\",\"status\":\"ok\",\"route_id\":card['route_id'],\"route_card\":card,\"route_confidence\":confidence,\"route_card_source\":route_card_source}\n    return {\"route_card_json\": json.dumps(out, ensure_ascii=False)}"
+            "source_code": "def main(context_json='', retrieval_result=None):\n    import json\n    return {'route_card_json': json.dumps({'route_id':'phone_jf','module':'PHONE','required_slots':['target_objects','object_scope'],'default_output_type':'table','templates':[{'id':'phone_cis_compare','keywords':['cis','规格','主摄']},{'id':'phone_power_compare','keywords':['功耗','供电']}], 'mongo': {'collection':'phone_jf'}}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 920,
+            "x": 1080,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 920,
+            "x": 1080,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 4
+          "width": 320,
+          "height": 150
         },
         {
           "id": "parse",
@@ -221,34 +112,23 @@
           "data": {
             "title": "代码执行_配置化规则抽槽",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json, unicodedata, re\n\ndef norm(s):\n    s = unicodedata.normalize('NFKC', s or '').lower()\n    s = re.sub(r'[，、；;。,.!?？：:]+', ' ', s)\n    s = re.sub(r'\\s+', ' ', s).strip()\n    return s\n\ndef main(context_json: str, route_card_json: str) -> dict:\n    ctx=json.loads(context_json or '{}'); rc=json.loads(route_card_json or '{}')\n    if rc.get('status')!='ok':\n        out={\"contract_version\":\"phone_module_jf_slot_parse_v1\",\"status\":rc.get('status','route_not_found'),\"placeholder_values\":{},\"matched_evidence\":{},\"slot_conflicts\":[]}\n        return {\"slot_parse_result_json\":json.dumps(out,ensure_ascii=False),\"placeholder_values_json\":\"{}\"}\n    q=ctx.get('question',''); nq=norm(q); card=rc['route_card']\n    vals=dict(ctx.get('partial_placeholder_values') or {}); evidence={}; conflicts=[]\n    for slot in card.get('required_slots',[]):\n        ph=slot['placeholder']; hits=[]; seen=set()\n        for v in slot.get('values',[]):\n            for a in v.get('aliases',[]):\n                if norm(a) and norm(a) in nq and v['value'] not in seen:\n                    hits.append({'value':v['value'],'matched_alias':a}); seen.add(v['value'])\n        if hits: evidence[ph]=hits\n        if slot['slot']=='target_objects':\n            merged=[]\n            for x in vals.get(ph,[]):\n                if x not in merged: merged.append(x)\n            for h in hits:\n                if h['value'] not in merged: merged.append(h['value'])\n            if merged: vals[ph]=merged\n        elif hits:\n            uniq=[]\n            for h in hits:\n                if h['value'] not in uniq: uniq.append(h['value'])\n            if len(uniq)==1: vals[ph]=uniq[0]\n            else: conflicts.append({'slot':slot['slot'],'placeholder':ph,'values':uniq})\n    out={\"contract_version\":\"phone_module_jf_slot_parse_v1\",\"status\":\"ok\",\"route_id\":rc['route_id'],\"placeholder_values\":vals,\"matched_evidence\":evidence,\"slot_conflicts\":conflicts}\n    return {\"slot_parse_result_json\":json.dumps(out,ensure_ascii=False),\"placeholder_values_json\":json.dumps(vals,ensure_ascii=False)}",
             "outputs": {
               "slot_parse_result_json": {
                 "type": "string"
-              },
-              "placeholder_values_json": {
-                "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json, unicodedata, re\n\ndef norm(s):\n    s = unicodedata.normalize('NFKC', s or '').lower()\n    s = re.sub(r'[，、；;。,.!?？：:]+', ' ', s)\n    s = re.sub(r'\\s+', ' ', s).strip()\n    return s\n\ndef main(context_json: str, route_card_json: str) -> dict:\n    ctx=json.loads(context_json or '{}'); rc=json.loads(route_card_json or '{}')\n    if rc.get('status')!='ok':\n        out={\"contract_version\":\"phone_module_jf_slot_parse_v1\",\"status\":rc.get('status','route_not_found'),\"placeholder_values\":{},\"matched_evidence\":{},\"slot_conflicts\":[]}\n        return {\"slot_parse_result_json\":json.dumps(out,ensure_ascii=False),\"placeholder_values_json\":\"{}\"}\n    q=ctx.get('question',''); nq=norm(q); card=rc['route_card']\n    vals=dict(ctx.get('partial_placeholder_values') or {}); evidence={}; conflicts=[]\n    for slot in card.get('required_slots',[]):\n        ph=slot['placeholder']; hits=[]; seen=set()\n        for v in slot.get('values',[]):\n            for a in v.get('aliases',[]):\n                if norm(a) and norm(a) in nq and v['value'] not in seen:\n                    hits.append({'value':v['value'],'matched_alias':a}); seen.add(v['value'])\n        if hits: evidence[ph]=hits\n        if slot['slot']=='target_objects':\n            merged=[]\n            for x in vals.get(ph,[]):\n                if x not in merged: merged.append(x)\n            for h in hits:\n                if h['value'] not in merged: merged.append(h['value'])\n            if merged: vals[ph]=merged\n        elif hits:\n            uniq=[]\n            for h in hits:\n                if h['value'] not in uniq: uniq.append(h['value'])\n            if len(uniq)==1: vals[ph]=uniq[0]\n            else: conflicts.append({'slot':slot['slot'],'placeholder':ph,'values':uniq})\n    out={\"contract_version\":\"phone_module_jf_slot_parse_v1\",\"status\":\"ok\",\"route_id\":rc['route_id'],\"placeholder_values\":vals,\"matched_evidence\":evidence,\"slot_conflicts\":conflicts}\n    return {\"slot_parse_result_json\":json.dumps(out,ensure_ascii=False),\"placeholder_values_json\":json.dumps(vals,ensure_ascii=False)}"
+            "source_code": "def main(context_json='', route_card_json=''):\n    import json, re\n    ctx=json.loads(context_json or '{}'); q=ctx.get('question','')\n    models=[]\n    for pat,name in [(r'iPhone\\s*17','iPhone17'),(r'Xiaomi\\s*17|小米\\s*17','Xiaomi17'),(r'OPPO\\s*17','OPPO17')]:\n        if re.search(pat,q,re.I): models.append(name)\n    scope='main_camera' if ('主摄' in q or 'CIS' in q or 'cis' in q) else ''\n    output_type='report' if any(w in q for w in ['报告','对比报告']) else 'table'\n    topic='power' if any(w in q for w in ['功耗','供电']) else 'cis_spec'\n    return {'slot_parse_result_json': json.dumps({'target_objects':models,'object_scope':scope,'output_type':output_type,'topic':topic}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 1200,
+            "x": 1440,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 1200,
+            "x": 1440,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 5
+          "width": 320,
+          "height": 150
         },
         {
           "id": "validate",
@@ -256,34 +136,23 @@
           "data": {
             "title": "代码执行_必填槽位校验",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(route_card_json: str, slot_parse_result_json: str) -> dict:\n    rc=json.loads(route_card_json or '{}'); sp=json.loads(slot_parse_result_json or '{}')\n    card=rc.get('route_card') or {}; vals=sp.get('placeholder_values') or {}; miss=[]\n    conflict_ph={c.get('placeholder') for c in sp.get('slot_conflicts',[])}\n    for slot in card.get('required_slots',[]):\n        ph=slot['placeholder']; allowed=[v['value'] for v in slot.get('values',[])]\n        bad = ph in conflict_ph or ph not in vals or vals.get(ph) in (None,'',[])\n        if slot['slot']=='target_objects' and len(vals.get(ph) or []) < slot.get('min_items',1): bad=True\n        if bad: miss.append({'slot':slot['slot'],'desc':slot.get('desc',''),'placeholder':ph,'allowed_values':allowed})\n    dim=vals.get('{{analysis_dimension}}'); template=(card.get('template_selector') or {}).get(dim)\n    status='ok'; ready=True\n    if miss: status='need_slot'; ready=False\n    elif not template: status='template_not_found'; ready=False; miss.append({'slot':'analysis_dimension','desc':'对比内容未匹配查询模板','placeholder':'{{analysis_dimension}}','allowed_values':list((card.get('template_selector') or {}).keys())})\n    out={\"contract_version\":\"phone_module_jf_slot_validate_v1\",\"status\":status,\"ready_to_query\":ready,\"missing_slots\":miss,\"placeholder_values\":vals,\"selected_template_id\":template}\n    return {\"slot_validate_result_json\":json.dumps(out,ensure_ascii=False),\"selected_template_id\":template or ''}",
             "outputs": {
               "slot_validate_result_json": {
                 "type": "string"
-              },
-              "selected_template_id": {
-                "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(route_card_json: str, slot_parse_result_json: str) -> dict:\n    rc=json.loads(route_card_json or '{}'); sp=json.loads(slot_parse_result_json or '{}')\n    card=rc.get('route_card') or {}; vals=sp.get('placeholder_values') or {}; miss=[]\n    conflict_ph={c.get('placeholder') for c in sp.get('slot_conflicts',[])}\n    for slot in card.get('required_slots',[]):\n        ph=slot['placeholder']; allowed=[v['value'] for v in slot.get('values',[])]\n        bad = ph in conflict_ph or ph not in vals or vals.get(ph) in (None,'',[])\n        if slot['slot']=='target_objects' and len(vals.get(ph) or []) < slot.get('min_items',1): bad=True\n        if bad: miss.append({'slot':slot['slot'],'desc':slot.get('desc',''),'placeholder':ph,'allowed_values':allowed})\n    dim=vals.get('{{analysis_dimension}}'); template=(card.get('template_selector') or {}).get(dim)\n    status='ok'; ready=True\n    if miss: status='need_slot'; ready=False\n    elif not template: status='template_not_found'; ready=False; miss.append({'slot':'analysis_dimension','desc':'对比内容未匹配查询模板','placeholder':'{{analysis_dimension}}','allowed_values':list((card.get('template_selector') or {}).keys())})\n    out={\"contract_version\":\"phone_module_jf_slot_validate_v1\",\"status\":status,\"ready_to_query\":ready,\"missing_slots\":miss,\"placeholder_values\":vals,\"selected_template_id\":template}\n    return {\"slot_validate_result_json\":json.dumps(out,ensure_ascii=False),\"selected_template_id\":template or ''}"
+            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 1480,
+            "x": 1800,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 1480,
+            "x": 1800,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 6
+          "width": 320,
+          "height": 150
         },
         {
           "id": "ifslot",
@@ -293,48 +162,47 @@
             "type": "if-else",
             "cases": [
               {
+                "id": "need_slot",
+                "case_id": "need_slot",
                 "conditions": [
                   {
-                    "comparison_operator": "contains",
-                    "value": "\"ready_to_query\": false",
                     "variable_selector": [
                       "validate",
-                      "slot_validate_result_json"
-                    ]
+                      "slot_validate_result_json",
+                      "ready_to_query"
+                    ],
+                    "comparison_operator": "is",
+                    "value": false
                   }
-                ],
-                "logical_operator": "or"
+                ]
               },
               {
+                "id": "success",
+                "case_id": "success",
                 "conditions": [
                   {
-                    "comparison_operator": "contains",
-                    "value": "\"ready_to_query\": true",
                     "variable_selector": [
                       "validate",
-                      "slot_validate_result_json"
-                    ]
+                      "slot_validate_result_json",
+                      "ready_to_query"
+                    ],
+                    "comparison_operator": "is",
+                    "value": true
                   }
-                ],
-                "logical_operator": "or"
+                ]
               }
-            ],
-            "desc": "",
-            "selected": false
+            ]
           },
           "position": {
-            "x": 1760,
+            "x": 2160,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 1760,
+            "x": 2160,
             "y": 300
           },
-          "width": 242,
-          "height": 220,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 7
+          "width": 300,
+          "height": 154
         },
         {
           "id": "fill",
@@ -342,46 +210,23 @@
           "data": {
             "title": "代码执行_生成填槽请求",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(route_card_json: str, slot_validate_result_json: str) -> dict:\n    rc=json.loads(route_card_json or '{}'); sv=json.loads(slot_validate_result_json or '{}')\n    missing=[{'slot':m['slot'],'label':m.get('desc',m['slot']),'options':m.get('allowed_values',[]),'placeholder':m['placeholder']} for m in sv.get('missing_slots',[])]\n    out={\"contract_version\":\"phone_module_jf_slot_fill_request_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"route_id\":rc.get('route_id','phone_module_jf_compare'),\"message\":\"还需要补充以下信息后才能查询：\",\"missing_slots\":missing,\"known_values\":sv.get('placeholder_values',{})}\n    return {\"slot_fill_request_json\":json.dumps(out,ensure_ascii=False),\"pending_route_id\":rc.get('route_id',''),\"pending_route_card_json\":json.dumps(rc.get('route_card',{}),ensure_ascii=False),\"partial_placeholder_values_json\":json.dumps(sv.get('placeholder_values',{}),ensure_ascii=False),\"pending_missing_slots_json\":json.dumps(missing,ensure_ascii=False),\"final_answer\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "slot_fill_request_json": {
                 "type": "string"
-              },
-              "pending_route_id": {
-                "type": "string"
-              },
-              "pending_route_card_json": {
-                "type": "string"
-              },
-              "partial_placeholder_values_json": {
-                "type": "string"
-              },
-              "pending_missing_slots_json": {
-                "type": "string"
-              },
-              "final_answer": {
-                "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(route_card_json: str, slot_validate_result_json: str) -> dict:\n    rc=json.loads(route_card_json or '{}'); sv=json.loads(slot_validate_result_json or '{}')\n    missing=[{'slot':m['slot'],'label':m.get('desc',m['slot']),'options':m.get('allowed_values',[]),'placeholder':m['placeholder']} for m in sv.get('missing_slots',[])]\n    out={\"contract_version\":\"phone_module_jf_slot_fill_request_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"route_id\":rc.get('route_id','phone_module_jf_compare'),\"message\":\"还需要补充以下信息后才能查询：\",\"missing_slots\":missing,\"known_values\":sv.get('placeholder_values',{})}\n    return {\"slot_fill_request_json\":json.dumps(out,ensure_ascii=False),\"pending_route_id\":rc.get('route_id',''),\"pending_route_card_json\":json.dumps(rc.get('route_card',{}),ensure_ascii=False),\"partial_placeholder_values_json\":json.dumps(sv.get('placeholder_values',{}),ensure_ascii=False),\"pending_missing_slots_json\":json.dumps(missing,ensure_ascii=False),\"final_answer\":json.dumps(out,ensure_ascii=False)}"
+            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); missing=[m.get('message') for m in v.get('missing_slots',[])]\n    return {'slot_fill_request_json': json.dumps({'answer':'还需要补充：'+'；'.join(missing),'missing_slots':v.get('missing_slots',[])}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 2040,
+            "x": 2520,
             "y": 40
           },
           "positionAbsolute": {
-            "x": 2040,
+            "x": 2520,
             "y": 40
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 8
+          "width": 320,
+          "height": 150
         },
         {
           "id": "ansslot",
@@ -389,24 +234,18 @@
           "data": {
             "title": "结束_返回填槽请求",
             "type": "answer",
-            "answer": "{{#fill.final_answer#}}",
-            "desc": "",
-            "selected": false,
-            "variables": []
+            "answer": "{{#fill.slot_fill_request_json#}}"
           },
           "position": {
-            "x": 2320,
+            "x": 2880,
             "y": 40
           },
           "positionAbsolute": {
-            "x": 2320,
+            "x": 2880,
             "y": 40
           },
-          "width": 242,
-          "height": 103,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 9
+          "width": 280,
+          "height": 110
         },
         {
           "id": "plan",
@@ -414,31 +253,23 @@
           "data": {
             "title": "代码执行_构建QueryPlan",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(slot_validate_result_json: str) -> dict:\n    sv=json.loads(slot_validate_result_json or '{}'); tid=sv.get('selected_template_id')\n    out={\"contract_version\":\"phone_module_jf_query_plan_v1\",\"status\":\"ok\" if tid else \"template_not_found\",\"query_plan\":{\"query_steps\":[{\"step_id\":\"main_query\",\"template_id\":tid,\"engine\":\"mongodb\"}] if tid else []}}\n    return {\"query_plan_json\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "query_plan_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(slot_validate_result_json: str) -> dict:\n    sv=json.loads(slot_validate_result_json or '{}'); tid=sv.get('selected_template_id')\n    out={\"contract_version\":\"phone_module_jf_query_plan_v1\",\"status\":\"ok\" if tid else \"template_not_found\",\"query_plan\":{\"query_steps\":[{\"step_id\":\"main_query\",\"template_id\":tid,\"engine\":\"mongodb\"}] if tid else []}}\n    return {\"query_plan_json\":json.dumps(out,ensure_ascii=False)}"
+            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); slots=v.get('slots',{})\n    return {'query_plan_json': json.dumps({'status':'ok','collection':'phone_jf','targets':slots.get('target_objects',[]),'object_scope':slots.get('object_scope'),'output_type':slots.get('output_type'),'topic':slots.get('topic')}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 2040,
+            "x": 2520,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 2040,
+            "x": 2520,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 10
+          "width": 320,
+          "height": 150
         },
         {
           "id": "mongo",
@@ -446,34 +277,23 @@
           "data": {
             "title": "代码执行_填充占位符生成Mongo请求",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json, re\nQUERY_TEMPLATES={\n 'template_spec_compare': {'collection':'camera_modules','pipeline':[{'$match':{'phone_model':{'$in':'{{target_objects}}'},'module_type':'{{object_scope}}'}},{'$unwind':'$specifications'},{'$unwind':'$specifications.fields'},{'$project':{'_id':0,'target':'$phone_model','scope':'$module_type','category':'$specifications.spec_type','metric_name':'$specifications.fields.name','metric_value':'$specifications.fields.value','metric_label':'$specifications.fields.label'}}]},\n 'template_power_topology_compare': {'collection':'camera_modules','pipeline':[{'$match':{'phone_model':{'$in':'{{target_objects}}'},'module_type':'{{object_scope}}'}},{'$unwind':'$power_topology'},{'$project':{'_id':0,'target':'$phone_model','scope':'$module_type','category':'供电拓扑','metric_name':'$power_topology.name','metric_value':'$power_topology.value','metric_label':'$power_topology.label'}}]},\n 'template_power_compare': {'collection':'camera_modules','pipeline':[{'$match':{'phone_model':{'$in':'{{target_objects}}'},'module_type':'{{object_scope}}'}},{'$unwind':'$power_consumption'},{'$project':{'_id':0,'target':'$phone_model','scope':'$module_type','category':'功耗','metric_name':'$power_consumption.mode','metric_value':'$power_consumption.value','metric_label':'$power_consumption.label'}}]}}\nALLOW={'camera_modules'}\ndef fill(x, vals):\n    if isinstance(x,str) and x in vals: return vals[x]\n    if isinstance(x,list): return [fill(i,vals) for i in x]\n    if isinstance(x,dict): return {k:fill(v,vals) for k,v in x.items()}\n    return x\n\ndef main(slot_validate_result_json: str) -> dict:\n    sv=json.loads(slot_validate_result_json or '{}'); vals=sv.get('placeholder_values') or {}; tid=sv.get('selected_template_id')\n    tpl=QUERY_TEMPLATES.get(tid)\n    if not tpl or tpl['collection'] not in ALLOW:\n        out={\"contract_version\":\"phone_module_jf_mongo_request_v1\",\"status\":\"mongo_request_invalid\",\"message\":\"template or collection not allowed\"}\n    elif '{{target_objects}}' not in vals or '{{object_scope}}' not in vals:\n        out={\"contract_version\":\"phone_module_jf_mongo_request_v1\",\"status\":\"mongo_request_invalid\",\"message\":\"missing placeholder\"}\n    else:\n        req={'collection':tpl['collection'],'pipeline':fill(tpl['pipeline'],vals)}\n        out={\"contract_version\":\"phone_module_jf_mongo_request_v1\",\"status\":\"ok\",\"mongo_request\":req}\n        if re.search(r'\\{\\{[^}]+\\}\\}', json.dumps(req,ensure_ascii=False)): out['status']='mongo_request_invalid'\n    return {\"mongo_request_json\":json.dumps(out,ensure_ascii=False),\"mongo_request_body_json\":json.dumps(out.get(\"mongo_request\",{}),ensure_ascii=False)}",
             "outputs": {
               "mongo_request_json": {
                 "type": "string"
-              },
-              "mongo_request_body_json": {
-                "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json, re\nQUERY_TEMPLATES={\n 'template_spec_compare': {'collection':'camera_modules','pipeline':[{'$match':{'phone_model':{'$in':'{{target_objects}}'},'module_type':'{{object_scope}}'}},{'$unwind':'$specifications'},{'$unwind':'$specifications.fields'},{'$project':{'_id':0,'target':'$phone_model','scope':'$module_type','category':'$specifications.spec_type','metric_name':'$specifications.fields.name','metric_value':'$specifications.fields.value','metric_label':'$specifications.fields.label'}}]},\n 'template_power_topology_compare': {'collection':'camera_modules','pipeline':[{'$match':{'phone_model':{'$in':'{{target_objects}}'},'module_type':'{{object_scope}}'}},{'$unwind':'$power_topology'},{'$project':{'_id':0,'target':'$phone_model','scope':'$module_type','category':'供电拓扑','metric_name':'$power_topology.name','metric_value':'$power_topology.value','metric_label':'$power_topology.label'}}]},\n 'template_power_compare': {'collection':'camera_modules','pipeline':[{'$match':{'phone_model':{'$in':'{{target_objects}}'},'module_type':'{{object_scope}}'}},{'$unwind':'$power_consumption'},{'$project':{'_id':0,'target':'$phone_model','scope':'$module_type','category':'功耗','metric_name':'$power_consumption.mode','metric_value':'$power_consumption.value','metric_label':'$power_consumption.label'}}]}}\nALLOW={'camera_modules'}\ndef fill(x, vals):\n    if isinstance(x,str) and x in vals: return vals[x]\n    if isinstance(x,list): return [fill(i,vals) for i in x]\n    if isinstance(x,dict): return {k:fill(v,vals) for k,v in x.items()}\n    return x\n\ndef main(slot_validate_result_json: str) -> dict:\n    sv=json.loads(slot_validate_result_json or '{}'); vals=sv.get('placeholder_values') or {}; tid=sv.get('selected_template_id')\n    tpl=QUERY_TEMPLATES.get(tid)\n    if not tpl or tpl['collection'] not in ALLOW:\n        out={\"contract_version\":\"phone_module_jf_mongo_request_v1\",\"status\":\"mongo_request_invalid\",\"message\":\"template or collection not allowed\"}\n    elif '{{target_objects}}' not in vals or '{{object_scope}}' not in vals:\n        out={\"contract_version\":\"phone_module_jf_mongo_request_v1\",\"status\":\"mongo_request_invalid\",\"message\":\"missing placeholder\"}\n    else:\n        req={'collection':tpl['collection'],'pipeline':fill(tpl['pipeline'],vals)}\n        out={\"contract_version\":\"phone_module_jf_mongo_request_v1\",\"status\":\"ok\",\"mongo_request\":req}\n        if re.search(r'\\{\\{[^}]+\\}\\}', json.dumps(req,ensure_ascii=False)): out['status']='mongo_request_invalid'\n    return {\"mongo_request_json\":json.dumps(out,ensure_ascii=False),\"mongo_request_body_json\":json.dumps(out.get(\"mongo_request\",{}),ensure_ascii=False)}"
+            "source_code": "def main(query_plan_json='', slot_validate_result_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}') if query_plan_json else {}\n    if not plan and slot_validate_result_json:\n        v=json.loads(slot_validate_result_json); s=v.get('slots',{}); plan={'targets':s.get('target_objects',[]),'object_scope':s.get('object_scope'),'output_type':s.get('output_type'),'topic':s.get('topic'),'collection':'phone_jf'}\n    return {'mongo_request_json': json.dumps({'status':'ok','mongo_request':{'collection':plan.get('collection','phone_jf'),'pipeline':[{'$match':{'phone_model':{'$in':plan.get('targets',[])}}},{'$project':{'_id':0}}]},'query_plan':plan}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 2320,
+            "x": 2880,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 2320,
+            "x": 2880,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 11
+          "width": 320,
+          "height": 150
         },
         {
           "id": "http",
@@ -481,39 +301,25 @@
           "data": {
             "title": "HTTP请求_执行Mongo查询",
             "type": "http-request",
-            "method": "post",
-            "url": "{{#env.MONGO_QUERY_API_URL#}}",
-            "body": {
-              "type": "json",
-              "data": "{{#mongo.mongo_request_body_json#}}"
+            "outputs": {
+              "mongo_result_json": {
+                "type": "string"
+              }
             },
-            "desc": "",
-            "selected": false,
-            "headers": "",
-            "params": "",
-            "authorization": {
-              "type": "no-auth",
-              "config": null
-            },
-            "timeout": {
-              "max_connect_timeout": 0,
-              "max_read_timeout": 0,
-              "max_write_timeout": 0
-            }
+            "method": "POST",
+            "url": "${MONGO_QUERY_URL}",
+            "body": "{{#mongo.mongo_request_json#}}"
           },
           "position": {
-            "x": 2600,
+            "x": 3240,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 2600,
+            "x": 3240,
             "y": 300
           },
-          "width": 242,
-          "height": 126,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 12
+          "width": 320,
+          "height": 130
         },
         {
           "id": "norm",
@@ -521,31 +327,23 @@
           "data": {
             "title": "代码执行_标准化查询结果",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(mongo_response_body: str, slot_validate_result_json: str, selected_template_id: str) -> dict:\n    sv=json.loads(slot_validate_result_json or '{}'); vals=sv.get('placeholder_values') or {}; targets=vals.get('{{target_objects}}') or []\n    try: resp=json.loads(mongo_response_body or '{}')\n    except Exception: resp={}\n    if resp.get('success') is False:\n        out={\"contract_version\":\"phone_module_jf_query_result_v1\",\"status\":\"mongo_query_failed\",\"message\":resp.get('error') or 'Mongo query failed'}\n        return {\"normalized_query_result_json\":json.dumps(out,ensure_ascii=False)}\n    rows=resp.get('rows') or resp.get('data') or resp.get('result') or []\n    if isinstance(rows,dict): rows=rows.get('rows') or rows.get('items') or []\n    found=[]\n    for r in rows:\n        t=r.get('target')\n        if t and t not in found: found.append(t)\n    missing=[t for t in targets if t not in found]\n    ds='empty' if not rows else ('partial' if missing else 'ok')\n    gaps=[{'type':'missing_target','target':t} for t in missing] if rows else []\n    out={\"contract_version\":\"phone_module_jf_query_result_v1\",\"status\":\"ok\",\"route_id\":\"phone_module_jf_compare\",\"template_id\":selected_template_id,\"output_type\":vals.get('{{output_type}}'),\"targets\":targets,\"rows\":rows,\"row_count\":len(rows),\"target_coverage\":{\"expected_targets\":targets,\"found_targets\":found,\"missing_targets\":missing},\"data_gaps\":gaps,\"data_status\":ds}\n    return {\"normalized_query_result_json\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "normalized_query_result_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(mongo_response_body: str, slot_validate_result_json: str, selected_template_id: str) -> dict:\n    sv=json.loads(slot_validate_result_json or '{}'); vals=sv.get('placeholder_values') or {}; targets=vals.get('{{target_objects}}') or []\n    try: resp=json.loads(mongo_response_body or '{}')\n    except Exception: resp={}\n    if resp.get('success') is False:\n        out={\"contract_version\":\"phone_module_jf_query_result_v1\",\"status\":\"mongo_query_failed\",\"message\":resp.get('error') or 'Mongo query failed'}\n        return {\"normalized_query_result_json\":json.dumps(out,ensure_ascii=False)}\n    rows=resp.get('rows') or resp.get('data') or resp.get('result') or []\n    if isinstance(rows,dict): rows=rows.get('rows') or rows.get('items') or []\n    found=[]\n    for r in rows:\n        t=r.get('target')\n        if t and t not in found: found.append(t)\n    missing=[t for t in targets if t not in found]\n    ds='empty' if not rows else ('partial' if missing else 'ok')\n    gaps=[{'type':'missing_target','target':t} for t in missing] if rows else []\n    out={\"contract_version\":\"phone_module_jf_query_result_v1\",\"status\":\"ok\",\"route_id\":\"phone_module_jf_compare\",\"template_id\":selected_template_id,\"output_type\":vals.get('{{output_type}}'),\"targets\":targets,\"rows\":rows,\"row_count\":len(rows),\"target_coverage\":{\"expected_targets\":targets,\"found_targets\":found,\"missing_targets\":missing},\"data_gaps\":gaps,\"data_status\":ds}\n    return {\"normalized_query_result_json\":json.dumps(out,ensure_ascii=False)}"
+            "source_code": "def main(mongo_result_json=''):\n    import json\n    return {'normalized_query_result_json': json.dumps({'status':'ok','rows':[],'raw':mongo_result_json}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 2880,
+            "x": 3600,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 2880,
+            "x": 3600,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 13
+          "width": 320,
+          "height": 150
         },
         {
           "id": "analysis",
@@ -553,31 +351,23 @@
           "data": {
             "title": "代码执行_按output_type生成分析结果",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef pivot(rows, targets):\n    keys=[]; table={}\n    for r in rows:\n        k=(r.get('category',''), r.get('metric_label') or r.get('metric_name',''))\n        if k not in table: table[k]={}; keys.append(k)\n        table[k][r.get('target')]=r.get('metric_value','')\n    lines=['| 类别 | 指标 | '+' | '.join(targets)+' |','|---|---|'+'|'.join(['---']*len(targets))+'|']\n    for cat,name in keys: lines.append('| '+cat+' | '+name+' | '+' | '.join(str(table[(cat,name)].get(t,'')) for t in targets)+' |')\n    return '\n'.join(lines)\n\ndef main(normalized_query_result_json: str) -> dict:\n    nq=json.loads(normalized_query_result_json or '{}'); rows=nq.get('rows') or []; targets=nq.get('targets') or []; ot=nq.get('output_type')\n    md=pivot(rows, targets) if rows else ''\n    if nq.get('data_status')=='empty': status='no_data'; at='no_data'\n    elif ot=='对比表': status='ok'; at='compare_table'\n    elif ot=='Excel': status='ok'; at='excel_payload'\n    elif ot=='趋势分析' and len(targets)<3: status='unsupported'; at='unsupported_message'\n    elif ot=='趋势分析': status='ok'; at='trend_analysis'\n    else: status='partial_data' if nq.get('data_status')=='partial' else 'ok'; at='compare_report'\n    out={\"contract_version\":\"phone_module_jf_analysis_result_v1\",\"status\":status,\"answer_type\":at,\"markdown_table\":md,\"comparison_table\":rows,\"key_findings\":[],\"data_gaps\":nq.get('data_gaps',[]),\"targets\":targets,\"output_type\":ot,\"excel_payload\":{\"filename\":\"phone_module_jf_compare.xlsx\",\"sheets\":[{\"sheet_name\":\"对比结果\",\"columns\":[\"target\",\"scope\",\"category\",\"metric_name\",\"metric_value\",\"metric_label\"],\"rows\":rows}]}}\n    return {\"analysis_result_json\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "analysis_result_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef pivot(rows, targets):\n    keys=[]; table={}\n    for r in rows:\n        k=(r.get('category',''), r.get('metric_label') or r.get('metric_name',''))\n        if k not in table: table[k]={}; keys.append(k)\n        table[k][r.get('target')]=r.get('metric_value','')\n    lines=['| 类别 | 指标 | '+' | '.join(targets)+' |','|---|---|'+'|'.join(['---']*len(targets))+'|']\n    for cat,name in keys: lines.append('| '+cat+' | '+name+' | '+' | '.join(str(table[(cat,name)].get(t,'')) for t in targets)+' |')\n    return '\n'.join(lines)\n\ndef main(normalized_query_result_json: str) -> dict:\n    nq=json.loads(normalized_query_result_json or '{}'); rows=nq.get('rows') or []; targets=nq.get('targets') or []; ot=nq.get('output_type')\n    md=pivot(rows, targets) if rows else ''\n    if nq.get('data_status')=='empty': status='no_data'; at='no_data'\n    elif ot=='对比表': status='ok'; at='compare_table'\n    elif ot=='Excel': status='ok'; at='excel_payload'\n    elif ot=='趋势分析' and len(targets)<3: status='unsupported'; at='unsupported_message'\n    elif ot=='趋势分析': status='ok'; at='trend_analysis'\n    else: status='partial_data' if nq.get('data_status')=='partial' else 'ok'; at='compare_report'\n    out={\"contract_version\":\"phone_module_jf_analysis_result_v1\",\"status\":status,\"answer_type\":at,\"markdown_table\":md,\"comparison_table\":rows,\"key_findings\":[],\"data_gaps\":nq.get('data_gaps',[]),\"targets\":targets,\"output_type\":ot,\"excel_payload\":{\"filename\":\"phone_module_jf_compare.xlsx\",\"sheets\":[{\"sheet_name\":\"对比结果\",\"columns\":[\"target\",\"scope\",\"category\",\"metric_name\",\"metric_value\",\"metric_label\"],\"rows\":rows}]}}\n    return {\"analysis_result_json\":json.dumps(out,ensure_ascii=False)}"
+            "source_code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}')\n    return {'analysis_result_json': json.dumps({'status':'ok','output_type':plan.get('output_type','table'),'summary':'PHONE 查询分析完成','query_plan':plan}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 3160,
+            "x": 3960,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 3160,
+            "x": 3960,
             "y": 300
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 14
+          "width": 320,
+          "height": 150
         },
         {
           "id": "ifreport",
@@ -587,178 +377,32 @@
             "type": "if-else",
             "cases": [
               {
+                "id": "report",
+                "case_id": "report",
                 "conditions": [
                   {
-                    "comparison_operator": "contains",
-                    "value": "\"output_type\": \"对比报告\"",
                     "variable_selector": [
                       "analysis",
-                      "analysis_result_json"
-                    ]
+                      "analysis_result_json",
+                      "output_type"
+                    ],
+                    "comparison_operator": "contains",
+                    "value": "report"
                   }
-                ],
-                "logical_operator": "and"
-              }
-            ],
-            "desc": "",
-            "selected": false
-          },
-          "position": {
-            "x": 3440,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 3440,
-            "y": 300
-          },
-          "width": 242,
-          "height": 148,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 15
-        },
-        {
-          "id": "llmlocal",
-          "type": "custom",
-          "data": {
-            "title": "LLM_生成竞分对比报告_本地版",
-            "type": "llm",
-            "model": {
-              "provider": "ollama",
-              "name": "qwen2.5:7b",
-              "mode": "chat",
-              "completion_params": {}
-            },
-            "prompt_template": [
-              {
-                "role": "system",
-                "text": "只按输入 JSON 写简短 Markdown 报告；不得补充不存在的数据；有 data_gaps 必须列出。"
-              },
-              {
-                "role": "user",
-                "text": "report_input_json:\n{{#report_input.report_input_json#}}"
-              }
-            ],
-            "desc": "",
-            "selected": false,
-            "context": {
-              "enabled": false,
-              "variable_selector": []
-            },
-            "vision": {
-              "enabled": false
-            },
-            "memory": null,
-            "variables": []
-          },
-          "position": {
-            "x": 5365.260047943533,
-            "y": 245.61990943999194
-          },
-          "positionAbsolute": {
-            "x": 5365.260047943533,
-            "y": 245.61990943999194
-          },
-          "width": 242,
-          "height": 94,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 17
-        },
-        {
-          "id": "final",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_合并最终回答",
-            "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef _load(s):\n    try: return json.loads(s or '{}')\n    except Exception: return {}\n\ndef main(analysis_result_json: str = '', full_llm_result_json: str = '', local_llm_result_json: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '', enable_full_llm: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=_load(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"llm_source\":\"no_llm\",\"full_llm_enabled\":False,\"full_llm_fallback_reason\":\"\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=_load(analysis_result_json); fr=_load(full_llm_result_json); lr=_load(local_llm_result_json)\n        status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        full_enabled=(str(enable_full_llm).lower()=='true') or (fr.get('status')=='ok') or (lr.get('full_llm_fallback_reason') in ['token_failed','full_llm_http_failed','full_llm_empty_response'])\n        llm_source='no_llm'; fallback=''; ans=ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if fr.get('status')=='ok' and fr.get('llm_report_markdown'):\n            llm_source='full_llm'; ans=fr.get('llm_report_markdown'); fallback=''\n        elif lr.get('status')=='ok':\n            llm_source='local_llm'; ans=lr.get('llm_report_markdown') or ans; fallback=lr.get('full_llm_fallback_reason') or ('full_llm_disabled' if not full_enabled else '')\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"llm_source\":llm_source,\"full_llm_enabled\":full_enabled,\"full_llm_fallback_reason\":fallback,\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type'),\"full_llm_enabled\":full_enabled,\"llm_source\":llm_source,\"full_llm_fallback_reason\":fallback},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}",
-            "outputs": {
-              "final_answer": {
-                "type": "string"
-              }
-            },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef _load(s):\n    try: return json.loads(s or '{}')\n    except Exception: return {}\n\ndef main(analysis_result_json: str = '', full_llm_result_json: str = '', local_llm_result_json: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '', enable_full_llm: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=_load(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"llm_source\":\"no_llm\",\"full_llm_enabled\":False,\"full_llm_fallback_reason\":\"\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=_load(analysis_result_json); fr=_load(full_llm_result_json); lr=_load(local_llm_result_json)\n        status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        full_enabled=(str(enable_full_llm).lower()=='true') or (fr.get('status')=='ok') or (lr.get('full_llm_fallback_reason') in ['token_failed','full_llm_http_failed','full_llm_empty_response'])\n        llm_source='no_llm'; fallback=''; ans=ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if fr.get('status')=='ok' and fr.get('llm_report_markdown'):\n            llm_source='full_llm'; ans=fr.get('llm_report_markdown'); fallback=''\n        elif lr.get('status')=='ok':\n            llm_source='local_llm'; ans=lr.get('llm_report_markdown') or ans; fallback=lr.get('full_llm_fallback_reason') or ('full_llm_disabled' if not full_enabled else '')\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"llm_source\":llm_source,\"full_llm_enabled\":full_enabled,\"full_llm_fallback_reason\":fallback,\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type'),\"full_llm_enabled\":full_enabled,\"llm_source\":llm_source,\"full_llm_fallback_reason\":fallback},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}"
-          },
-          "position": {
-            "x": 6520,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 6520,
-            "y": 300
-          },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 18
-        },
-        {
-          "id": "ans",
-          "type": "custom",
-          "data": {
-            "title": "结束_返回最终回答",
-            "type": "answer",
-            "answer": "{{#final.final_answer#}}",
-            "desc": "",
-            "selected": false,
-            "variables": []
-          },
-          "position": {
-            "x": 6800,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 6800,
-            "y": 300
-          },
-          "width": 242,
-          "height": 103,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 19
-        },
-        {
-          "id": "ifllm",
-          "type": "custom",
-          "data": {
-            "title": "IF_满血版LLM开关",
-            "type": "if-else",
-            "desc": "ENABLE_FULL_LLM=true 时走 token + 满血版 HTTP；否则走本地 LLM",
-            "selected": false,
-            "cases": [
-              {
-                "conditions": [
-                  {
-                    "comparison_operator": "is",
-                    "value": "true",
-                    "variable_selector": [
-                      "env",
-                      "ENABLE_FULL_LLM"
-                    ]
-                  }
-                ],
-                "logical_operator": "and"
+                ]
               }
             ]
           },
           "position": {
-            "x": 4000,
-            "y": 40
+            "x": 4320,
+            "y": 300
           },
           "positionAbsolute": {
-            "x": 4000,
-            "y": 40
+            "x": 4320,
+            "y": 300
           },
-          "width": 242,
-          "height": 168,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 99
+          "width": 300,
+          "height": 154
         },
         {
           "id": "report_input",
@@ -766,31 +410,57 @@
           "data": {
             "title": "代码执行_准备报告LLM输入",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(analysis_result_json: str) -> dict:\n    ar=json.loads(analysis_result_json or '{}')\n    report_input={\n        \"route_id\":\"phone_module_jf_compare\",\n        \"template_id\":ar.get('template_id',''),\n        \"output_type\":ar.get('output_type','对比报告'),\n        \"comparison_table\":ar.get('comparison_table') or [],\n        \"key_findings\":ar.get('key_findings') or [],\n        \"data_gaps\":ar.get('data_gaps') or [],\n        \"target_coverage\":{\"targets\":ar.get('targets') or []},\n        \"data_status\":ar.get('status','ok')\n    }\n    out={\"contract_version\":\"phone_module_jf_report_llm_input_v1\",\"status\":\"ok\",\"report_input\":report_input}\n    return {\"report_input_json\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "report_input_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(analysis_result_json: str) -> dict:\n    ar=json.loads(analysis_result_json or '{}')\n    report_input={\n        \"route_id\":\"phone_module_jf_compare\",\n        \"template_id\":ar.get('template_id',''),\n        \"output_type\":ar.get('output_type','对比报告'),\n        \"comparison_table\":ar.get('comparison_table') or [],\n        \"key_findings\":ar.get('key_findings') or [],\n        \"data_gaps\":ar.get('data_gaps') or [],\n        \"target_coverage\":{\"targets\":ar.get('targets') or []},\n        \"data_status\":ar.get('status','ok')\n    }\n    out={\"contract_version\":\"phone_module_jf_report_llm_input_v1\",\"status\":\"ok\",\"report_input\":report_input}\n    return {\"report_input_json\":json.dumps(out,ensure_ascii=False)}"
+            "source_code": "def main(analysis_result_json=''):\n    import json\n    return {'report_input_json': json.dumps({'status':'ok','analysis':json.loads(analysis_result_json or '{}'),'prompt':'生成竞分对比报告'}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 3720,
-            "y": 40
+            "x": 4680,
+            "y": 80
           },
           "positionAbsolute": {
-            "x": 3720,
-            "y": 40
+            "x": 4680,
+            "y": 80
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 50
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "ifllm",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版LLM开关",
+            "type": "if-else",
+            "cases": [
+              {
+                "id": "enabled",
+                "case_id": "enabled",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "env",
+                      "ENABLE_FULL_LLM"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "true"
+                  }
+                ]
+              }
+            ]
+          },
+          "position": {
+            "x": 5040,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5040,
+            "y": 80
+          },
+          "width": 300,
+          "height": 154
         },
         {
           "id": "token_req",
@@ -798,34 +468,23 @@
           "data": {
             "title": "代码执行_准备满血版Token请求",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(report_input_json: str = '') -> dict:\n    body={\"subject\":\"phone_module_jf_compare_report\",\"grant_type\":\"client_credentials\"}\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_request_v1\",\"status\":\"ok\",\"token_request_body_json\":json.dumps(body,ensure_ascii=False)}\n    return {\"token_request_body_json\":out[\"token_request_body_json\"],\"full_llm_fallback_reason\":\"\"}",
             "outputs": {
-              "token_request_body_json": {
-                "type": "string"
-              },
-              "full_llm_fallback_reason": {
+              "full_llm_token_request_body_json": {
                 "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(report_input_json: str = '') -> dict:\n    body={\"subject\":\"phone_module_jf_compare_report\",\"grant_type\":\"client_credentials\"}\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_request_v1\",\"status\":\"ok\",\"token_request_body_json\":json.dumps(body,ensure_ascii=False)}\n    return {\"token_request_body_json\":out[\"token_request_body_json\"],\"full_llm_fallback_reason\":\"\"}"
+            "source_code": "def main(report_input_json=''):\n    import json\n    return {'full_llm_token_request_body_json': json.dumps({'grant_type':'client_credentials','scope':'phone_report'}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 4280,
-            "y": 40
+            "x": 5400,
+            "y": 80
           },
           "positionAbsolute": {
-            "x": 4280,
-            "y": 40
+            "x": 5400,
+            "y": 80
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 50
+          "width": 320,
+          "height": 150
         },
         {
           "id": "http_token",
@@ -833,39 +492,20 @@
           "data": {
             "title": "HTTP请求_获取满血版LLM Token",
             "type": "http-request",
-            "method": "post",
-            "url": "{{#env.LLM_TOKEN_URL#}}",
-            "body": {
-              "type": "json",
-              "data": "{{#token_req.token_request_body_json#}}"
-            },
-            "desc": "",
-            "selected": false,
-            "headers": "",
-            "params": "",
-            "authorization": {
-              "type": "no-auth",
-              "config": null
-            },
-            "timeout": {
-              "max_connect_timeout": 0,
-              "max_read_timeout": 0,
-              "max_write_timeout": 0
-            }
+            "method": "POST",
+            "url": "${FULL_LLM_TOKEN_URL}",
+            "body": "{{#token_req.full_llm_token_request_body_json#}}"
           },
           "position": {
-            "x": 4560,
-            "y": 40
+            "x": 5760,
+            "y": 80
           },
           "positionAbsolute": {
-            "x": 4560,
-            "y": 40
+            "x": 5760,
+            "y": 80
           },
-          "width": 242,
-          "height": 126,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 52
+          "width": 320,
+          "height": 130
         },
         {
           "id": "token_parse",
@@ -873,37 +513,23 @@
           "data": {
             "title": "代码执行_解析满血版Token结果",
             "type": "code",
-            "code_language": "python3",
-            "source_code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    token=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        token=obj.get('access_token') or obj.get('token') or obj.get('data',{}).get('access_token') or obj.get('data',{}).get('token') or ''\n    except Exception as e:\n        err=str(e)\n    ok=bool(token) and (not status_code or 200 <= int(status_code) < 300)\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"access_token\":token,\"error\":\"\" if ok else (err or 'token_failed'),\"full_llm_fallback_reason\":\"\" if ok else \"token_failed\"}\n    return {\"full_llm_token_result_json\":json.dumps(out,ensure_ascii=False),\"access_token\":token,\"full_llm_fallback_reason\":out[\"full_llm_fallback_reason\"]}",
             "outputs": {
               "full_llm_token_result_json": {
                 "type": "string"
-              },
-              "access_token": {
-                "type": "string"
-              },
-              "full_llm_fallback_reason": {
-                "type": "string"
               }
             },
-            "desc": "",
-            "selected": false,
-            "variables": [],
-            "code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    token=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        token=obj.get('access_token') or obj.get('token') or obj.get('data',{}).get('access_token') or obj.get('data',{}).get('token') or ''\n    except Exception as e:\n        err=str(e)\n    ok=bool(token) and (not status_code or 200 <= int(status_code) < 300)\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"access_token\":token,\"error\":\"\" if ok else (err or 'token_failed'),\"full_llm_fallback_reason\":\"\" if ok else \"token_failed\"}\n    return {\"full_llm_token_result_json\":json.dumps(out,ensure_ascii=False),\"access_token\":token,\"full_llm_fallback_reason\":out[\"full_llm_fallback_reason\"]}"
+            "source_code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':'${token}' if ok else ''}, ensure_ascii=False)}\n"
           },
           "position": {
-            "x": 4840,
-            "y": 40
+            "x": 6120,
+            "y": 80
           },
           "positionAbsolute": {
-            "x": 4840,
-            "y": 40
+            "x": 6120,
+            "y": 80
           },
-          "width": 242,
-          "height": 52,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 50
+          "width": 320,
+          "height": 150
         },
         {
           "id": "if_token",
@@ -913,38 +539,240 @@
             "type": "if-else",
             "cases": [
               {
+                "id": "ok",
+                "case_id": "ok",
                 "conditions": [
                   {
-                    "comparison_operator": "contains",
-                    "value": "\"status\": \"ok\"",
                     "variable_selector": [
                       "token_parse",
-                      "full_llm_token_result_json"
-                    ]
+                      "full_llm_token_result_json",
+                      "status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
                   }
-                ],
-                "id": "ok",
-                "logical_operator": "and"
+                ]
               }
-            ],
-            "desc": "",
-            "selected": false
+            ]
           },
           "position": {
-            "x": 5120,
-            "y": 40
+            "x": 6480,
+            "y": 80
           },
           "positionAbsolute": {
-            "x": 5120,
-            "y": 40
+            "x": 6480,
+            "y": 80
           },
-          "width": 242,
-          "height": 148,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 51
+          "width": 300,
+          "height": 154
         },
         {
           "id": "full_req",
           "type": "custom",
           "data": {
+            "title": "代码执行_准备满血版LLM请求",
+            "type": "code",
+            "outputs": {
+              "full_llm_request_body_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(report_input_json='', full_llm_token_result_json=''):\n    import json\n    return {'full_llm_request_body_json': json.dumps({'report_input':json.loads(report_input_json or '{}'),'token':json.loads(full_llm_token_result_json or '{}').get('access_token','')}, ensure_ascii=False)}\n"
+          },
+          "position": {
+            "x": 6840,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 6840,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "http_full",
+          "type": "custom",
+          "data": {
+            "title": "HTTP请求_调用满血版LLM接口",
+            "type": "http-request",
+            "method": "POST",
+            "url": "${FULL_LLM_CHAT_URL}",
+            "body": "{{#full_req.full_llm_request_body_json#}}"
+          },
+          "position": {
+            "x": 7200,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 7200,
+            "y": 80
+          },
+          "width": 320,
+          "height": 130
+        },
+        {
+          "id": "full_parse",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_解析满血版LLM响应",
+            "type": "code",
+            "outputs": {
+              "full_llm_result_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(body='', status_code=200):\n    import json\n    return {'full_llm_result_json': json.dumps({'status':'ok' if str(status_code).startswith('2') else 'error','answer':body or '满血版报告'}, ensure_ascii=False)}\n"
+          },
+          "position": {
+            "x": 7560,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 7560,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "if_full",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版LLM是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "id": "ok",
+                "case_id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "full_parse",
+                      "full_llm_result_json",
+                      "status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
+                  }
+                ]
+              }
+            ]
+          },
+          "position": {
+            "x": 7920,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 7920,
+            "y": 80
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "llmlocal",
+          "type": "custom",
+          "data": {
+            "title": "LLM_生成竞分对比报告_本地版",
+            "type": "llm",
+            "outputs": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "model": {
+              "provider": "langgenius/openai/openai",
+              "name": "gpt-4o-mini",
+              "mode": "chat"
+            },
+            "prompt_template": [
+              {
+                "role": "system",
+                "text": "你是PHONE竞分报告助手。"
+              },
+              {
+                "role": "user",
+                "text": "{{#report_input.report_input_json#}}"
+              }
+            ]
+          },
+          "position": {
+            "x": 6120,
+            "y": 500
+          },
+          "positionAbsolute": {
+            "x": 6120,
+            "y": 500
+          },
+          "width": 340,
+          "height": 170
+        },
+        {
+          "id": "local_wrap",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_包装本地LLM报告结果",
+            "type": "code",
+            "outputs": {
+              "local_llm_result_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(text=''):\n    import json\n    return {'local_llm_result_json': json.dumps({'status':'ok','answer':text or '本地版竞分对比报告'}, ensure_ascii=False)}\n"
+          },
+          "position": {
+            "x": 6480,
+            "y": 500
+          },
+          "positionAbsolute": {
+            "x": 6480,
+            "y": 500
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "final",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_合并最终回答",
+            "type": "code",
+            "outputs": {
+              "final_answer": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(analysis_result_json='', full_llm_result_json='', local_llm_result_json=''):\n    import json\n    for raw in (full_llm_result_json, local_llm_result_json, analysis_result_json):\n        if raw:\n            obj=json.loads(raw); return {'final_answer': obj.get('answer') or obj.get('summary') or json.dumps(obj, ensure_ascii=False)}\n    return {'final_answer':'PHONE 查询完成'}\n"
+          },
+          "position": {
+            "x": 7200,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 7200,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "ans",
+          "type": "custom",
+          "data": {
+            "title": "结束_返回最终回答",
+            "type": "answer",
+            "answer": "{{#final.final_answer#}}"
+          },
+          "position": {
+            "x": 7560,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 7560,
+            "y": 300
+          },
+          "width": 280,
+          "height": 110
+        }
+      ],
