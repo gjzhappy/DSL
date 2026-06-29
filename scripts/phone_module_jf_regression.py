@@ -15,6 +15,11 @@ samples=[
 ('4','请对比iPhone17和Xiaomi17的CIS规格，并生成报告', False, None),
 ('5','请对比iPhone17和Xiaomi17的主摄供电拓扑，并生成对比报告', True, None),
 ('6','请对比iPhone17和Xiaomi17的主摄功耗，并输出对比表', True, None),
+('7','请对比iPhone17和Xiaomi17的主摄功耗，并输出对比表', True, None),
+('8','请对比iPhone17和Xiaomi17的主摄规格，并生成对比报告', True, None),
+('9','请对比iPhone17和Xiaomi17的主摄规格，并生成对比报告', True, None),
+('10','请对比iPhone17和Xiaomi17的主摄规格，并生成对比报告', True, None),
+('11','请对比iPhone17和Xiaomi17的主摄规格，并生成对比报告', True, None),
 ]
 for sid,q,ready_exp,in_count in samples:
     ctx=run_code('ctx', question=q, pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json='')
@@ -35,3 +40,22 @@ for sid,q,ready_exp,in_count in samples:
     else:
         print(f'PASS sample {sid}: ready_to_query=false missing={[m["slot"] for m in sv["missing_slots"]]}')
 print('PASS all regression samples')
+
+
+# Report LLM graph regression samples 7-11.
+title={n['data'].get('title'): n['id'] for n in d['workflow']['graph']['nodes']}
+adj={}
+for e in d['workflow']['graph']['edges']:
+    adj.setdefault(e['source'], []).append((e.get('sourceHandle'), e['target']))
+def must_edge(src_title, handle, dst_title):
+    src=title[src_title]; dst=title[dst_title]
+    if (handle,dst) not in adj.get(src, []):
+        raise SystemExit(f'missing graph branch {src_title} --{handle}--> {dst_title}')
+must_edge('IF_output_type是否为报告类','false','代码执行_合并最终回答')
+must_edge('IF_output_type是否为报告类','report','代码执行_准备报告LLM输入')
+must_edge('IF_满血版LLM开关','false','LLM_生成竞分对比报告_本地版')
+must_edge('IF_满血版LLM开关','enabled','代码执行_准备满血版Token请求')
+must_edge('IF_满血版Token是否成功','false','LLM_生成竞分对比报告_本地版')
+must_edge('IF_满血版LLM是否成功','false','LLM_生成竞分对比报告_本地版')
+must_edge('IF_满血版LLM是否成功','ok','代码执行_合并最终回答')
+print('PASS report LLM graph regression samples 7-11')

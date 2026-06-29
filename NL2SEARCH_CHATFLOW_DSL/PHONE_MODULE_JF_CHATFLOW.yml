@@ -597,7 +597,7 @@
                       "analysis_result_json"
                     ],
                     "comparison_operator": "contains",
-                    "value": "\"answer_type\": \"compare_report\""
+                    "value": "\"output_type\": \"对比报告\""
                   }
                 ],
                 "logical_operator": "and"
@@ -621,54 +621,6 @@
           "zIndex": 15
         },
         {
-          "id": "llmfull",
-          "type": "custom",
-          "data": {
-            "title": "LLM_生成竞分对比报告_满血版",
-            "type": "llm",
-            "model": {
-              "provider": "openai",
-              "name": "gpt-4o",
-              "mode": "chat",
-              "completion_params": {}
-            },
-            "prompt_template": [
-              {
-                "role": "system",
-                "text": "你是手机摄像头模组竞分分析助手。只能基于输入的结构化 comparison_table、key_findings、data_gaps 生成 Markdown 报告，不得编造未出现的数据。若数据缺失必须说明。包含：对比对象、对比范围、核心结论、对比明细、差异解读、数据缺口、后续建议。"
-              },
-              {
-                "role": "user",
-                "text": "analysis_result_json:\n{{#analysis.analysis_result_json#}}"
-              }
-            ],
-            "desc": "",
-            "selected": false,
-            "context": {
-              "enabled": false,
-              "variable_selector": []
-            },
-            "vision": {
-              "enabled": false
-            },
-            "memory": null,
-            "variables": []
-          },
-          "position": {
-            "x": 4000,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 4000,
-            "y": 80
-          },
-          "width": 244,
-          "height": 54,
-          "selected": false,
-          "dragging": false,
-          "zIndex": 16
-        },
-        {
           "id": "llmlocal",
           "type": "custom",
           "data": {
@@ -687,7 +639,7 @@
               },
               {
                 "role": "user",
-                "text": "{{#analysis.analysis_result_json#}}"
+                "text": "report_input_json:\n{{#report_input.report_input_json#}}"
               }
             ],
             "desc": "",
@@ -703,12 +655,12 @@
             "variables": []
           },
           "position": {
-            "x": 4000,
-            "y": 320
+            "x": 5400,
+            "y": 380
           },
           "positionAbsolute": {
-            "x": 4000,
-            "y": 320
+            "x": 5400,
+            "y": 380
           },
           "width": 244,
           "height": 54,
@@ -723,7 +675,7 @@
             "title": "代码执行_合并最终回答",
             "type": "code",
             "code_language": "python3",
-            "source_code": "import json\n\ndef main(analysis_result_json: str = '', llm_report_markdown: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=json.loads(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=json.loads(analysis_result_json or '{}'); status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        ans=llm_report_markdown or ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type')},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}",
+            "source_code": "import json\n\ndef _load(s):\n    try: return json.loads(s or '{}')\n    except Exception: return {}\n\ndef main(analysis_result_json: str = '', full_llm_result_json: str = '', local_llm_result_json: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '', enable_full_llm: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=_load(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"llm_source\":\"no_llm\",\"full_llm_enabled\":False,\"full_llm_fallback_reason\":\"\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=_load(analysis_result_json); fr=_load(full_llm_result_json); lr=_load(local_llm_result_json)\n        status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        full_enabled=(str(enable_full_llm).lower()=='true') or (fr.get('status')=='ok') or (lr.get('full_llm_fallback_reason') in ['token_failed','full_llm_http_failed','full_llm_empty_response'])\n        llm_source='no_llm'; fallback=''; ans=ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if fr.get('status')=='ok' and fr.get('llm_report_markdown'):\n            llm_source='full_llm'; ans=fr.get('llm_report_markdown'); fallback=''\n        elif lr.get('status')=='ok':\n            llm_source='local_llm'; ans=lr.get('llm_report_markdown') or ans; fallback=lr.get('full_llm_fallback_reason') or ('full_llm_disabled' if not full_enabled else '')\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"llm_source\":llm_source,\"full_llm_enabled\":full_enabled,\"full_llm_fallback_reason\":fallback,\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type'),\"full_llm_enabled\":full_enabled,\"llm_source\":llm_source,\"full_llm_fallback_reason\":fallback},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}",
             "outputs": {
               "final_answer": {
                 "type": "string"
@@ -732,15 +684,15 @@
             "desc": "",
             "selected": false,
             "variables": [],
-            "code": "import json\n\ndef main(analysis_result_json: str = '', llm_report_markdown: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=json.loads(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=json.loads(analysis_result_json or '{}'); status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        ans=llm_report_markdown or ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type')},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}"
+            "code": "import json\n\ndef _load(s):\n    try: return json.loads(s or '{}')\n    except Exception: return {}\n\ndef main(analysis_result_json: str = '', full_llm_result_json: str = '', local_llm_result_json: str = '', slot_fill_request_json: str = '', slot_validate_result_json: str = '', enable_full_llm: str = '') -> dict:\n    if slot_fill_request_json:\n        sf=_load(slot_fill_request_json); final=sf.get('message','')+' '+', '.join(m.get('label','') for m in sf.get('missing_slots',[]))\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":\"need_slot\",\"answer_type\":\"slot_fill_request\",\"llm_source\":\"no_llm\",\"full_llm_enabled\":False,\"full_llm_fallback_reason\":\"\",\"final_answer\":final,\"slot_fill_request\":sf}\n    else:\n        ar=_load(analysis_result_json); fr=_load(full_llm_result_json); lr=_load(local_llm_result_json)\n        status='no_data' if ar.get('status')=='no_data' else ('partial_data' if ar.get('status')=='partial_data' else 'ok')\n        full_enabled=(str(enable_full_llm).lower()=='true') or (fr.get('status')=='ok') or (lr.get('full_llm_fallback_reason') in ['token_failed','full_llm_http_failed','full_llm_empty_response'])\n        llm_source='no_llm'; fallback=''; ans=ar.get('markdown_table') or json.dumps(ar.get('excel_payload') or ar, ensure_ascii=False)\n        if fr.get('status')=='ok' and fr.get('llm_report_markdown'):\n            llm_source='full_llm'; ans=fr.get('llm_report_markdown'); fallback=''\n        elif lr.get('status')=='ok':\n            llm_source='local_llm'; ans=lr.get('llm_report_markdown') or ans; fallback=lr.get('full_llm_fallback_reason') or ('full_llm_disabled' if not full_enabled else '')\n        if status=='no_data': ans='未查询到相关数据，请检查机型、模组或数据是否已入库。'\n        out={\"contract_version\":\"phone_module_jf_final_answer_v1\",\"status\":status,\"answer_type\":ar.get('answer_type'),\"route_id\":\"phone_module_jf_compare\",\"template_id\":\"\",\"llm_source\":llm_source,\"full_llm_enabled\":full_enabled,\"full_llm_fallback_reason\":fallback,\"final_answer\":ans,\"tables\":[ar.get('markdown_table')] if ar.get('markdown_table') else [],\"data_gaps\":ar.get('data_gaps',[]),\"debug_summary\":{\"target_objects\":ar.get('targets',[]),\"output_type\":ar.get('output_type'),\"full_llm_enabled\":full_enabled,\"llm_source\":llm_source,\"full_llm_fallback_reason\":fallback},\"clear_pending_slots\":True,\"pending_route_id\":\"\",\"pending_route_card_json\":\"\",\"partial_placeholder_values_json\":\"\",\"pending_missing_slots_json\":\"\"}\n    return {\"final_answer\":json.dumps(out,ensure_ascii=False)}"
           },
           "position": {
-            "x": 4280,
-            "y": 200
+            "x": 6520,
+            "y": 220
           },
           "positionAbsolute": {
-            "x": 4280,
-            "y": 200
+            "x": 6520,
+            "y": 220
           },
           "width": 244,
           "height": 54,
@@ -760,12 +712,12 @@
             "variables": []
           },
           "position": {
-            "x": 4560,
-            "y": 200
+            "x": 6800,
+            "y": 220
           },
           "positionAbsolute": {
-            "x": 4560,
-            "y": 200
+            "x": 6800,
+            "y": 220
           },
           "width": 244,
           "height": 54,
@@ -777,40 +729,58 @@
           "id": "ifllm",
           "type": "custom",
           "data": {
-            "title": "IF_REPORT_LLM_MODE选择",
+            "title": "IF_满血版LLM开关",
             "type": "if-else",
-            "desc": "REPORT_LLM_MODE=full走满血版；local走本地版",
+            "desc": "ENABLE_FULL_LLM=true 时走 token + 满血版 HTTP；否则走本地 LLM",
             "selected": false,
             "cases": [
               {
-                "id": "full",
+                "id": "enabled",
                 "conditions": [
                   {
                     "variable_selector": [
                       "env",
-                      "REPORT_LLM_MODE"
+                      "ENABLE_FULL_LLM"
                     ],
                     "comparison_operator": "is",
-                    "value": "full"
-                  }
-                ],
-                "logical_operator": "and"
-              },
-              {
-                "id": "local",
-                "conditions": [
-                  {
-                    "variable_selector": [
-                      "env",
-                      "REPORT_LLM_MODE"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "local"
+                    "value": "true"
                   }
                 ],
                 "logical_operator": "and"
               }
             ]
+          },
+          "position": {
+            "x": 4000,
+            "y": 200
+          },
+          "positionAbsolute": {
+            "x": 4000,
+            "y": 200
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 99
+        },
+        {
+          "id": "report_input",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备报告LLM输入",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(analysis_result_json: str) -> dict:\n    ar=json.loads(analysis_result_json or '{}')\n    report_input={\n        \"route_id\":\"phone_module_jf_compare\",\n        \"template_id\":ar.get('template_id',''),\n        \"output_type\":ar.get('output_type','对比报告'),\n        \"comparison_table\":ar.get('comparison_table') or [],\n        \"key_findings\":ar.get('key_findings') or [],\n        \"data_gaps\":ar.get('data_gaps') or [],\n        \"target_coverage\":{\"targets\":ar.get('targets') or []},\n        \"data_status\":ar.get('status','ok')\n    }\n    out={\"contract_version\":\"phone_module_jf_report_llm_input_v1\",\"status\":\"ok\",\"report_input\":report_input}\n    return {\"report_input_json\":json.dumps(out,ensure_ascii=False)}",
+            "outputs": {
+              "report_input_json": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(analysis_result_json: str) -> dict:\n    ar=json.loads(analysis_result_json or '{}')\n    report_input={\n        \"route_id\":\"phone_module_jf_compare\",\n        \"template_id\":ar.get('template_id',''),\n        \"output_type\":ar.get('output_type','对比报告'),\n        \"comparison_table\":ar.get('comparison_table') or [],\n        \"key_findings\":ar.get('key_findings') or [],\n        \"data_gaps\":ar.get('data_gaps') or [],\n        \"target_coverage\":{\"targets\":ar.get('targets') or []},\n        \"data_status\":ar.get('status','ok')\n    }\n    out={\"contract_version\":\"phone_module_jf_report_llm_input_v1\",\"status\":\"ok\",\"report_input\":report_input}\n    return {\"report_input_json\":json.dumps(out,ensure_ascii=False)}"
           },
           "position": {
             "x": 3720,
@@ -824,7 +794,352 @@
           "height": 54,
           "selected": false,
           "dragging": false,
-          "zIndex": 99
+          "zIndex": 50
+        },
+        {
+          "id": "token_req",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备满血版Token请求",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(report_input_json: str = '') -> dict:\n    body={\"subject\":\"phone_module_jf_compare_report\",\"grant_type\":\"client_credentials\"}\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_request_v1\",\"status\":\"ok\",\"token_request_body_json\":json.dumps(body,ensure_ascii=False)}\n    return {\"token_request_body_json\":out[\"token_request_body_json\"],\"full_llm_fallback_reason\":\"\"}",
+            "outputs": {
+              "token_request_body_json": {
+                "type": "string"
+              },
+              "full_llm_fallback_reason": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(report_input_json: str = '') -> dict:\n    body={\"subject\":\"phone_module_jf_compare_report\",\"grant_type\":\"client_credentials\"}\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_request_v1\",\"status\":\"ok\",\"token_request_body_json\":json.dumps(body,ensure_ascii=False)}\n    return {\"token_request_body_json\":out[\"token_request_body_json\"],\"full_llm_fallback_reason\":\"\"}"
+          },
+          "position": {
+            "x": 4280,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 4280,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "http_token",
+          "type": "custom",
+          "data": {
+            "title": "HTTP请求_获取满血版LLM Token",
+            "type": "http-request",
+            "method": "post",
+            "url": "{{#env.LLM_TOKEN_URL#}}",
+            "body": {
+              "type": "json",
+              "data": "{{#token_req.token_request_body_json#}}"
+            },
+            "desc": "",
+            "selected": false,
+            "headers": "",
+            "params": "",
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            }
+          },
+          "position": {
+            "x": 4560,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 4560,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 52
+        },
+        {
+          "id": "token_parse",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_解析满血版Token结果",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    token=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        token=obj.get('access_token') or obj.get('token') or obj.get('data',{}).get('access_token') or obj.get('data',{}).get('token') or ''\n    except Exception as e:\n        err=str(e)\n    ok=bool(token) and (not status_code or 200 <= int(status_code) < 300)\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"access_token\":token,\"error\":\"\" if ok else (err or 'token_failed'),\"full_llm_fallback_reason\":\"\" if ok else \"token_failed\"}\n    return {\"full_llm_token_result_json\":json.dumps(out,ensure_ascii=False),\"access_token\":token,\"full_llm_fallback_reason\":out[\"full_llm_fallback_reason\"]}",
+            "outputs": {
+              "full_llm_token_result_json": {
+                "type": "string"
+              },
+              "access_token": {
+                "type": "string"
+              },
+              "full_llm_fallback_reason": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    token=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        token=obj.get('access_token') or obj.get('token') or obj.get('data',{}).get('access_token') or obj.get('data',{}).get('token') or ''\n    except Exception as e:\n        err=str(e)\n    ok=bool(token) and (not status_code or 200 <= int(status_code) < 300)\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"access_token\":token,\"error\":\"\" if ok else (err or 'token_failed'),\"full_llm_fallback_reason\":\"\" if ok else \"token_failed\"}\n    return {\"full_llm_token_result_json\":json.dumps(out,ensure_ascii=False),\"access_token\":token,\"full_llm_fallback_reason\":out[\"full_llm_fallback_reason\"]}"
+          },
+          "position": {
+            "x": 4840,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 4840,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "if_token",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版Token是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "token_parse",
+                      "full_llm_token_result_json"
+                    ],
+                    "comparison_operator": "contains",
+                    "value": "\"status\": \"ok\""
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "desc": "",
+            "selected": false
+          },
+          "position": {
+            "x": 5120,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5120,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 51
+        },
+        {
+          "id": "full_req",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备满血版LLM请求",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(report_input_json: str, full_llm_token_result_json: str) -> dict:\n    ri=json.loads(report_input_json or '{}')\n    tr=json.loads(full_llm_token_result_json or '{}')\n    body={\"messages\":[{\"role\":\"system\",\"content\":\"你是手机摄像头模组竞分分析助手，只能基于输入数据生成Markdown报告。\"},{\"role\":\"user\",\"content\":json.dumps(ri.get('report_input',{}),ensure_ascii=False)}],\"stream\":False}\n    auth='Bearer '+(tr.get('access_token') or '')\n    out={\"contract_version\":\"phone_module_jf_full_llm_request_v1\",\"status\":\"ok\",\"full_llm_request_body_json\":json.dumps(body,ensure_ascii=False),\"authorization_header\":auth}\n    return {\"full_llm_request_body_json\":out[\"full_llm_request_body_json\"],\"authorization_header\":auth}",
+            "outputs": {
+              "full_llm_request_body_json": {
+                "type": "string"
+              },
+              "authorization_header": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(report_input_json: str, full_llm_token_result_json: str) -> dict:\n    ri=json.loads(report_input_json or '{}')\n    tr=json.loads(full_llm_token_result_json or '{}')\n    body={\"messages\":[{\"role\":\"system\",\"content\":\"你是手机摄像头模组竞分分析助手，只能基于输入数据生成Markdown报告。\"},{\"role\":\"user\",\"content\":json.dumps(ri.get('report_input',{}),ensure_ascii=False)}],\"stream\":False}\n    auth='Bearer '+(tr.get('access_token') or '')\n    out={\"contract_version\":\"phone_module_jf_full_llm_request_v1\",\"status\":\"ok\",\"full_llm_request_body_json\":json.dumps(body,ensure_ascii=False),\"authorization_header\":auth}\n    return {\"full_llm_request_body_json\":out[\"full_llm_request_body_json\"],\"authorization_header\":auth}"
+          },
+          "position": {
+            "x": 5400,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5400,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "http_full",
+          "type": "custom",
+          "data": {
+            "title": "HTTP请求_调用满血版LLM接口",
+            "type": "http-request",
+            "method": "post",
+            "url": "{{#env.FULL_LLM_API_URL#}}",
+            "body": {
+              "type": "json",
+              "data": "{{#full_req.full_llm_request_body_json#}}"
+            },
+            "desc": "",
+            "selected": false,
+            "headers": "Authorization: {{#full_req.authorization_header#}}",
+            "params": "",
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            }
+          },
+          "position": {
+            "x": 5680,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5680,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 52
+        },
+        {
+          "id": "full_parse",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_解析满血版LLM响应",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    text=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        text=(obj.get('choices',[{}])[0].get('message',{}).get('content') if obj.get('choices') else '') or obj.get('content') or obj.get('text') or obj.get('data',{}).get('content') or obj.get('data',{}).get('text') or ''\n    except Exception as e:\n        err=str(e)\n    reason=''\n    if status_code and not (200 <= int(status_code) < 300): reason='full_llm_http_failed'\n    elif not text.strip(): reason='full_llm_empty_response'\n    ok=not reason\n    out={\"contract_version\":\"phone_module_jf_full_llm_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"llm_report_markdown\":text,\"llm_source\":\"full_llm\" if ok else \"\",\"error\":\"\" if ok else (err or reason),\"full_llm_fallback_reason\":reason}\n    return {\"full_llm_result_json\":json.dumps(out,ensure_ascii=False),\"llm_report_markdown\":text,\"full_llm_fallback_reason\":reason}",
+            "outputs": {
+              "full_llm_result_json": {
+                "type": "string"
+              },
+              "llm_report_markdown": {
+                "type": "string"
+              },
+              "full_llm_fallback_reason": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    text=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        text=(obj.get('choices',[{}])[0].get('message',{}).get('content') if obj.get('choices') else '') or obj.get('content') or obj.get('text') or obj.get('data',{}).get('content') or obj.get('data',{}).get('text') or ''\n    except Exception as e:\n        err=str(e)\n    reason=''\n    if status_code and not (200 <= int(status_code) < 300): reason='full_llm_http_failed'\n    elif not text.strip(): reason='full_llm_empty_response'\n    ok=not reason\n    out={\"contract_version\":\"phone_module_jf_full_llm_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"llm_report_markdown\":text,\"llm_source\":\"full_llm\" if ok else \"\",\"error\":\"\" if ok else (err or reason),\"full_llm_fallback_reason\":reason}\n    return {\"full_llm_result_json\":json.dumps(out,ensure_ascii=False),\"llm_report_markdown\":text,\"full_llm_fallback_reason\":reason}"
+          },
+          "position": {
+            "x": 5960,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5960,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "if_full",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版LLM是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "full_parse",
+                      "full_llm_result_json"
+                    ],
+                    "comparison_operator": "contains",
+                    "value": "\"status\": \"ok\""
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "desc": "",
+            "selected": false
+          },
+          "position": {
+            "x": 6240,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 6240,
+            "y": 80
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 51
+        },
+        {
+          "id": "local_wrap",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_包装本地LLM报告结果",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(llm_report_markdown: str = '', full_llm_fallback_reason: str = '') -> dict:\n    reason=full_llm_fallback_reason or 'full_llm_disabled'\n    out={\"contract_version\":\"phone_module_jf_local_llm_result_v1\",\"status\":\"ok\",\"llm_report_markdown\":llm_report_markdown or '',\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}\n    return {\"local_llm_result_json\":json.dumps(out,ensure_ascii=False),\"local_llm_report_markdown\":out[\"llm_report_markdown\"],\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}",
+            "outputs": {
+              "local_llm_result_json": {
+                "type": "string"
+              },
+              "local_llm_report_markdown": {
+                "type": "string"
+              },
+              "llm_source": {
+                "type": "string"
+              },
+              "full_llm_fallback_reason": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(llm_report_markdown: str = '', full_llm_fallback_reason: str = '') -> dict:\n    reason=full_llm_fallback_reason or 'full_llm_disabled'\n    out={\"contract_version\":\"phone_module_jf_local_llm_result_v1\",\"status\":\"ok\",\"llm_report_markdown\":llm_report_markdown or '',\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}\n    return {\"local_llm_result_json\":json.dumps(out,ensure_ascii=False),\"local_llm_report_markdown\":out[\"llm_report_markdown\"],\"llm_source\":\"local_llm\",\"full_llm_fallback_reason\":reason}"
+          },
+          "position": {
+            "x": 5680,
+            "y": 380
+          },
+          "positionAbsolute": {
+            "x": 5680,
+            "y": 380
+          },
+          "width": 244,
+          "height": 54,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
         }
       ],
       "edges": [
@@ -1025,49 +1340,35 @@
           "zIndex": 0
         },
         {
-          "id": "e14",
+          "id": "e20",
+          "source": "final",
+          "target": "ans",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "answer",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r1",
           "source": "ifreport",
-          "target": "ifllm",
+          "target": "report_input",
           "type": "custom",
           "sourceHandle": "report",
           "targetHandle": "target",
           "data": {
             "sourceType": "if-else",
-            "targetType": "",
+            "targetType": "code",
             "isInLoop": false
           },
           "zIndex": 0
         },
         {
-          "id": "e15",
-          "source": "ifllm",
-          "target": "llmfull",
-          "type": "custom",
-          "sourceHandle": "full",
-          "targetHandle": "target",
-          "data": {
-            "sourceType": "",
-            "targetType": "llm",
-            "isInLoop": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e16",
-          "source": "ifllm",
-          "target": "llmlocal",
-          "type": "custom",
-          "sourceHandle": "local",
-          "targetHandle": "target",
-          "data": {
-            "sourceType": "",
-            "targetType": "llm",
-            "isInLoop": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e17",
+          "id": "r2",
           "source": "ifreport",
           "target": "final",
           "type": "custom",
@@ -1081,43 +1382,211 @@
           "zIndex": 0
         },
         {
-          "id": "e18",
-          "source": "llmfull",
-          "target": "final",
-          "type": "custom",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "sourceType": "llm",
-            "targetType": "code",
-            "isInLoop": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e19",
-          "source": "llmlocal",
-          "target": "final",
-          "type": "custom",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "sourceType": "llm",
-            "targetType": "code",
-            "isInLoop": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e20",
-          "source": "final",
-          "target": "ans",
+          "id": "r3",
+          "source": "report_input",
+          "target": "ifllm",
           "type": "custom",
           "sourceHandle": "source",
           "targetHandle": "target",
           "data": {
             "sourceType": "code",
-            "targetType": "answer",
+            "targetType": "if-else",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r4",
+          "source": "ifllm",
+          "target": "token_req",
+          "type": "custom",
+          "sourceHandle": "enabled",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "if-else",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r5",
+          "source": "ifllm",
+          "target": "llmlocal",
+          "type": "custom",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "if-else",
+            "targetType": "llm",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r6",
+          "source": "token_req",
+          "target": "http_token",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "http-request",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r7",
+          "source": "http_token",
+          "target": "token_parse",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "http-request",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r8",
+          "source": "token_parse",
+          "target": "if_token",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "if-else",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r9",
+          "source": "if_token",
+          "target": "full_req",
+          "type": "custom",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "if-else",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r10",
+          "source": "if_token",
+          "target": "llmlocal",
+          "type": "custom",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "if-else",
+            "targetType": "llm",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r11",
+          "source": "full_req",
+          "target": "http_full",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "http-request",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r12",
+          "source": "http_full",
+          "target": "full_parse",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "http-request",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r13",
+          "source": "full_parse",
+          "target": "if_full",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "if-else",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r14",
+          "source": "if_full",
+          "target": "final",
+          "type": "custom",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "if-else",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r15",
+          "source": "if_full",
+          "target": "llmlocal",
+          "type": "custom",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "if-else",
+            "targetType": "llm",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r16",
+          "source": "llmlocal",
+          "target": "local_wrap",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "llm",
+            "targetType": "code",
+            "isInLoop": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "r17",
+          "source": "local_wrap",
+          "target": "final",
+          "type": "custom",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "sourceType": "code",
+            "targetType": "code",
             "isInLoop": false
           },
           "zIndex": 0

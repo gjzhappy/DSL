@@ -91,6 +91,79 @@ def main() -> int:
     if not any(edge.get("source") == fill.get("id") and edge.get("target") == ansslot.get("id") for edge in edges):
         fail("代码执行_生成填槽请求 must connect to 结束_返回填槽请求")
 
+
+
+    # Report LLM flow checks (G principle)
+    def node(title: str):
+        return titles.get(title) or fail(f"{title} node missing")
+
+    adj = {}
+    for edge in edges:
+        adj.setdefault(edge.get("source"), []).append(edge)
+
+    def reaches(start_id: str, target_id: str, banned_titles: set[str] | None = None) -> bool:
+        banned_titles = banned_titles or set()
+        seen = set()
+        stack = [start_id]
+        while stack:
+            cur = stack.pop()
+            if cur == target_id:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            for edge in adj.get(cur, []):
+                nxt = edge.get("target")
+                title = node_by_id.get(nxt, {}).get("data", {}).get("title", "")
+                if title in banned_titles or any(bad in title for bad in banned_titles):
+                    continue
+                stack.append(nxt)
+        return False
+
+    def edge_to(src: dict, handle: str, dst: dict) -> bool:
+        return any(edge.get("source") == src.get("id") and edge.get("sourceHandle") == handle and edge.get("target") == dst.get("id") for edge in edges)
+
+    ifreport = node("IF_output_type是否为报告类")
+    report_input = node("代码执行_准备报告LLM输入")
+    final = node("代码执行_合并最终回答")
+    local_llm = node("LLM_生成竞分对比报告_本地版")
+    switch = node("IF_满血版LLM开关")
+    token_http = node("HTTP请求_获取满血版LLM Token")
+    full_http = node("HTTP请求_调用满血版LLM接口")
+    token_if = node("IF_满血版Token是否成功")
+    full_if = node("IF_满血版LLM是否成功")
+
+    if not edge_to(ifreport, "report", report_input):
+        fail("IF_output_type是否为报告类 true/report branch must enter 代码执行_准备报告LLM输入")
+    if not edge_to(ifreport, "false", final):
+        fail("IF_output_type是否为报告类 false branch must connect to final")
+    if len([e for e in edges if e.get("source") == ifreport.get("id")]) < 2:
+        fail("IF_output_type是否为报告类 must have true/false exits")
+    banned = {"LLM_生成竞分对比报告_本地版", "HTTP请求_获取满血版LLM Token", "HTTP请求_调用满血版LLM接口"}
+    if not reaches(ifreport.get("id"), final.get("id"), banned):
+        fail("non-report branch must reach final without LLM/full HTTP nodes")
+    if not reaches(switch.get("id"), local_llm.get("id")):
+        fail("IF_满血版LLM开关=false must reach local LLM")
+    if not reaches(switch.get("id"), token_http.get("id")):
+        fail("IF_满血版LLM开关=true must reach token HTTP")
+    if token_http.get("data", {}).get("url") != "{{#env.LLM_TOKEN_URL#}}":
+        fail("token HTTP URL must use {{#env.LLM_TOKEN_URL#}}")
+    if full_http.get("data", {}).get("url") != "{{#env.FULL_LLM_API_URL#}}":
+        fail("full LLM HTTP URL must use {{#env.FULL_LLM_API_URL#}}")
+    if not reaches(token_if.get("id"), local_llm.get("id")):
+        fail("IF_满血版Token是否成功=false must reach local LLM fallback")
+    if not reaches(full_if.get("id"), local_llm.get("id")):
+        fail("IF_满血版LLM是否成功=false must reach local LLM fallback")
+    if not reaches(full_if.get("id"), final.get("id")):
+        fail("full LLM success path must reach final")
+    if not reaches(local_llm.get("id"), final.get("id")):
+        fail("local fallback path must reach final")
+    full_llm_titles = [n for n in nodes if n.get("data", {}).get("title") == "LLM_生成竞分对比报告_满血版"]
+    if full_llm_titles:
+        fail("满血版 must not be a Dify built-in LLM node")
+    if edge_to(switch, "enabled", local_llm):
+        fail("full-enabled branch must not directly execute local LLM in parallel")
+
     dataset_ids = []
     for node in nodes:
         dataset_ids.extend(node.get("data", {}).get("dataset_ids", []) or [])
