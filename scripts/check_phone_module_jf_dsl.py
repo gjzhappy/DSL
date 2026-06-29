@@ -19,9 +19,14 @@ def load_text():
     if DSL_PATH.read_text(encoding='utf-8')!=merged: fail('PHONE_MODULE_JF_CHATFLOW.yml differs from raw-concatenated fragments; run merge_chatflow_yml.py')
     return merged
 def main():
-    doc=json.loads(load_text()); g=doc.get('workflow',{}).get('graph',{})
+    doc=json.loads(load_text())
+    if doc.get('version')!='0.6.0': fail(f"version must be 0.6.0, got {doc.get('version')}")
+    g=doc.get('workflow',{}).get('graph',{})
+    vp=g.get('viewport')
+    if not isinstance(vp,dict) or not all(isinstance(vp.get(k),(int,float)) for k in ('x','y','zoom')): fail('workflow.graph.viewport must include numeric x/y/zoom')
     nodes=g.get('nodes'); edges=g.get('edges')
     if not isinstance(nodes,list) or not isinstance(edges,list): fail('workflow.graph.nodes/edges must be arrays')
+    if len(edges)!=38: fail(f'edge count must be 38 for Dify 1.13.2 PHONE graph schema, got {len(edges)}')
     ids=[n.get('id') for n in nodes]; eids=[e.get('id') for e in edges]
     if len(ids)!=len(set(ids)): fail('node id must be unique')
     if len(eids)!=len(set(eids)): fail('edge id must be unique')
@@ -61,18 +66,30 @@ def main():
             if p not in can: can.add(p); q.append(p)
     bad=[by[i]['data'].get('title') for i in ids if by[i]['data'].get('type')!='answer' and i not in can]
     if bad: fail(f'nodes cannot reach End: {bad}')
+    def node(t): return title.get(t) or fail(f'{t} node missing')
+    def edge_to(src,h,dst): return any(e['source']==src['id'] and e.get('sourceHandle')==h and e['target']==dst['id'] for e in edges)
     # IF handles: explicit cases plus Dify implicit false/default branch
     for n in nodes:
         if n['data'].get('type')=='if-else':
             handles={c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}; handles.add('false')
+            handles |= {'need_slot','success','report','enabled','ok'}
             used={e.get('sourceHandle') for e in outgoing[n['id']]}
-            if not used <= handles: fail(f"IF branch handle mismatch at {n['data'].get('title')}: used={used}, handles={handles}")
+            semantic_used={h for h in used if h is not None}
+            if not semantic_used <= handles: fail(f"IF branch handle mismatch at {n['data'].get('title')}: used={used}, handles={handles}")
+            for e in outgoing[n['id']]:
+                if e.get('sourceHandle') is False: fail(f"IF sourceHandle must use string false, not boolean false: {e}")
             required={c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}
             if n['data'].get('title') in {'IF_output_type是否为报告类','IF_满血版LLM开关','IF_满血版Token是否成功','IF_满血版LLM是否成功'}:
                 required.add('false')
             for h in required:
                 if h not in used:
                     fail(f"IF branch {h} has no outgoing edge at {n['data'].get('title')}")
+    null_required=[('IF_是否缺槽','代码执行_生成填槽请求'),('IF_是否缺槽','代码执行_构建QueryPlan'),('IF_output_type是否为报告类','代码执行_准备报告LLM输入'),('IF_满血版LLM开关','代码执行_准备满血版Token请求'),('IF_满血版Token是否成功','代码执行_准备满血版LLM请求'),('IF_满血版LLM是否成功','代码执行_合并最终回答')]
+    for a,b in null_required:
+        if not edge_to(node(a),None,node(b)): fail(f'missing Dify 1.13.2 null-handle compatibility edge: {a} --> {b}')
+    for a,semantic,b in [('IF_是否缺槽','need_slot','代码执行_生成填槽请求'),('IF_是否缺槽','success','代码执行_构建QueryPlan'),('IF_output_type是否为报告类','report','代码执行_准备报告LLM输入'),('IF_满血版LLM开关','enabled','代码执行_准备满血版Token请求'),('IF_满血版Token是否成功','ok','代码执行_准备满血版LLM请求'),('IF_满血版LLM是否成功','ok','代码执行_合并最终回答')]:
+        if not edge_to(node(a),semantic,node(b)): fail(f'missing semantic IF edge paired with null compatibility edge: {a} --{semantic}--> {b}')
+
     # layout
     seenpos={}
     for n in nodes:
@@ -88,8 +105,6 @@ def main():
     xs=[by[i]['position']['x'] for i in mainline]
     if xs!=sorted(xs): fail(f'main flow x positions must be non-decreasing: {list(zip(mainline,xs))}')
     # expected edges / critical paths
-    def node(t): return title.get(t) or fail(f'{t} node missing')
-    def edge_to(src,h,dst): return any(e['source']==src['id'] and e.get('sourceHandle')==h and e['target']==dst['id'] for e in edges)
     checks=[('IF_是否缺槽','need_slot','代码执行_生成填槽请求'),('IF_是否缺槽','success','代码执行_构建QueryPlan'),('IF_output_type是否为报告类','report','代码执行_准备报告LLM输入'),('IF_output_type是否为报告类','false','代码执行_合并最终回答'),('IF_满血版LLM开关','enabled','代码执行_准备满血版Token请求'),('IF_满血版LLM开关','false','LLM_生成竞分对比报告_本地版'),('IF_满血版Token是否成功','ok','代码执行_准备满血版LLM请求'),('IF_满血版Token是否成功','false','LLM_生成竞分对比报告_本地版')]
     for a,h,b in checks:
         if not edge_to(node(a),h,node(b)): fail(f'missing graph branch {a} --{h}--> {b}')

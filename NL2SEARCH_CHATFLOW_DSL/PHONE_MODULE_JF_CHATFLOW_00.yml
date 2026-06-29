@@ -7,7 +7,7 @@
     "name": "PHONE_MODULE_JF_CHATFLOW"
   },
   "kind": "app",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "workflow": {
     "conversation_variables": [
       {
@@ -101,8 +101,8 @@
             "x": 80,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 212,
           "selected": false,
           "dragging": false,
           "zIndex": 1
@@ -133,8 +133,8 @@
             "x": 360,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 2
@@ -177,8 +177,8 @@
             "x": 640,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 90,
           "selected": false,
           "dragging": false,
           "zIndex": 3
@@ -209,8 +209,8 @@
             "x": 920,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 4
@@ -244,8 +244,8 @@
             "x": 1200,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 5
@@ -279,8 +279,8 @@
             "x": 1480,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 6
@@ -293,29 +293,27 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "need_slot",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"ready_to_query\": false",
                     "variable_selector": [
                       "validate",
                       "slot_validate_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"ready_to_query\": false"
+                    ]
                   }
                 ],
                 "logical_operator": "or"
               },
               {
-                "id": "success",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"ready_to_query\": true",
                     "variable_selector": [
                       "validate",
                       "slot_validate_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"ready_to_query\": true"
+                    ]
                   }
                 ],
                 "logical_operator": "or"
@@ -332,8 +330,8 @@
             "x": 1760,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 220,
           "selected": false,
           "dragging": false,
           "zIndex": 7
@@ -379,8 +377,8 @@
             "x": 2040,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 8
@@ -404,8 +402,8 @@
             "x": 2320,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 103,
           "selected": false,
           "dragging": false,
           "zIndex": 9
@@ -436,8 +434,8 @@
             "x": 2040,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 10
@@ -471,8 +469,8 @@
             "x": 2320,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 11
@@ -511,8 +509,8 @@
             "x": 2600,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 126,
           "selected": false,
           "dragging": false,
           "zIndex": 12
@@ -543,8 +541,8 @@
             "x": 2880,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 13
@@ -575,8 +573,8 @@
             "x": 3160,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 14
@@ -589,15 +587,14 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "report",
                 "conditions": [
                   {
+                    "comparison_operator": "contains",
+                    "value": "\"output_type\": \"对比报告\"",
                     "variable_selector": [
                       "analysis",
                       "analysis_result_json"
-                    ],
-                    "comparison_operator": "contains",
-                    "value": "\"output_type\": \"对比报告\""
+                    ]
                   }
                 ],
                 "logical_operator": "and"
@@ -614,8 +611,8 @@
             "x": 3440,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 148,
           "selected": false,
           "dragging": false,
           "zIndex": 15
@@ -655,15 +652,15 @@
             "variables": []
           },
           "position": {
-            "x": 5400,
-            "y": 180
+            "x": 5365.260047943533,
+            "y": 245.61990943999194
           },
           "positionAbsolute": {
-            "x": 5400,
-            "y": 180
+            "x": 5365.260047943533,
+            "y": 245.61990943999194
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 94,
           "selected": false,
           "dragging": false,
           "zIndex": 17
@@ -694,8 +691,8 @@
             "x": 6520,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 18
@@ -719,8 +716,8 @@
             "x": 6800,
             "y": 300
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 103,
           "selected": false,
           "dragging": false,
           "zIndex": 19
@@ -735,15 +732,14 @@
             "selected": false,
             "cases": [
               {
-                "id": "enabled",
                 "conditions": [
                   {
+                    "comparison_operator": "is",
+                    "value": "true",
                     "variable_selector": [
                       "env",
                       "ENABLE_FULL_LLM"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "true"
+                    ]
                   }
                 ],
                 "logical_operator": "and"
@@ -758,8 +754,8 @@
             "x": 4000,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 168,
           "selected": false,
           "dragging": false,
           "zIndex": 99
@@ -790,11 +786,165 @@
             "x": 3720,
             "y": 40
           },
-          "width": 244,
-          "height": 54,
+          "width": 242,
+          "height": 52,
           "selected": false,
           "dragging": false,
           "zIndex": 50
         },
         {
           "id": "token_req",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备满血版Token请求",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(report_input_json: str = '') -> dict:\n    body={\"subject\":\"phone_module_jf_compare_report\",\"grant_type\":\"client_credentials\"}\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_request_v1\",\"status\":\"ok\",\"token_request_body_json\":json.dumps(body,ensure_ascii=False)}\n    return {\"token_request_body_json\":out[\"token_request_body_json\"],\"full_llm_fallback_reason\":\"\"}",
+            "outputs": {
+              "token_request_body_json": {
+                "type": "string"
+              },
+              "full_llm_fallback_reason": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(report_input_json: str = '') -> dict:\n    body={\"subject\":\"phone_module_jf_compare_report\",\"grant_type\":\"client_credentials\"}\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_request_v1\",\"status\":\"ok\",\"token_request_body_json\":json.dumps(body,ensure_ascii=False)}\n    return {\"token_request_body_json\":out[\"token_request_body_json\"],\"full_llm_fallback_reason\":\"\"}"
+          },
+          "position": {
+            "x": 4280,
+            "y": 40
+          },
+          "positionAbsolute": {
+            "x": 4280,
+            "y": 40
+          },
+          "width": 242,
+          "height": 52,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "http_token",
+          "type": "custom",
+          "data": {
+            "title": "HTTP请求_获取满血版LLM Token",
+            "type": "http-request",
+            "method": "post",
+            "url": "{{#env.LLM_TOKEN_URL#}}",
+            "body": {
+              "type": "json",
+              "data": "{{#token_req.token_request_body_json#}}"
+            },
+            "desc": "",
+            "selected": false,
+            "headers": "",
+            "params": "",
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            }
+          },
+          "position": {
+            "x": 4560,
+            "y": 40
+          },
+          "positionAbsolute": {
+            "x": 4560,
+            "y": 40
+          },
+          "width": 242,
+          "height": 126,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 52
+        },
+        {
+          "id": "token_parse",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_解析满血版Token结果",
+            "type": "code",
+            "code_language": "python3",
+            "source_code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    token=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        token=obj.get('access_token') or obj.get('token') or obj.get('data',{}).get('access_token') or obj.get('data',{}).get('token') or ''\n    except Exception as e:\n        err=str(e)\n    ok=bool(token) and (not status_code or 200 <= int(status_code) < 300)\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"access_token\":token,\"error\":\"\" if ok else (err or 'token_failed'),\"full_llm_fallback_reason\":\"\" if ok else \"token_failed\"}\n    return {\"full_llm_token_result_json\":json.dumps(out,ensure_ascii=False),\"access_token\":token,\"full_llm_fallback_reason\":out[\"full_llm_fallback_reason\"]}",
+            "outputs": {
+              "full_llm_token_result_json": {
+                "type": "string"
+              },
+              "access_token": {
+                "type": "string"
+              },
+              "full_llm_fallback_reason": {
+                "type": "string"
+              }
+            },
+            "desc": "",
+            "selected": false,
+            "variables": [],
+            "code": "import json\n\ndef main(body: str = '', status_code: int = 0, error: str = '') -> dict:\n    token=''; err=error or ''\n    try:\n        obj=json.loads(body or '{}') if isinstance(body,str) else (body or {})\n        token=obj.get('access_token') or obj.get('token') or obj.get('data',{}).get('access_token') or obj.get('data',{}).get('token') or ''\n    except Exception as e:\n        err=str(e)\n    ok=bool(token) and (not status_code or 200 <= int(status_code) < 300)\n    out={\"contract_version\":\"phone_module_jf_full_llm_token_result_v1\",\"status\":\"ok\" if ok else \"failed\",\"access_token\":token,\"error\":\"\" if ok else (err or 'token_failed'),\"full_llm_fallback_reason\":\"\" if ok else \"token_failed\"}\n    return {\"full_llm_token_result_json\":json.dumps(out,ensure_ascii=False),\"access_token\":token,\"full_llm_fallback_reason\":out[\"full_llm_fallback_reason\"]}"
+          },
+          "position": {
+            "x": 4840,
+            "y": 40
+          },
+          "positionAbsolute": {
+            "x": 4840,
+            "y": 40
+          },
+          "width": 242,
+          "height": 52,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 50
+        },
+        {
+          "id": "if_token",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版Token是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "conditions": [
+                  {
+                    "comparison_operator": "contains",
+                    "value": "\"status\": \"ok\"",
+                    "variable_selector": [
+                      "token_parse",
+                      "full_llm_token_result_json"
+                    ]
+                  }
+                ],
+                "id": "ok",
+                "logical_operator": "and"
+              }
+            ],
+            "desc": "",
+            "selected": false
+          },
+          "position": {
+            "x": 5120,
+            "y": 40
+          },
+          "positionAbsolute": {
+            "x": 5120,
+            "y": 40
+          },
+          "width": 242,
+          "height": 148,
+          "selected": false,
+          "dragging": false,
+          "zIndex": 51
+        },
+        {
+          "id": "full_req",
+          "type": "custom",
+          "data": {
