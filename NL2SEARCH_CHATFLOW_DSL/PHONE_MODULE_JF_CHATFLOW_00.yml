@@ -7,6 +7,52 @@
     "description": "Split-only PHONE JF chatflow"
   },
   "workflow": {
+    "environment_variables": [
+      {
+        "description": "Controls whether report generation uses the full LLM HTTP path. Keep false unless token and chat URLs are configured.",
+        "id": "env-phone-enable-full-llm",
+        "name": "ENABLE_FULL_LLM",
+        "selector": [
+          "env",
+          "ENABLE_FULL_LLM"
+        ],
+        "value": "false",
+        "value_type": "string"
+      },
+      {
+        "description": "HTTP endpoint used by PHONE DSL to execute Mongo query requests.",
+        "id": "env-phone-mongo-query-url",
+        "name": "MONGO_QUERY_URL",
+        "selector": [
+          "env",
+          "MONGO_QUERY_URL"
+        ],
+        "value": "",
+        "value_type": "string"
+      },
+      {
+        "description": "Token endpoint for the optional full LLM HTTP path.",
+        "id": "env-phone-full-llm-token-url",
+        "name": "FULL_LLM_TOKEN_URL",
+        "selector": [
+          "env",
+          "FULL_LLM_TOKEN_URL"
+        ],
+        "value": "",
+        "value_type": "string"
+      },
+      {
+        "description": "Chat/completion endpoint for the optional full LLM HTTP path.",
+        "id": "env-phone-full-llm-chat-url",
+        "name": "FULL_LLM_CHAT_URL",
+        "selector": [
+          "env",
+          "FULL_LLM_CHAT_URL"
+        ],
+        "value": "",
+        "value_type": "string"
+      }
+    ],
     "graph": {
       "nodes": [
         {

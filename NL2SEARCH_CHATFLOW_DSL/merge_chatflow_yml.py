@@ -6,7 +6,7 @@ PHONE_MODULE_JF_CHATFLOW.yml file is a local generated Dify import artifact and
 must not be maintained as source.
 """
 from __future__ import annotations
-import argparse, re, sys
+import argparse, re, subprocess, sys
 from collections import defaultdict, deque
 from pathlib import Path
 
@@ -51,6 +51,87 @@ def load_doc(text):
         fail(f'merged DSL is not parseable YAML/JSON: {e}')
     if not isinstance(doc,dict): fail('merged DSL root must be a mapping/object')
     return doc
+
+
+ENV_BRACE_RE=re.compile(r'\{\{#env\.([A-Za-z_][A-Za-z0-9_]*)#\}\}')
+ENV_DOT_RE=re.compile(r'(?<![A-Za-z0-9_])env\.([A-Za-z_][A-Za-z0-9_]*)')
+ENV_DOLLAR_RE=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
+
+
+def node_label(node):
+    data=node.get('data') or {}
+    return node.get('id'), data.get('title',''), data.get('type','')
+
+
+def collect_env_refs(doc):
+    refs=defaultdict(list)
+    nodes=doc.get('workflow',{}).get('graph',{}).get('nodes') or []
+    def add(key, kind, path, node, value):
+        nid,title,ntype=node_label(node)
+        refs[key].append({'kind':kind,'path':'.'.join(map(str,path)),'node_id':nid,'title':title,'type':ntype,'value':value})
+    def scan_value(v, path, node, keyname=''):
+        if isinstance(v, str):
+            for m in ENV_BRACE_RE.finditer(v): add(m.group(1),'template-env',path,node,v)
+            for m in ENV_DOT_RE.finditer(v): add(m.group(1),'dot-env',path,node,v)
+            if keyname == 'url':
+                for m in ENV_DOLLAR_RE.finditer(v): add(m.group(1),'http-url-env',path,node,v)
+        elif isinstance(v, list):
+            if len(v) >= 2 and v[0] == 'env' and isinstance(v[1], str):
+                add(v[1],'selector-env',path,node,v)
+            for i,x in enumerate(v): scan_value(x, path+[i], node)
+        elif isinstance(v, dict):
+            for k,x in v.items(): scan_value(x, path+[k], node, str(k))
+    for n in nodes:
+        scan_value(n, ['nodes', n.get('id')], n)
+    return refs
+
+
+def env_defs(doc):
+    envs=doc.get('workflow',{}).get('environment_variables') or []
+    if not isinstance(envs,list): fail('workflow.environment_variables must be a list')
+    names=[]
+    for e in envs:
+        if not isinstance(e,dict): fail('environment_variables entries must be objects')
+        name=e.get('name')
+        if not name: fail(f'environment variable missing name: {e}')
+        names.append(name)
+        selector=e.get('selector')
+        if selector is not None and selector != ['env', name]: fail(f'environment variable selector mismatch for {name}: {selector}')
+        if 'value_type' not in e: fail(f'environment variable missing value_type: {name}')
+    dup=[n for n in set(names) if names.count(n)>1]
+    if dup: fail(f'environment variable names must be unique: {sorted(dup)}')
+    return {e['name']:e for e in envs}
+
+
+def validate_env(doc):
+    refs=collect_env_refs(doc); defs=env_defs(doc)
+    missing=sorted(set(refs)-set(defs))
+    if missing: fail(f'env references missing workflow.environment_variables definitions: {missing}')
+    if 'ENABLE_FULL_LLM' not in defs: fail('ENABLE_FULL_LLM environment variable is required')
+    http_missing=sorted({k for k,v in refs.items() for r in v if r['kind']=='http-url-env'}-set(defs))
+    if http_missing: fail(f'HTTP URL env references missing definitions: {http_missing}')
+    return refs, defs
+
+
+def full_file_ignored():
+    try:
+        r=subprocess.run(['git','check-ignore','-q',str(FULL_FILE.relative_to(ROOT))],cwd=ROOT)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def print_env_report(refs, defs):
+    ref_names=sorted(refs)
+    def_names=sorted(defs)
+    http_refs=sorted({k for k,v in refs.items() for r in v if r['kind']=='http-url-env'})
+    print(f'all_env_refs: {ref_names}')
+    print(f'defined_env_names: {def_names}')
+    print(f'missing_env_defs: {sorted(set(ref_names)-set(def_names))}')
+    print(f'unused_env_defs: {sorted(set(def_names)-set(ref_names))}')
+    print(f'http_env_refs: {http_refs}')
+    e=defs.get('ENABLE_FULL_LLM',{})
+    print(f'ENABLE_FULL_LLM default/value: {e.get("value")!r}, value_type: {e.get("value_type")!r}')
 
 def validate(doc):
     if doc.get('version')!='0.6.0': fail('version must be 0.6.0')
@@ -108,12 +189,14 @@ def validate(doc):
             used={e.get('sourceHandle') for e in out[n['id']]}
             if None in used: fail(f'null compatibility edge is intentionally not used: {n["id"]}')
             if not used <= handles: fail(f'IF handle mismatch at {n["id"]}: {used} vs {handles}')
+    refs, defs = validate_env(doc)
+    if not full_file_ignored(): fail('PHONE_MODULE_JF_CHATFLOW.yml must be ignored as a local generated artifact')
     producers=defaultdict(set)
     for n in nodes:
         for k in (n.get('data',{}).get('outputs') or {}): producers[k].add(n['id'])
     for var in ['route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json','mongo_result_json','normalized_query_result_json','analysis_result_json','report_input_json','full_llm_token_request_body_json','full_llm_token_result_json','full_llm_request_body_json','full_llm_result_json','local_llm_result_json','final_answer']:
         if var not in producers: fail(f'variable producer missing: {var}')
-    return len(nodes),len(edges)
+    return len(nodes),len(edges),refs,defs
 
 def check_full_consistency(text):
     if not FULL_FILE.exists():
@@ -128,13 +211,15 @@ def main(argv=None):
     mode.add_argument('--check',action='store_true',help='validate fragments and compare existing generated full file if present')
     mode.add_argument('--stdout',action='store_true',help='print raw-concatenated full DSL to stdout without writing')
     args=ap.parse_args(argv)
-    parts=discover_parts(); text=merged_text(parts); doc=load_doc(text); nodes,edges=validate(doc)
+    parts=discover_parts(); text=merged_text(parts); doc=load_doc(text); nodes,edges,refs,defs=validate(doc)
     if args.stdout:
         sys.stdout.write(text); return 0
     if args.check:
         if check_full_consistency(text):
+            print_env_report(refs, defs)
             print(f'OK: PHONE split fragments valid; full file matches fragments ({len(parts)} fragments, {nodes} nodes, {edges} edges)')
         else:
+            print_env_report(refs, defs)
             print('OK: PHONE split fragments valid; full file not found, run merge to generate local import file')
         return 0
     FULL_FILE.write_text(text,encoding='utf-8')
