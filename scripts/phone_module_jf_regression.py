@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-import json, types
+import json, re, types
 from pathlib import Path
 p=Path('NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW.yml')
-d=json.load(open(p,encoding='utf-8'))
+part_re=re.compile(r'PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$')
+parts=sorted([x for x in p.parent.glob('PHONE_MODULE_JF_CHATFLOW_*.yml') if part_re.match(x.name)], key=lambda x:int(part_re.match(x.name).group(1)))
+if parts:
+    text=''.join(x.read_text(encoding='utf-8') for x in parts)
+    if p.exists() and p.read_text(encoding='utf-8') != text:
+        raise SystemExit('PHONE_MODULE_JF_CHATFLOW.yml differs from fragments; run merge_chatflow_yml.py')
+    d=json.loads(text)
+else:
+    d=json.load(open(p,encoding='utf-8'))
 nodes={n['id']:n for n in d['workflow']['graph']['nodes']}
 def run_code(nid, **kw):
     ns={}
@@ -58,4 +66,26 @@ must_edge('IF_满血版LLM开关','enabled','代码执行_准备满血版Token�
 must_edge('IF_满血版Token是否成功','false','LLM_生成竞分对比报告_本地版')
 must_edge('IF_满血版LLM是否成功','false','LLM_生成竞分对比报告_本地版')
 must_edge('IF_满血版LLM是否成功','ok','代码执行_合并最终回答')
+
+def reachable(src_title, dst_title, banned=()):
+    src=title[src_title]; dst=title[dst_title]
+    seen=set(); stack=[src]
+    while stack:
+        cur=stack.pop()
+        if cur == dst: return True
+        if cur in seen: continue
+        seen.add(cur)
+        for _, nxt in adj.get(cur, []):
+            nt=nodes[nxt]['data'].get('title','')
+            if nt in banned: continue
+            stack.append(nxt)
+    return False
+if not reachable('IF_output_type是否为报告类','代码执行_合并最终回答', {'LLM_生成竞分对比报告_本地版','HTTP请求_获取满血版LLM Token','HTTP请求_调用满血版LLM接口'}):
+    raise SystemExit('non-report branch can enter report/full LLM path')
+if not reachable('IF_output_type是否为报告类','代码执行_准备报告LLM输入'):
+    raise SystemExit('report branch cannot reach report LLM input')
+if not reachable('IF_是否缺槽','代码执行_构建QueryPlan'):
+    raise SystemExit('QueryPlan branch unreachable')
+if not reachable('IF_是否缺槽','代码执行_生成填槽请求'):
+    raise SystemExit('slot-fill branch unreachable')
 print('PASS report LLM graph regression samples 7-11')

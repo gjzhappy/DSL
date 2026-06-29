@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 DSL_PATH = Path("NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW.yml")
+PART_RE = re.compile(r"PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$")
 DATASET_ID = "4d7c7b04-e8d5-47cf-8bd1-dfdfe6022cb7"
 
 
@@ -14,8 +16,27 @@ def fail(msg: str) -> None:
     raise AssertionError(msg)
 
 
+def load_dsl_text() -> str:
+    parts = sorted(
+        (path for path in DSL_PATH.parent.glob("PHONE_MODULE_JF_CHATFLOW_*.yml") if PART_RE.match(path.name)),
+        key=lambda path: int(PART_RE.match(path.name).group(1)),
+    )
+    if parts:
+        numbers = [int(PART_RE.match(path.name).group(1)) for path in parts]
+        expected = list(range(numbers[0], numbers[0] + len(numbers)))
+        if numbers != expected:
+            fail(f"PHONE fragments must be continuous: {numbers}")
+        merged = "".join(path.read_text(encoding="utf-8") for path in parts)
+        if not merged.strip():
+            fail("PHONE fragments merge to empty content")
+        if DSL_PATH.exists() and DSL_PATH.read_text(encoding="utf-8") != merged:
+            fail("PHONE_MODULE_JF_CHATFLOW.yml differs from raw-concatenated fragments; run merge_chatflow_yml.py")
+        return merged
+    return DSL_PATH.read_text(encoding="utf-8")
+
+
 def main() -> int:
-    doc = json.loads(DSL_PATH.read_text(encoding="utf-8"))
+    doc = json.loads(load_dsl_text())
     graph = doc.get("workflow", {}).get("graph", {})
     nodes = graph.get("nodes")
     edges = graph.get("edges")
@@ -26,6 +47,22 @@ def main() -> int:
 
     node_by_id = {node.get("id"): node for node in nodes}
     titles = {node.get("data", {}).get("title"): node for node in nodes}
+
+    if len(node_by_id) != len(nodes):
+        fail("node id must be unique")
+    for edge in edges:
+        if edge.get("source") not in node_by_id:
+            fail(f"edge source missing: {edge}")
+        if edge.get("target") not in node_by_id:
+            fail(f"edge target missing: {edge}")
+
+    incoming = {}
+    for edge in edges:
+        incoming.setdefault(edge.get("target"), []).append(edge)
+    start_ids = {node.get("id") for node in nodes if node.get("data", {}).get("type") == "start"}
+    for node in nodes:
+        if node.get("id") not in start_ids and not incoming.get(node.get("id")):
+            fail(f"orphan node without upstream edge: {node.get('data', {}).get('title')}")
 
     for node in nodes:
         data = node.get("data", {})
@@ -90,6 +127,41 @@ def main() -> int:
         fail("IF_是否缺槽 -> 代码执行_构建QueryPlan must use sourceHandle=success and targetHandle=target")
     if not any(edge.get("source") == fill.get("id") and edge.get("target") == ansslot.get("id") for edge in edges):
         fail("代码执行_生成填槽请求 must connect to 结束_返回填槽请求")
+
+    def upstream_ids(target_id: str) -> set[str]:
+        rev = {}
+        for edge in edges:
+            rev.setdefault(edge.get("target"), []).append(edge.get("source"))
+        seen = set()
+        stack = list(rev.get(target_id, []))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(rev.get(cur, []))
+        return seen
+
+    output_owner = {}
+    for node_item in nodes:
+        for out_name in (node_item.get("data", {}).get("outputs") or {}):
+            output_owner.setdefault(out_name, set()).add(node_item.get("id"))
+    required_inputs = {
+        "代码执行_生成填槽请求": ["route_card_json", "slot_validate_result_json"],
+        "代码执行_构建QueryPlan": ["slot_validate_result_json"],
+        "代码执行_准备报告LLM输入": ["analysis_result_json"],
+        "代码执行_准备满血版Token请求": ["report_input_json"],
+        "代码执行_准备满血版LLM请求": ["report_input_json", "full_llm_token_result_json"],
+    }
+    for title_text, input_names in required_inputs.items():
+        target_node = titles.get(title_text)
+        if target_node is None:
+            fail(f"{title_text} node missing")
+        upstream = upstream_ids(target_node.get("id"))
+        for input_name in input_names:
+            owners = output_owner.get(input_name, set())
+            if not owners & upstream:
+                fail(f"{title_text} input {input_name} has no reachable upstream producer")
 
 
 
@@ -163,6 +235,16 @@ def main() -> int:
         fail("满血版 must not be a Dify built-in LLM node")
     if edge_to(switch, "enabled", local_llm):
         fail("full-enabled branch must not directly execute local LLM in parallel")
+    switch_cases = json.dumps(switch.get("data", {}).get("cases", []), ensure_ascii=False)
+    if "ENABLE_FULL_LLM" not in switch_cases:
+        fail("IF_满血版LLM开关 must use env.ENABLE_FULL_LLM")
+    if "token_request_body_json" not in (node("代码执行_准备满血版Token请求").get("data", {}).get("outputs") or {}):
+        fail("token request output token_request_body_json drifted")
+    full_outputs = node("代码执行_准备满血版LLM请求").get("data", {}).get("outputs") or {}
+    if not {"full_llm_request_body_json", "authorization_header"}.issubset(full_outputs):
+        fail("full LLM request outputs drifted")
+    if "report_input_json" not in (report_input.get("data", {}).get("outputs") or {}):
+        fail("report input output report_input_json drifted")
 
     dataset_ids = []
     for node in nodes:
