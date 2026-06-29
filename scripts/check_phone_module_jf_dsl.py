@@ -2,7 +2,7 @@
 from __future__ import annotations
 import sys
 from collections import defaultdict, deque
-from graph_phone_common import load_doc, graph, path
+from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema
 
 def fail(m): raise AssertionError(m)
 def main():
@@ -13,6 +13,7 @@ def main():
     g=d.get('workflow',{}).get('graph',{})
     nodes_list=g.get('nodes',[]); edges=g.get('edges',[])
     if not nodes_list or not edges or not g.get('viewport'): fail('graph nodes/edges/viewport required')
+    check_frontend_checkvalid_schema(d)
     ids=[n['id'] for n in nodes_list]; eids=[e['id'] for e in edges]
     if len(ids)!=len(set(ids)): fail('node id unique failed')
     if len(eids)!=len(set(eids)): fail('edge id unique failed')
@@ -51,7 +52,7 @@ def main():
     if bad: fail(f'nodes cannot reach End: {bad}')
     for i,n in nodes.items():
         if n['data']['type']=='if-else':
-            handles={c['id'] for c in n['data'].get('cases',[])}|{'false'}
+            handles={c['case_id'] for c in n['data'].get('cases',[])}|{'false'}
             used={h for h,_,_ in out[i]}
             if None in used: fail(f'null edge must not be treated as branch: {i}')
             if not used <= handles: fail(f'IF branch table invalid: {i} used={used} cases={handles}')

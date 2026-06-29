@@ -162,7 +162,6 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "need_slot",
                 "case_id": "need_slot",
                 "conditions": [
                   {
@@ -174,10 +173,10 @@
                     "comparison_operator": "is",
                     "value": false
                   }
-                ]
+                ],
+                "logical_operator": "and"
               },
               {
-                "id": "success",
                 "case_id": "success",
                 "conditions": [
                   {
@@ -189,9 +188,11 @@
                     "comparison_operator": "is",
                     "value": true
                   }
-                ]
+                ],
+                "logical_operator": "and"
               }
-            ]
+            ],
+            "logical_operator": "and"
           },
           "position": {
             "x": 2160,
@@ -234,7 +235,8 @@
           "data": {
             "title": "结束_返回填槽请求",
             "type": "answer",
-            "answer": "{{#fill.slot_fill_request_json#}}"
+            "answer": "{{#fill.slot_fill_request_json#}}",
+            "outputs": []
           },
           "position": {
             "x": 2880,
@@ -377,7 +379,6 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "report",
                 "case_id": "report",
                 "conditions": [
                   {
@@ -389,9 +390,11 @@
                     "comparison_operator": "contains",
                     "value": "report"
                   }
-                ]
+                ],
+                "logical_operator": "and"
               }
-            ]
+            ],
+            "logical_operator": "and"
           },
           "position": {
             "x": 4320,
@@ -436,7 +439,6 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "enabled",
                 "case_id": "enabled",
                 "conditions": [
                   {
@@ -447,9 +449,11 @@
                     "comparison_operator": "is",
                     "value": "true"
                   }
-                ]
+                ],
+                "logical_operator": "and"
               }
-            ]
+            ],
+            "logical_operator": "and"
           },
           "position": {
             "x": 5040,
@@ -539,7 +543,6 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "ok",
                 "case_id": "ok",
                 "conditions": [
                   {
@@ -551,9 +554,11 @@
                     "comparison_operator": "is",
                     "value": "ok"
                   }
-                ]
+                ],
+                "logical_operator": "and"
               }
-            ]
+            ],
+            "logical_operator": "and"
           },
           "position": {
             "x": 6480,
@@ -643,7 +648,6 @@
             "type": "if-else",
             "cases": [
               {
-                "id": "ok",
                 "case_id": "ok",
                 "conditions": [
                   {
@@ -655,9 +659,11 @@
                     "comparison_operator": "is",
                     "value": "ok"
                   }
-                ]
+                ],
+                "logical_operator": "and"
               }
-            ]
+            ],
+            "logical_operator": "and"
           },
           "position": {
             "x": 7920,
@@ -762,7 +768,8 @@
           "data": {
             "title": "结束_返回最终回答",
             "type": "answer",
-            "answer": "{{#final.final_answer#}}"
+            "answer": "{{#final.final_answer#}}",
+            "outputs": []
           },
           "position": {
             "x": 7560,
