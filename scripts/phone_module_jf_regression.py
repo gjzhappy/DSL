@@ -89,3 +89,45 @@ if not reachable('IF_是否缺槽','代码执行_构建QueryPlan'):
 if not reachable('IF_是否缺槽','代码执行_生成填槽请求'):
     raise SystemExit('slot-fill branch unreachable')
 print('PASS report LLM graph regression samples 7-11')
+
+# Additional graph-path regressions for Dify branch semantics.
+edges=d['workflow']['graph']['edges']
+by_id=nodes
+title_by_id={n['id']: n['data'].get('title') for n in d['workflow']['graph']['nodes']}
+case_handles={n['id']:{c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}|({'false'} if n['data'].get('type')=='if-else' else set()) for n in d['workflow']['graph']['nodes']}
+for e in edges:
+    if by_id[e['source']]['data'].get('type')=='if-else' and e.get('sourceHandle') not in case_handles[e['source']]:
+        raise SystemExit(f'IF sourceHandle not in branch config: {title_by_id[e["source"]]} {e.get("sourceHandle")}')
+    if e.get('targetHandle')!='target':
+        raise SystemExit(f'non-Dify targetHandle: {e}')
+
+def reachable_handles(src_title, dst_title, allowed_first_handle=None, banned_titles=()):
+    src=title[src_title]; dst=title[dst_title]
+    seen=set(); stack=[(src, True, [])]
+    banned=set(banned_titles)
+    while stack:
+        cur, first, path=stack.pop()
+        if cur==dst: return path+[cur]
+        if cur in seen: continue
+        seen.add(cur)
+        for h,nxt in adj.get(cur,[]):
+            if first and allowed_first_handle is not None and h!=allowed_first_handle: continue
+            if title_by_id[nxt] in banned: continue
+            stack.append((nxt, False, path+[cur]))
+    return None
+non_report_banned={'代码执行_准备报告LLM输入','LLM_生成竞分对比报告_本地版','代码执行_准备满血版Token请求','HTTP请求_获取满血版LLM Token','代码执行_准备满血版LLM请求','HTTP请求_调用满血版LLM接口'}
+if not reachable_handles('IF_是否缺槽','结束_返回填槽请求','need_slot'):
+    raise SystemExit('缺槽问题不能进入填槽请求 End')
+if not reachable_handles('IF_是否缺槽','代码执行_构建QueryPlan','success'):
+    raise SystemExit('槽位完整问题不能进入 QueryPlan')
+if not reachable_handles('IF_output_type是否为报告类','结束_返回最终回答','false',non_report_banned):
+    raise SystemExit('非报告路径未避开报告/full LLM 到达最终 End')
+if not reachable_handles('IF_output_type是否为报告类','代码执行_准备报告LLM输入','report'):
+    raise SystemExit('报告类问题未进入报告分支')
+if not reachable_handles('IF_满血版LLM开关','LLM_生成竞分对比报告_本地版','false',{'代码执行_准备满血版Token请求','HTTP请求_获取满血版LLM Token','代码执行_准备满血版LLM请求','HTTP请求_调用满血版LLM接口'}):
+    raise SystemExit('ENABLE_FULL_LLM=false 未避开满血版链路')
+if not reachable_handles('IF_满血版LLM开关','HTTP请求_调用满血版LLM接口','enabled'):
+    raise SystemExit('ENABLE_FULL_LLM=true token ok 不能进入满血版 LLM 请求')
+if not reachable_handles('IF_满血版Token是否成功','结束_返回最终回答','false',{'代码执行_准备满血版LLM请求','HTTP请求_调用满血版LLM接口'}):
+    raise SystemExit('token 失败未降级到最终合并路径')
+print('PASS graph-path branch regressions')
