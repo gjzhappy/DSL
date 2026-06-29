@@ -6,9 +6,14 @@ PHONE_MODULE_JF_CHATFLOW.yml file is a local generated Dify import artifact and
 must not be maintained as source.
 """
 from __future__ import annotations
-import argparse, json, re, sys
+import argparse, re, sys
 from collections import defaultdict, deque
 from pathlib import Path
+
+ROOT=Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.graph_phone_common import load_phone_dsl_text
 
 BASE_DIR=Path(__file__).resolve().parent
 FULL_FILE=BASE_DIR/'PHONE_MODULE_JF_CHATFLOW.yml'
@@ -41,11 +46,7 @@ def merged_text(parts):
 
 def load_doc(text):
     try:
-        import yaml
-        doc=yaml.safe_load(text)
-    except ModuleNotFoundError:
-        try: doc=json.loads(text)
-        except json.JSONDecodeError as e: fail(f'merged DSL is not parseable YAML/JSON: {e}')
+        doc=load_phone_dsl_text(text)
     except Exception as e:
         fail(f'merged DSL is not parseable YAML/JSON: {e}')
     if not isinstance(doc,dict): fail('merged DSL root must be a mapping/object')
@@ -103,7 +104,7 @@ def validate(doc):
     if bad: fail(f'nodes cannot reach answer: {bad}')
     for n in nodes:
         if n['data'].get('type')=='if-else':
-            handles={c.get('id') for c in n['data'].get('cases',[]) if c.get('id')}|{'false'}
+            handles={c.get('case_id') or c.get('id') for c in n['data'].get('cases',[]) if c.get('case_id') or c.get('id')}|{'false'}
             used={e.get('sourceHandle') for e in out[n['id']]}
             if None in used: fail(f'null compatibility edge is intentionally not used: {n["id"]}')
             if not used <= handles: fail(f'IF handle mismatch at {n["id"]}: {used} vs {handles}')
