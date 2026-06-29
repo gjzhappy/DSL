@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import sys
-from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema
+from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema, check_ifslot_validate_contract
 
 def must(p,msg):
     if not p: raise AssertionError(msg)
 def main():
     d=load_doc(); nodes,title,out,inc=graph(d)
     check_frontend_checkvalid_schema(d)
+    check_ifslot_validate_contract(d)
     p1=path(title,out,nodes,'IF_是否缺槽','结束_返回填槽请求','need_slot',{'代码执行_构建QueryPlan','HTTP请求_执行Mongo查询','代码执行_准备报告LLM输入','LLM_生成竞分对比报告_本地版'})
     must(p1,'缺槽问题未进入 fill -> ansslot 或错误进入查询链路')
     p2=path(title,out,nodes,'IF_是否缺槽','代码执行_构建QueryPlan','success')
