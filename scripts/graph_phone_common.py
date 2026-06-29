@@ -93,6 +93,48 @@ def check_frontend_checkvalid_schema(doc):
     if missing:
         raise AssertionError('frontend checkValid schema failed:\n' + '\n'.join(missing))
 
+def check_ifslot_validate_contract(doc):
+    nodes,title,out,inc=graph(doc)
+    if 'ifslot' not in nodes or 'validate' not in nodes:
+        raise AssertionError('ifslot/validate node missing')
+    ifslot=nodes['ifslot']['data']
+    validate=nodes['validate']['data']
+    outputs=validate.get('outputs') or {}
+    if 'ready_to_query_flag' not in outputs:
+        raise AssertionError('validate.data.outputs.ready_to_query_flag missing')
+    code=(validate.get('source_code') or '') + '\n' + (validate.get('code') or '')
+    if 'slot_validate_result_json' not in outputs or 'slot_validate_result_json' not in code:
+        raise AssertionError('validate must keep slot_validate_result_json output contract')
+    expected={
+        'need_slot': ('ifslot-need-slot','false'),
+        'success': ('ifslot-success','true'),
+    }
+    cases={c.get('case_id'):c for c in ifslot.get('cases',[])}
+    if set(expected) - set(cases):
+        raise AssertionError(f'ifslot cases missing: {sorted(set(expected)-set(cases))}')
+    for case_id,(cond_id,value) in expected.items():
+        case=cases[case_id]
+        if case.get('logical_operator')!='and':
+            raise AssertionError(f'ifslot.{case_id}.logical_operator must be and')
+        conds=case.get('conditions')
+        if not isinstance(conds,list) or len(conds)!=1:
+            raise AssertionError(f'ifslot.{case_id}.conditions must contain one condition')
+        cond=conds[0]
+        if cond.get('id')!=cond_id:
+            raise AssertionError(f'ifslot.{case_id}.condition.id invalid: {cond.get("id")}')
+        if cond.get('variable_selector')!=['validate','ready_to_query_flag']:
+            raise AssertionError(f'ifslot.{case_id}.variable_selector must point to validate.ready_to_query_flag')
+        if cond.get('comparison_operator')!='=':
+            raise AssertionError(f'ifslot.{case_id}.comparison_operator must be =')
+        if cond.get('value') in (None,''):
+            raise AssertionError(f'ifslot.{case_id}.condition.value empty')
+        if cond.get('value')!=value:
+            raise AssertionError(f'ifslot.{case_id}.condition.value must be {value!r}')
+    edges={(e['source'],e.get('sourceHandle'),e['target']) for e in doc['workflow']['graph']['edges']}
+    for edge in (('ifslot','need_slot','fill'),('fill','source','ansslot'),('ifslot','success','plan')):
+        if edge not in edges:
+            raise AssertionError(f'expected edge missing/changed: {edge}')
+
 def path(title,out,nodes,src_title,dst_title,first_handle=None,banned=()):
     src=title[src_title]; dst=title[dst_title]; banned=set(banned); q=deque([(src,[],True)]); seen=set()
     while q:

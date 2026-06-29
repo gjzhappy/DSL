@@ -155,12 +155,15 @@
             "outputs": {
               "slot_validate_result_json": {
                 "type": "string"
+              },
+              "ready_to_query_flag": {
+                "type": "string"
               }
             },
-            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False)}\n",
+            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False), 'ready_to_query_flag': 'true' if ready else 'false'}\n",
             "variables": [],
             "code_language": "python3",
-            "code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False)}\n"
+            "code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False), 'ready_to_query_flag': 'true' if ready else 'false'}\n"
           },
           "position": {
             "x": 1800,
@@ -184,13 +187,13 @@
                 "case_id": "need_slot",
                 "conditions": [
                   {
+                    "id": "ifslot-need-slot",
                     "variable_selector": [
                       "validate",
-                      "slot_validate_result_json",
-                      "ready_to_query"
+                      "ready_to_query_flag"
                     ],
-                    "comparison_operator": "is",
-                    "value": false
+                    "comparison_operator": "=",
+                    "value": "false"
                   }
                 ],
                 "logical_operator": "and"
@@ -199,13 +202,13 @@
                 "case_id": "success",
                 "conditions": [
                   {
+                    "id": "ifslot-success",
                     "variable_selector": [
                       "validate",
-                      "slot_validate_result_json",
-                      "ready_to_query"
+                      "ready_to_query_flag"
                     ],
-                    "comparison_operator": "is",
-                    "value": true
+                    "comparison_operator": "=",
+                    "value": "true"
                   }
                 ],
                 "logical_operator": "and"

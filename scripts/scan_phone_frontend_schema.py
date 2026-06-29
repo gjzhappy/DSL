@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.graph_phone_common import load_phone_dsl_text
+from scripts.graph_phone_common import check_ifslot_validate_contract
 
 FIELDS = {
     'start': {'variables': list},
@@ -43,7 +44,16 @@ def main():
                 for k in ('case_id','logical_operator','conditions'):
                     if k not in c: missing.append(f'cases[{i}].{k}')
                 if 'conditions' in c and not isinstance(c['conditions'], list): terr.append(f'cases[{i}].conditions')
+                elif isinstance(c.get('conditions'), list):
+                    for j,cond in enumerate(c['conditions']):
+                        condition_keys=('variable_selector','comparison_operator','value')
+                        if n.get('id') == 'ifslot':
+                            condition_keys=('id',) + condition_keys
+                        for k in condition_keys:
+                            if k not in cond: missing.append(f'cases[{i}].conditions[{j}].{k}')
+                        if cond.get('value') in (None,''): nulls.append(f'cases[{i}].conditions[{j}].value')
         risk_missing+=len(missing); risk_null+=len(nulls); risk_type+=len(terr)
         print(f"{n.get('id')}\t{data.get('title')}\t{t}\t{','.join(data.keys())}\t{','.join(list_paths(data))}\t{','.join(missing) or '-'}\t{','.join(nulls) or '-'}\t{','.join(terr) or '-'}")
     print(f'SUMMARY nodes={len(d["workflow"]["graph"]["nodes"])} missing={risk_missing} null={risk_null} type_errors={risk_type}')
+    check_ifslot_validate_contract(d)
 if __name__=='__main__': main()

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import sys
 from collections import defaultdict, deque
-from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema
+from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema, check_ifslot_validate_contract
 
 def fail(m): raise AssertionError(m)
 def main():
@@ -14,6 +14,7 @@ def main():
     nodes_list=g.get('nodes',[]); edges=g.get('edges',[])
     if not nodes_list or not edges or not g.get('viewport'): fail('graph nodes/edges/viewport required')
     check_frontend_checkvalid_schema(d)
+    check_ifslot_validate_contract(d)
     ids=[n['id'] for n in nodes_list]; eids=[e['id'] for e in edges]
     if len(ids)!=len(set(ids)): fail('node id unique failed')
     if len(eids)!=len(set(eids)): fail('edge id unique failed')
@@ -66,7 +67,7 @@ def main():
     producers=defaultdict(set)
     for n in nodes.values():
         for v in n['data'].get('outputs',{}) or {}: producers[v].add(n['id'])
-    for v in ['route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json','mongo_result_json','normalized_query_result_json','analysis_result_json','report_input_json','full_llm_token_request_body_json','full_llm_token_result_json','full_llm_request_body_json','final_answer']:
+    for v in ['route_card_json','slot_validate_result_json','ready_to_query_flag','query_plan_json','mongo_request_json','mongo_result_json','normalized_query_result_json','analysis_result_json','report_input_json','full_llm_token_request_body_json','full_llm_token_result_json','full_llm_request_body_json','final_answer']:
         if v not in producers: fail(f'variable producer missing: {v}')
     print(f'OK: {len(nodes)} nodes, {len(edges)} edges; orphan=0 dangling=0 position_overlap=0')
 if __name__=='__main__':
