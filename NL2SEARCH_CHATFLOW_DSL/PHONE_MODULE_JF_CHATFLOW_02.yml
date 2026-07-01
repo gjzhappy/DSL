@@ -1,0 +1,584 @@
+        {
+          "id": "llm_input",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备统一LLM调用输入",
+            "type": "code",
+            "outputs": {
+              "llm_handler_input_json": {
+                "type": "string"
+              },
+              "llm_task_type": {
+                "type": "string"
+              },
+              "llm_output_kind": {
+                "type": "string"
+              },
+              "llm_artifact_type": {
+                "type": "string"
+              },
+              "llm_system_prompt": {
+                "type": "string"
+              },
+              "llm_user_prompt": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(report_input_json='', trend_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    candidates = [load_json(report_input_json), load_json(trend_input_json)]\n    payload = {}\n    first_error = {}\n    for item in candidates:\n        if item and item.get('status') == 'error' and not first_error:\n            first_error = item\n        if item and item.get('status') == 'ok' and item.get('user_prompt'):\n            payload = item\n            break\n    if not payload and first_error:\n        payload = first_error\n    if not payload:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'unknown',\n            'output_kind': 'unknown',\n            'artifact_type': 'markdown_text',\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': 'LLM 输入准备失败，缺少有效 handler 输入。',\n            'query_plan': {},\n            'query_result': {},\n            'handler_context': {},\n            'error': '缺少有效 LLM handler 输入'\n        }\n\n    return {\n        'llm_handler_input_json': json.dumps(payload, ensure_ascii=False),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(payload.get('system_prompt') or ''),\n        'llm_user_prompt': str(payload.get('user_prompt') or '')\n    }\n",
+            "variables": [
+              {
+                "variable": "report_input_json",
+                "value_selector": [
+                  "report_input",
+                  "report_input_json"
+                ]
+              },
+              {
+                "variable": "trend_input_json",
+                "value_selector": [
+                  "trend_input",
+                  "trend_input_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(report_input_json='', trend_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    candidates = [load_json(report_input_json), load_json(trend_input_json)]\n    payload = {}\n    first_error = {}\n    for item in candidates:\n        if item and item.get('status') == 'error' and not first_error:\n            first_error = item\n        if item and item.get('status') == 'ok' and item.get('user_prompt'):\n            payload = item\n            break\n    if not payload and first_error:\n        payload = first_error\n    if not payload:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'unknown',\n            'output_kind': 'unknown',\n            'artifact_type': 'markdown_text',\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': 'LLM 输入准备失败，缺少有效 handler 输入。',\n            'query_plan': {},\n            'query_result': {},\n            'handler_context': {},\n            'error': '缺少有效 LLM handler 输入'\n        }\n\n    return {\n        'llm_handler_input_json': json.dumps(payload, ensure_ascii=False),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(payload.get('system_prompt') or ''),\n        'llm_user_prompt': str(payload.get('user_prompt') or '')\n    }\n"
+          },
+          "position": {
+            "x": 5760,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 5760,
+            "y": 300
+          },
+          "width": 320,
+          "height": 170
+        }
+      ],
+      "edges": [
+        {
+          "id": "e01_start_source_ctx",
+          "type": "custom",
+          "source": "start",
+          "target": "ctx",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e02_ctx_source_kr",
+          "type": "custom",
+          "source": "ctx",
+          "target": "kr",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e03_kr_source_route",
+          "type": "custom",
+          "source": "kr",
+          "target": "route",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e04_route_source_parse",
+          "type": "custom",
+          "source": "route",
+          "target": "parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e05_parse_source_validate",
+          "type": "custom",
+          "source": "parse",
+          "target": "validate",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e06_validate_source_ifslot",
+          "type": "custom",
+          "source": "validate",
+          "target": "ifslot",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e07_ifslot_need_slot_fill",
+          "type": "custom",
+          "source": "ifslot",
+          "target": "fill",
+          "sourceHandle": "need_slot",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e08_fill_source_ansslot",
+          "type": "custom",
+          "source": "fill",
+          "target": "ansslot",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e09_ifslot_success_plan",
+          "type": "custom",
+          "source": "ifslot",
+          "target": "plan",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e10_plan_source_mongo",
+          "type": "custom",
+          "source": "plan",
+          "target": "mongo",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e12_http_source_norm",
+          "type": "custom",
+          "source": "http",
+          "target": "norm",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e13_norm_source_if_query_ok",
+          "type": "custom",
+          "source": "norm",
+          "target": "if_query_ok",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e13a_if_query_success_analysis",
+          "type": "custom",
+          "source": "if_query_ok",
+          "target": "analysis",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e13b_if_query_false_ans_query_error",
+          "type": "custom",
+          "source": "if_query_ok",
+          "target": "ans_query_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e14_analysis_source_ifreport",
+          "type": "custom",
+          "source": "analysis",
+          "target": "ifreport",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e16_final_source_ans",
+          "type": "custom",
+          "source": "final",
+          "target": "ans",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e17_ifreport_report_report_input",
+          "type": "custom",
+          "source": "ifreport",
+          "target": "report_input",
+          "sourceHandle": "report",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e19_ifllm_false_llmlocal",
+          "type": "custom",
+          "source": "ifllm",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e20_llmlocal_source_local_wrap",
+          "type": "custom",
+          "source": "llmlocal",
+          "target": "local_wrap",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e21_local_wrap_source_final",
+          "type": "custom",
+          "source": "local_wrap",
+          "target": "final",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e22_ifllm_enabled_token_req",
+          "type": "custom",
+          "source": "ifllm",
+          "target": "token_req",
+          "sourceHandle": "enabled",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e23_token_req_source_http_token",
+          "type": "custom",
+          "source": "token_req",
+          "target": "http_token",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e24_http_token_source_token_parse",
+          "type": "custom",
+          "source": "http_token",
+          "target": "token_parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e25_token_parse_source_if_token",
+          "type": "custom",
+          "source": "token_parse",
+          "target": "if_token",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e26_if_token_ok_full_req",
+          "type": "custom",
+          "source": "if_token",
+          "target": "full_req",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e27_full_req_source_http_full",
+          "type": "custom",
+          "source": "full_req",
+          "target": "http_full",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e28_http_full_source_full_parse",
+          "type": "custom",
+          "source": "http_full",
+          "target": "full_parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e29_full_parse_source_if_full",
+          "type": "custom",
+          "source": "full_parse",
+          "target": "if_full",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e30_if_token_false_llmlocal",
+          "type": "custom",
+          "source": "if_token",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e31_if_full_ok_wrap",
+          "type": "custom",
+          "source": "if_full",
+          "target": "local_wrap",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e32_if_full_false_llmlocal",
+          "type": "custom",
+          "source": "if_full",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e11_mongo_source_if_mongo_request_ok",
+          "type": "custom",
+          "source": "mongo",
+          "target": "if_mongo_request_ok",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e11a_if_mongo_request_success_http",
+          "type": "custom",
+          "source": "if_mongo_request_ok",
+          "target": "http",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e11b_if_mongo_request_false_ans_error",
+          "type": "custom",
+          "source": "if_mongo_request_ok",
+          "target": "ans_mongo_request_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15_ifoutput_table_table_handler",
+          "type": "custom",
+          "source": "ifreport",
+          "target": "table_handler",
+          "sourceHandle": "table",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15a_table_handler_source_final",
+          "type": "custom",
+          "source": "table_handler",
+          "target": "final",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15b_ifoutput_trend_trend_input",
+          "type": "custom",
+          "source": "ifreport",
+          "target": "trend_input",
+          "sourceHandle": "trend",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15f_ifoutput_excel_excel_handler",
+          "type": "custom",
+          "source": "ifreport",
+          "target": "excel_handler",
+          "sourceHandle": "excel",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15g_excel_handler_source_final",
+          "type": "custom",
+          "source": "excel_handler",
+          "target": "final",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15h_ifoutput_false_default_handler",
+          "type": "custom",
+          "source": "ifreport",
+          "target": "default_handler",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15i_default_handler_source_final",
+          "type": "custom",
+          "source": "default_handler",
+          "target": "final",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e18_report_input_source_llm_input",
+          "type": "custom",
+          "source": "report_input",
+          "target": "llm_input",
+          "sourceHandle": "source",
+          "targetHandle": "target"
+        },
+        {
+          "id": "e15c_trend_input_source_llm_input",
+          "type": "custom",
+          "source": "trend_input",
+          "target": "llm_input",
+          "sourceHandle": "source",
+          "targetHandle": "target"
+        },
+        {
+          "id": "e18a_llm_input_source_ifllm",
+          "type": "custom",
+          "source": "llm_input",
+          "target": "ifllm",
+          "sourceHandle": "source",
+          "targetHandle": "target"
+        }
+      ],
+      "viewport": {
+        "x": -770.4707768996122,
+        "y": 280.37131952901615,
+        "zoom": 0.4694654630250833
+      }
+    }
+  }
+}
