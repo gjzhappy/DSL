@@ -16,18 +16,18 @@
           "env",
           "ENABLE_FULL_LLM"
         ],
-        "value": "false",
+        "value": "true",
         "value_type": "string"
       },
       {
-        "description": "Roadmap-aligned HTTP endpoint used by PHONE DSL to execute Mongo query requests.",
+        "description": "PHONE DSL simple Mongo pipeline endpoint; request body is {collection, pipeline}.",
         "id": "env-phone-sn-mongodb-query-urls",
         "name": "SN_MONGODB_QUERY_URLS",
         "selector": [
           "env",
           "SN_MONGODB_QUERY_URLS"
         ],
-        "value": "",
+        "value": "http://100.105.21.157:9201/simulation/datacenter/mongo/pipeline/query/simple",
         "value_type": "string"
       },
       {
@@ -38,7 +38,7 @@
           "env",
           "LLM_TOKEN_URL"
         ],
-        "value": "",
+        "value": "http://oauth2-his.huawei.com/ApiCommonQuery/appToken/getRestAppDynamicToken",
         "value_type": "string"
       },
       {
@@ -49,7 +49,7 @@
           "env",
           "LLM_CHAT_URL"
         ],
-        "value": "",
+        "value": "http://nginx:18080/llm-proxy/chat/completions",
         "value_type": "string"
       },
       {
@@ -60,7 +60,7 @@
           "env",
           "LLM_APP_ID"
         ],
-        "value": "",
+        "value": "com.huawei.kirin.his.hulian",
         "value_type": "string"
       },
       {
@@ -82,7 +82,7 @@
           "env",
           "LLM_MODEL"
         ],
-        "value": "",
+        "value": "DeepSeek-V4-Flash",
         "value_type": "string"
       },
       {
@@ -93,7 +93,7 @@
           "env",
           "LLM_USER"
         ],
-        "value": "phone_module_jf",
+        "value": "g30044897",
         "value_type": "string"
       },
       {
@@ -115,8 +115,8 @@
           "env",
           "LLM_TIMEOUT_MS"
         ],
-        "value": "30000",
-        "value_type": "string"
+        "value": 600000,
+        "value_type": "integer"
       },
       {
         "description": "Temperature parameter for the optional full LLM chat request.",
@@ -126,8 +126,8 @@
           "env",
           "LLM_TEMPERATURE"
         ],
-        "value": "0.2",
-        "value_type": "string"
+        "value": 0,
+        "value_type": "integer"
       },
       {
         "description": "Top-p parameter for the optional full LLM chat request.",
@@ -137,8 +137,8 @@
           "env",
           "LLM_TOP_P"
         ],
-        "value": "0.9",
-        "value_type": "string"
+        "value": 1,
+        "value_type": "integer"
       },
       {
         "description": "Maximum completion tokens for the optional full LLM chat request.",
@@ -148,8 +148,8 @@
           "env",
           "LLM_MAX_COMPLETION_TOKENS"
         ],
-        "value": "4096",
-        "value_type": "string"
+        "value": 12288,
+        "value_type": "integer"
       },
       {
         "description": "Whether the optional full LLM chat request should stream responses.",
@@ -171,12 +171,7 @@
           "data": {
             "title": "开始",
             "type": "start",
-            "variables": [
-              {
-                "variable": "question",
-                "type": "text-input"
-              }
-            ]
+            "variables": []
           },
           "position": {
             "x": 0,
@@ -200,10 +195,18 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(question='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    return {'context_json': json.dumps({'question': question or '', 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(sys_query='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    real_question = sys_query or ''\n    return {'context_json': json.dumps({'question': real_question, 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n",
+            "variables": [
+              {
+                "variable": "sys_query",
+                "value_selector": [
+                  "sys",
+                  "query"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(question='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    return {'context_json': json.dumps({'question': question or '', 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n"
+            "code": "def main(sys_query='', pending_route_card_json='', partial_placeholder_values_json='', pending_route_id='', pending_missing_slots_json=''):\n    import json\n    real_question = sys_query or ''\n    return {'context_json': json.dumps({'question': real_question, 'pending_route_card_json': pending_route_card_json or '', 'partial_placeholder_values_json': partial_placeholder_values_json or '', 'pending_route_id': pending_route_id or '', 'pending_missing_slots_json': pending_missing_slots_json or ''}, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 360,
@@ -259,10 +262,25 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(context_json='', retrieval_result=None):\n    import json\n    return {'route_card_json': json.dumps({'route_id':'phone_jf','module':'PHONE','required_slots':['target_objects','object_scope'],'default_output_type':'table','templates':[{'id':'phone_cis_compare','keywords':['cis','规格','主摄']},{'id':'phone_power_compare','keywords':['功耗','供电']}], 'mongo': {'collection':'phone_jf'}}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(context_json='', retrieval_result=None):\n    import json, re\n\n    def collect_text(obj):\n        if obj is None:\n            return []\n        if isinstance(obj, str):\n            return [obj]\n        if isinstance(obj, list):\n            texts = []\n            for item in obj:\n                texts.extend(collect_text(item))\n            return texts\n        if isinstance(obj, dict):\n            texts = []\n            for key in (\"content\", \"text\", \"page_content\", \"document\", \"segment\", \"answer\", \"result\"):\n                if key in obj:\n                    texts.extend(collect_text(obj[key]))\n            return texts or [json.dumps(obj, ensure_ascii=False)]\n        return []\n\n    def json_candidates(text):\n        if not text:\n            return []\n        candidates = []\n        marked = re.search(\n            r\"ROUTE_CONFIG_JSON_START[\\s\\S]*?```(?:json)?\\s*([\\s\\S]*?)\\s*```[\\s\\S]*?ROUTE_CONFIG_JSON_END\",\n            text,\n            flags=re.I,\n        )\n        if marked:\n            candidates.append(marked.group(1).strip())\n        candidates.extend(m.group(1).strip() for m in re.finditer(r\"```(?:json)?\\s*([\\s\\S]*?)\\s*```\", text, flags=re.I))\n        candidates.append(text.strip())\n        return candidates\n\n    def load_config(retrieval):\n        for text in collect_text(retrieval):\n            for candidate in json_candidates(text):\n                try:\n                    obj = json.loads(candidate)\n                except Exception:\n                    continue\n                if isinstance(obj, dict) and (obj.get(\"route_id\") or obj.get(\"required_slots\") or obj.get(\"query_templates\")):\n                    return obj\n        return {}\n\n    def to_int(value, default):\n        try:\n            return int(value)\n        except Exception:\n            return default\n\n    def clean_values(values):\n        cleaned = []\n        for item in values or []:\n            if not isinstance(item, dict) or not item.get(\"value\"):\n                continue\n            aliases = [str(a) for a in item.get(\"aliases\", []) if str(a or \"\").strip()]\n            cleaned_item = {\n                \"value\": str(item[\"value\"]),\n                \"aliases\": aliases,\n            }\n            # 维度/输出类型等业务语义归属应来自知识库，而不是 Code 节点硬编码。\n            for key in (\"topic\", \"output_kind\", \"artifact_type\", \"desc\"):\n                value = item.get(key)\n                if isinstance(value, str) and value.strip():\n                    cleaned_item[key] = value.strip()\n            cleaned.append(cleaned_item)\n        return cleaned\n\n    def normalize_slots(config):\n        raw_required = config.get(\"required_slots\") or []\n        existing_defs = config.get(\"slot_definitions\") if isinstance(config.get(\"slot_definitions\"), dict) else {}\n        slot_defs, slot_order = {}, []\n\n        for item in raw_required:\n            if isinstance(item, str):\n                slot = item\n                detail = existing_defs.get(slot) if isinstance(existing_defs.get(slot), dict) else {}\n            elif isinstance(item, dict):\n                slot = item.get(\"slot\")\n                detail = item\n            else:\n                continue\n            if not slot:\n                continue\n            slot = str(slot)\n            slot_order.append(slot)\n            slot_defs[slot] = {\n                \"desc\": detail.get(\"desc\", \"\"),\n                \"placeholder\": detail.get(\"placeholder\", \"\"),\n                \"min_items\": to_int(detail.get(\"min_items\"), 1),\n                \"type\": detail.get(\"type\") or (\"multi_enum\" if to_int(detail.get(\"min_items\"), 1) > 1 else \"enum\"),\n                \"values\": clean_values(detail.get(\"values\", [])),\n            }\n\n        for slot, detail in existing_defs.items():\n            if slot in slot_defs or not isinstance(detail, dict):\n                continue\n            slot_order.append(slot)\n            slot_defs[slot] = {\n                \"desc\": detail.get(\"desc\", \"\"),\n                \"placeholder\": detail.get(\"placeholder\", \"\"),\n                \"min_items\": to_int(detail.get(\"min_items\"), 1),\n                \"type\": detail.get(\"type\") or \"enum\",\n                \"values\": clean_values(detail.get(\"values\", [])),\n            }\n        return slot_order, slot_defs\n\n    config = load_config(retrieval_result)\n    slot_order, slot_defs = normalize_slots(config) if config else ([], {})\n    mongo = config.get(\"mongo\") if isinstance(config.get(\"mongo\"), dict) else {}\n    query_templates = config.get(\"query_templates\") if isinstance(config.get(\"query_templates\"), dict) else {}\n\n    route_status = \"ok\"\n    route_error = \"\"\n    if not config:\n        route_status = \"error\"\n        route_error = \"未从知识库召回有效 RouteCard 配置，请检查 MD 是否包含 ROUTE_CONFIG_JSON_START/END 及合法 JSON。\"\n    elif not slot_order:\n        route_status = \"error\"\n        route_error = \"RouteCard.required_slots 缺失或为空。\"\n\n    return {\n        \"route_card_json\": json.dumps({\n            \"route_status\": route_status,\n            \"route_error\": route_error,\n            \"route_id\": config.get(\"route_id\") or \"\",\n            \"route_desc\": config.get(\"route_desc\") or config.get(\"description\") or \"\",\n            \"module\": config.get(\"module\") or \"\",\n            \"source\": \"knowledge\" if config else \"missing\",\n            \"required_slots\": slot_order,\n            \"slot_definitions\": slot_defs,\n            \"query_templates\": query_templates,\n            \"mongo\": mongo,\n        }, ensure_ascii=False)\n    }\n",
+            "variables": [
+              {
+                "variable": "context_json",
+                "value_selector": [
+                  "ctx",
+                  "context_json"
+                ]
+              },
+              {
+                "variable": "retrieval_result",
+                "value_selector": [
+                  "kr",
+                  "result"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(context_json='', retrieval_result=None):\n    import json\n    return {'route_card_json': json.dumps({'route_id':'phone_jf','module':'PHONE','required_slots':['target_objects','object_scope'],'default_output_type':'table','templates':[{'id':'phone_cis_compare','keywords':['cis','规格','主摄']},{'id':'phone_power_compare','keywords':['功耗','供电']}], 'mongo': {'collection':'phone_jf'}}, ensure_ascii=False)}\n"
+            "code": "def main(context_json='', retrieval_result=None):\n    import json, re\n\n    def collect_text(obj):\n        if obj is None:\n            return []\n        if isinstance(obj, str):\n            return [obj]\n        if isinstance(obj, list):\n            texts = []\n            for item in obj:\n                texts.extend(collect_text(item))\n            return texts\n        if isinstance(obj, dict):\n            texts = []\n            for key in (\"content\", \"text\", \"page_content\", \"document\", \"segment\", \"answer\", \"result\"):\n                if key in obj:\n                    texts.extend(collect_text(obj[key]))\n            return texts or [json.dumps(obj, ensure_ascii=False)]\n        return []\n\n    def json_candidates(text):\n        if not text:\n            return []\n        candidates = []\n        marked = re.search(\n            r\"ROUTE_CONFIG_JSON_START[\\s\\S]*?```(?:json)?\\s*([\\s\\S]*?)\\s*```[\\s\\S]*?ROUTE_CONFIG_JSON_END\",\n            text,\n            flags=re.I,\n        )\n        if marked:\n            candidates.append(marked.group(1).strip())\n        candidates.extend(m.group(1).strip() for m in re.finditer(r\"```(?:json)?\\s*([\\s\\S]*?)\\s*```\", text, flags=re.I))\n        candidates.append(text.strip())\n        return candidates\n\n    def load_config(retrieval):\n        for text in collect_text(retrieval):\n            for candidate in json_candidates(text):\n                try:\n                    obj = json.loads(candidate)\n                except Exception:\n                    continue\n                if isinstance(obj, dict) and (obj.get(\"route_id\") or obj.get(\"required_slots\") or obj.get(\"query_templates\")):\n                    return obj\n        return {}\n\n    def to_int(value, default):\n        try:\n            return int(value)\n        except Exception:\n            return default\n\n    def clean_values(values):\n        cleaned = []\n        for item in values or []:\n            if not isinstance(item, dict) or not item.get(\"value\"):\n                continue\n            aliases = [str(a) for a in item.get(\"aliases\", []) if str(a or \"\").strip()]\n            cleaned_item = {\n                \"value\": str(item[\"value\"]),\n                \"aliases\": aliases,\n            }\n            # 维度/输出类型等业务语义归属应来自知识库，而不是 Code 节点硬编码。\n            for key in (\"topic\", \"output_kind\", \"artifact_type\", \"desc\"):\n                value = item.get(key)\n                if isinstance(value, str) and value.strip():\n                    cleaned_item[key] = value.strip()\n            cleaned.append(cleaned_item)\n        return cleaned\n\n    def normalize_slots(config):\n        raw_required = config.get(\"required_slots\") or []\n        existing_defs = config.get(\"slot_definitions\") if isinstance(config.get(\"slot_definitions\"), dict) else {}\n        slot_defs, slot_order = {}, []\n\n        for item in raw_required:\n            if isinstance(item, str):\n                slot = item\n                detail = existing_defs.get(slot) if isinstance(existing_defs.get(slot), dict) else {}\n            elif isinstance(item, dict):\n                slot = item.get(\"slot\")\n                detail = item\n            else:\n                continue\n            if not slot:\n                continue\n            slot = str(slot)\n            slot_order.append(slot)\n            slot_defs[slot] = {\n                \"desc\": detail.get(\"desc\", \"\"),\n                \"placeholder\": detail.get(\"placeholder\", \"\"),\n                \"min_items\": to_int(detail.get(\"min_items\"), 1),\n                \"type\": detail.get(\"type\") or (\"multi_enum\" if to_int(detail.get(\"min_items\"), 1) > 1 else \"enum\"),\n                \"values\": clean_values(detail.get(\"values\", [])),\n            }\n\n        for slot, detail in existing_defs.items():\n            if slot in slot_defs or not isinstance(detail, dict):\n                continue\n            slot_order.append(slot)\n            slot_defs[slot] = {\n                \"desc\": detail.get(\"desc\", \"\"),\n                \"placeholder\": detail.get(\"placeholder\", \"\"),\n                \"min_items\": to_int(detail.get(\"min_items\"), 1),\n                \"type\": detail.get(\"type\") or \"enum\",\n                \"values\": clean_values(detail.get(\"values\", [])),\n            }\n        return slot_order, slot_defs\n\n    config = load_config(retrieval_result)\n    slot_order, slot_defs = normalize_slots(config) if config else ([], {})\n    mongo = config.get(\"mongo\") if isinstance(config.get(\"mongo\"), dict) else {}\n    query_templates = config.get(\"query_templates\") if isinstance(config.get(\"query_templates\"), dict) else {}\n\n    route_status = \"ok\"\n    route_error = \"\"\n    if not config:\n        route_status = \"error\"\n        route_error = \"未从知识库召回有效 RouteCard 配置，请检查 MD 是否包含 ROUTE_CONFIG_JSON_START/END 及合法 JSON。\"\n    elif not slot_order:\n        route_status = \"error\"\n        route_error = \"RouteCard.required_slots 缺失或为空。\"\n\n    return {\n        \"route_card_json\": json.dumps({\n            \"route_status\": route_status,\n            \"route_error\": route_error,\n            \"route_id\": config.get(\"route_id\") or \"\",\n            \"route_desc\": config.get(\"route_desc\") or config.get(\"description\") or \"\",\n            \"module\": config.get(\"module\") or \"\",\n            \"source\": \"knowledge\" if config else \"missing\",\n            \"required_slots\": slot_order,\n            \"slot_definitions\": slot_defs,\n            \"query_templates\": query_templates,\n            \"mongo\": mongo,\n        }, ensure_ascii=False)\n    }\n"
           },
           "position": {
             "x": 1080,
@@ -286,10 +304,25 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(context_json='', route_card_json=''):\n    import json, re\n    ctx=json.loads(context_json or '{}'); q=ctx.get('question','')\n    models=[]\n    for pat,name in [(r'iPhone\\s*17','iPhone17'),(r'Xiaomi\\s*17|小米\\s*17','Xiaomi17'),(r'OPPO\\s*17','OPPO17')]:\n        if re.search(pat,q,re.I): models.append(name)\n    scope='main_camera' if ('主摄' in q or 'CIS' in q or 'cis' in q) else ''\n    output_type='report' if any(w in q for w in ['报告','对比报告']) else 'table'\n    topic='power' if any(w in q for w in ['功耗','供电']) else 'cis_spec'\n    return {'slot_parse_result_json': json.dumps({'target_objects':models,'object_scope':scope,'output_type':output_type,'topic':topic}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(context_json='', route_card_json=''):\n    import json, re\n\n    def load_json(raw, default):\n        try:\n            return json.loads(raw) if raw else default\n        except Exception:\n            return default\n\n    def norm(text):\n        return re.sub(r\"[\\s_\\-·,，。/／:：;；|｜（）()\\[\\]【】]+\", \"\", str(text or \"\").lower())\n\n    def match_values(question, values, multi):\n        hits, seen = [], set()\n        q = norm(question)\n        for item in values or []:\n            if not isinstance(item, dict):\n                continue\n            value = str(item.get(\"value\") or \"\").strip()\n            aliases = [value] + [str(a) for a in item.get(\"aliases\", []) if str(a or \"\").strip()]\n            if value and any(norm(alias) and norm(alias) in q for alias in aliases):\n                if value not in seen:\n                    hits.append(value)\n                    seen.add(value)\n                if not multi:\n                    return value\n        return hits if multi else \"\"\n\n    def find_value_meta(slot_defs, slot, value):\n        if not value:\n            return {}\n        detail = slot_defs.get(slot) if isinstance(slot_defs.get(slot), dict) else {}\n        for item in detail.get(\"values\") or []:\n            if isinstance(item, dict) and str(item.get(\"value\") or \"\") == str(value):\n                return item\n        return {}\n\n    def output_kind(value):\n        text = norm(value)\n        if any(key in text for key in (\"报告\", \"report\")):\n            return \"report\"\n        if any(key in text for key in (\"excel\", \"xlsx\")):\n            return \"excel\"\n        if any(key in text for key in (\"趋势\", \"trend\")):\n            return \"trend\"\n        return \"table\"\n\n    ctx = load_json(context_json, {})\n    route = load_json(route_card_json, {})\n    question = ctx.get(\"question\", \"\") or \"\"\n    slot_defs = route.get(\"slot_definitions\") or {}\n    slot_order = route.get(\"required_slots\") or list(slot_defs.keys())\n\n    slots = {}\n    for slot in slot_order:\n        detail = slot_defs.get(slot) or {}\n        multi = detail.get(\"type\") == \"multi_enum\" or int(detail.get(\"min_items\") or 1) > 1\n        slots[slot] = match_values(question, detail.get(\"values\") or [], multi)\n\n    output_meta = find_value_meta(slot_defs, \"output_type\", slots.get(\"output_type\"))\n    slots[\"output_kind\"] = output_meta.get(\"output_kind\") or output_kind(slots.get(\"output_type\"))\n\n    dimension_meta = find_value_meta(slot_defs, \"analysis_dimension\", slots.get(\"analysis_dimension\"))\n    slots[\"topic\"] = str(dimension_meta.get(\"topic\") or \"\").strip()\n\n    return {\"slot_parse_result_json\": json.dumps(slots, ensure_ascii=False)}\n",
+            "variables": [
+              {
+                "variable": "context_json",
+                "value_selector": [
+                  "ctx",
+                  "context_json"
+                ]
+              },
+              {
+                "variable": "route_card_json",
+                "value_selector": [
+                  "route",
+                  "route_card_json"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(context_json='', route_card_json=''):\n    import json, re\n    ctx=json.loads(context_json or '{}'); q=ctx.get('question','')\n    models=[]\n    for pat,name in [(r'iPhone\\s*17','iPhone17'),(r'Xiaomi\\s*17|小米\\s*17','Xiaomi17'),(r'OPPO\\s*17','OPPO17')]:\n        if re.search(pat,q,re.I): models.append(name)\n    scope='main_camera' if ('主摄' in q or 'CIS' in q or 'cis' in q) else ''\n    output_type='report' if any(w in q for w in ['报告','对比报告']) else 'table'\n    topic='power' if any(w in q for w in ['功耗','供电']) else 'cis_spec'\n    return {'slot_parse_result_json': json.dumps({'target_objects':models,'object_scope':scope,'output_type':output_type,'topic':topic}, ensure_ascii=False)}\n"
+            "code": "def main(context_json='', route_card_json=''):\n    import json, re\n\n    def load_json(raw, default):\n        try:\n            return json.loads(raw) if raw else default\n        except Exception:\n            return default\n\n    def norm(text):\n        return re.sub(r\"[\\s_\\-·,，。/／:：;；|｜（）()\\[\\]【】]+\", \"\", str(text or \"\").lower())\n\n    def match_values(question, values, multi):\n        hits, seen = [], set()\n        q = norm(question)\n        for item in values or []:\n            if not isinstance(item, dict):\n                continue\n            value = str(item.get(\"value\") or \"\").strip()\n            aliases = [value] + [str(a) for a in item.get(\"aliases\", []) if str(a or \"\").strip()]\n            if value and any(norm(alias) and norm(alias) in q for alias in aliases):\n                if value not in seen:\n                    hits.append(value)\n                    seen.add(value)\n                if not multi:\n                    return value\n        return hits if multi else \"\"\n\n    def find_value_meta(slot_defs, slot, value):\n        if not value:\n            return {}\n        detail = slot_defs.get(slot) if isinstance(slot_defs.get(slot), dict) else {}\n        for item in detail.get(\"values\") or []:\n            if isinstance(item, dict) and str(item.get(\"value\") or \"\") == str(value):\n                return item\n        return {}\n\n    def output_kind(value):\n        text = norm(value)\n        if any(key in text for key in (\"报告\", \"report\")):\n            return \"report\"\n        if any(key in text for key in (\"excel\", \"xlsx\")):\n            return \"excel\"\n        if any(key in text for key in (\"趋势\", \"trend\")):\n            return \"trend\"\n        return \"table\"\n\n    ctx = load_json(context_json, {})\n    route = load_json(route_card_json, {})\n    question = ctx.get(\"question\", \"\") or \"\"\n    slot_defs = route.get(\"slot_definitions\") or {}\n    slot_order = route.get(\"required_slots\") or list(slot_defs.keys())\n\n    slots = {}\n    for slot in slot_order:\n        detail = slot_defs.get(slot) or {}\n        multi = detail.get(\"type\") == \"multi_enum\" or int(detail.get(\"min_items\") or 1) > 1\n        slots[slot] = match_values(question, detail.get(\"values\") or [], multi)\n\n    output_meta = find_value_meta(slot_defs, \"output_type\", slots.get(\"output_type\"))\n    slots[\"output_kind\"] = output_meta.get(\"output_kind\") or output_kind(slots.get(\"output_type\"))\n\n    dimension_meta = find_value_meta(slot_defs, \"analysis_dimension\", slots.get(\"analysis_dimension\"))\n    slots[\"topic\"] = str(dimension_meta.get(\"topic\") or \"\").strip()\n\n    return {\"slot_parse_result_json\": json.dumps(slots, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 1440,
@@ -314,12 +347,30 @@
               },
               "ready_to_query_flag": {
                 "type": "string"
+              },
+              "ready_to_query_status": {
+                "type": "string"
               }
             },
-            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False), 'ready_to_query_flag': 'true' if ready else 'false'}\n",
-            "variables": [],
+            "source_code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            return json.loads(raw or \"{}\")\n        except Exception:\n            return {}\n\n    route = load_json(route_card_json)\n    slots = load_json(slot_parse_result_json)\n\n    if route.get(\"route_status\") and route.get(\"route_status\") != \"ok\":\n        message = route.get(\"route_error\") or \"RouteCard 配置无效，无法继续查询。\"\n        return {\n            \"slot_validate_result_json\": json.dumps({\n                \"ready_to_query\": False,\n                \"ready_to_query_status\": \"route_error\",\n                \"missing_slots\": [{\"slot\": \"route_card\", \"message\": message}],\n                \"slots\": slots\n            }, ensure_ascii=False),\n            \"ready_to_query_flag\": \"false\",\n            \"ready_to_query_status\": \"route_error\"\n        }\n\n    slot_defs = route.get(\"slot_definitions\") or {}\n    required = route.get(\"required_slots\") or list(slot_defs.keys())\n    missing = []\n\n    for slot in required:\n        detail = slot_defs.get(slot) or {}\n        value = slots.get(slot)\n        min_items = int(detail.get(\"min_items\") or 1)\n        desc = detail.get(\"desc\") or slot\n        if isinstance(value, list):\n            valid = len(value) >= min_items\n        else:\n            valid = bool(value)\n        if not valid:\n            missing.append({\"slot\": slot, \"message\": \"请补充%s\" % desc})\n\n    ready = not missing\n    status = \"ready\" if ready else \"need_slot\"\n\n    return {\n        \"slot_validate_result_json\": json.dumps({\n            \"ready_to_query\": ready,\n            \"ready_to_query_status\": status,\n            \"missing_slots\": missing,\n            \"slots\": slots\n        }, ensure_ascii=False),\n        \"ready_to_query_flag\": \"true\" if ready else \"false\",\n        \"ready_to_query_status\": status\n    }\n",
+            "variables": [
+              {
+                "variable": "route_card_json",
+                "value_selector": [
+                  "route",
+                  "route_card_json"
+                ]
+              },
+              {
+                "variable": "slot_parse_result_json",
+                "value_selector": [
+                  "parse",
+                  "slot_parse_result_json"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n    slots=json.loads(slot_parse_result_json or '{}'); missing=[]\n    if len(slots.get('target_objects') or []) < 2: missing.append({'slot':'target_objects','message':'请至少提供两个手机型号'})\n    if not slots.get('object_scope'): missing.append({'slot':'object_scope','message':'请说明比较对象，例如主摄/CIS/功耗'})\n    ready=not missing\n    return {'slot_validate_result_json': json.dumps({'ready_to_query':ready,'missing_slots':missing,'slots':slots,'selected_template_id':'phone_power_compare' if slots.get('topic')=='power' else 'phone_cis_compare'}, ensure_ascii=False), 'ready_to_query_flag': 'true' if ready else 'false'}\n"
+            "code": "def main(route_card_json='', slot_parse_result_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            return json.loads(raw or \"{}\")\n        except Exception:\n            return {}\n\n    route = load_json(route_card_json)\n    slots = load_json(slot_parse_result_json)\n\n    if route.get(\"route_status\") and route.get(\"route_status\") != \"ok\":\n        message = route.get(\"route_error\") or \"RouteCard 配置无效，无法继续查询。\"\n        return {\n            \"slot_validate_result_json\": json.dumps({\n                \"ready_to_query\": False,\n                \"ready_to_query_status\": \"route_error\",\n                \"missing_slots\": [{\"slot\": \"route_card\", \"message\": message}],\n                \"slots\": slots\n            }, ensure_ascii=False),\n            \"ready_to_query_flag\": \"false\",\n            \"ready_to_query_status\": \"route_error\"\n        }\n\n    slot_defs = route.get(\"slot_definitions\") or {}\n    required = route.get(\"required_slots\") or list(slot_defs.keys())\n    missing = []\n\n    for slot in required:\n        detail = slot_defs.get(slot) or {}\n        value = slots.get(slot)\n        min_items = int(detail.get(\"min_items\") or 1)\n        desc = detail.get(\"desc\") or slot\n        if isinstance(value, list):\n            valid = len(value) >= min_items\n        else:\n            valid = bool(value)\n        if not valid:\n            missing.append({\"slot\": slot, \"message\": \"请补充%s\" % desc})\n\n    ready = not missing\n    status = \"ready\" if ready else \"need_slot\"\n\n    return {\n        \"slot_validate_result_json\": json.dumps({\n            \"ready_to_query\": ready,\n            \"ready_to_query_status\": status,\n            \"missing_slots\": missing,\n            \"slots\": slots\n        }, ensure_ascii=False),\n        \"ready_to_query_flag\": \"true\" if ready else \"false\",\n        \"ready_to_query_status\": status\n    }\n"
           },
           "position": {
             "x": 1800,
@@ -346,10 +397,10 @@
                     "id": "ifslot-need-slot",
                     "variable_selector": [
                       "validate",
-                      "ready_to_query_flag"
+                      "ready_to_query_status"
                     ],
-                    "comparison_operator": "=",
-                    "value": "false"
+                    "comparison_operator": "is",
+                    "value": "need_slot"
                   }
                 ],
                 "logical_operator": "and"
@@ -361,10 +412,10 @@
                     "id": "ifslot-success",
                     "variable_selector": [
                       "validate",
-                      "ready_to_query_flag"
+                      "ready_to_query_status"
                     ],
-                    "comparison_operator": "=",
-                    "value": "true"
+                    "comparison_operator": "is",
+                    "value": "ready"
                   }
                 ],
                 "logical_operator": "and"
@@ -395,7 +446,15 @@
               }
             },
             "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); missing=[m.get('message') for m in v.get('missing_slots',[])]\n    return {'slot_fill_request_json': json.dumps({'answer':'还需要补充：'+'；'.join(missing),'missing_slots':v.get('missing_slots',[])}, ensure_ascii=False)}\n",
-            "variables": [],
+            "variables": [
+              {
+                "variable": "slot_validate_result_json",
+                "value_selector": [
+                  "validate",
+                  "slot_validate_result_json"
+                ]
+              }
+            ],
             "code_language": "python3",
             "code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); missing=[m.get('message') for m in v.get('missing_slots',[])]\n    return {'slot_fill_request_json': json.dumps({'answer':'还需要补充：'+'；'.join(missing),'missing_slots':v.get('missing_slots',[])}, ensure_ascii=False)}\n"
           },
@@ -442,10 +501,25 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); slots=v.get('slots',{})\n    return {'query_plan_json': json.dumps({'status':'ok','collection':'phone_jf','targets':slots.get('target_objects',[]),'object_scope':slots.get('object_scope'),'output_type':slots.get('output_type'),'topic':slots.get('topic')}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(slot_validate_result_json='', route_card_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            return json.loads(raw or \"{}\")\n        except Exception:\n            return {}\n\n    payload = load_json(slot_validate_result_json)\n    route = load_json(route_card_json)\n    slots = payload.get(\"slots\") or {}\n    mongo = route.get(\"mongo\") if isinstance(route.get(\"mongo\"), dict) else {}\n\n    plan = {\n        \"status\": \"ok\",\n        \"route_id\": route.get(\"route_id\") or \"\",\n        \"collection\": mongo.get(\"collection\") or \"\",\n        \"targets\": slots.get(\"target_objects\", []),\n        \"object_scope\": slots.get(\"object_scope\"),\n        \"analysis_dimension\": slots.get(\"analysis_dimension\"),\n        \"output_type\": slots.get(\"output_type\"),\n        \"output_kind\": slots.get(\"output_kind\", \"table\"),\n        \"topic\": slots.get(\"topic\")\n    }\n    return {\"query_plan_json\": json.dumps(plan, ensure_ascii=False)}\n",
+            "variables": [
+              {
+                "variable": "slot_validate_result_json",
+                "value_selector": [
+                  "validate",
+                  "slot_validate_result_json"
+                ]
+              },
+              {
+                "variable": "route_card_json",
+                "value_selector": [
+                  "route",
+                  "route_card_json"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(slot_validate_result_json=''):\n    import json\n    v=json.loads(slot_validate_result_json or '{}'); slots=v.get('slots',{})\n    return {'query_plan_json': json.dumps({'status':'ok','collection':'phone_jf','targets':slots.get('target_objects',[]),'object_scope':slots.get('object_scope'),'output_type':slots.get('output_type'),'topic':slots.get('topic')}, ensure_ascii=False)}\n"
+            "code": "def main(slot_validate_result_json='', route_card_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            return json.loads(raw or \"{}\")\n        except Exception:\n            return {}\n\n    payload = load_json(slot_validate_result_json)\n    route = load_json(route_card_json)\n    slots = payload.get(\"slots\") or {}\n    mongo = route.get(\"mongo\") if isinstance(route.get(\"mongo\"), dict) else {}\n\n    plan = {\n        \"status\": \"ok\",\n        \"route_id\": route.get(\"route_id\") or \"\",\n        \"collection\": mongo.get(\"collection\") or \"\",\n        \"targets\": slots.get(\"target_objects\", []),\n        \"object_scope\": slots.get(\"object_scope\"),\n        \"analysis_dimension\": slots.get(\"analysis_dimension\"),\n        \"output_type\": slots.get(\"output_type\"),\n        \"output_kind\": slots.get(\"output_kind\", \"table\"),\n        \"topic\": slots.get(\"topic\")\n    }\n    return {\"query_plan_json\": json.dumps(plan, ensure_ascii=False)}\n"
           },
           "position": {
             "x": 2520,
@@ -467,12 +541,40 @@
             "outputs": {
               "mongo_request_json": {
                 "type": "string"
+              },
+              "mongo_request_status": {
+                "type": "string"
+              },
+              "mongo_request_error_answer": {
+                "type": "string"
               }
             },
-            "source_code": "def main(query_plan_json='', slot_validate_result_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}') if query_plan_json else {}\n    if not plan and slot_validate_result_json:\n        v=json.loads(slot_validate_result_json); s=v.get('slots',{}); plan={'targets':s.get('target_objects',[]),'object_scope':s.get('object_scope'),'output_type':s.get('output_type'),'topic':s.get('topic'),'collection':'phone_jf'}\n    return {'mongo_request_json': json.dumps({'status':'ok','mongo_request':{'collection':plan.get('collection','phone_jf'),'pipeline':[{'$match':{'phone_model':{'$in':plan.get('targets',[])}}},{'$project':{'_id':0}}]},'query_plan':plan}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(query_plan_json='', slot_validate_result_json='', route_card_json=''):\n    import json, gzip, base64, copy, re\n\n    def load_json(raw):\n        try:\n            return json.loads(raw or \"{}\")\n        except Exception:\n            return {}\n\n    def fail(message):\n        return {\n            \"mongo_request_json\": json.dumps({\"status\": \"error\", \"error\": message}, ensure_ascii=False),\n            \"mongo_request_status\": \"error\",\n            \"mongo_request_error_answer\": \"Mongo 请求生成失败，已停止查询。原因：%s\" % message\n        }\n\n    def decode_template(item):\n        if isinstance(item, str):\n            payload, encoding = item, \"gzip+base64\"\n        elif isinstance(item, dict):\n            if isinstance(item.get(\"template\"), dict):\n                return item[\"template\"]\n            if isinstance(item.get(\"pipeline\"), list):\n                return item\n            payload = item.get(\"payload\") or \"\"\n            encoding = str(item.get(\"encoding\") or \"gzip+base64\").lower()\n        else:\n            raise ValueError(\"模板配置不是字符串或对象\")\n\n        if not payload:\n            raise ValueError(\"模板 payload 为空\")\n        if encoding in (\"gzip+base64\", \"base64+gzip\"):\n            text = gzip.decompress(base64.b64decode(payload.encode(\"utf-8\"))).decode(\"utf-8\")\n        elif encoding == \"base64\":\n            text = base64.b64decode(payload.encode(\"utf-8\")).decode(\"utf-8\")\n        else:\n            raise ValueError(\"不支持的模板编码: %s\" % encoding)\n\n        obj = json.loads(text)\n        if not isinstance(obj, dict):\n            raise ValueError(\"模板解码结果不是 JSON 对象\")\n        return obj\n\n    def render_value(value, context):\n        if isinstance(value, dict):\n            return {k: render_value(v, context) for k, v in value.items()}\n        if isinstance(value, list):\n            return [render_value(v, context) for v in value]\n        if not isinstance(value, str):\n            return value\n\n        text = value.strip()\n        if text.startswith(\"{{\") and text.endswith(\"}}\"):\n            return context.get(text[2:-2].strip(), value)\n        for key, replacement in context.items():\n            token = \"{{\" + key + \"}}\"\n            if token in value:\n                replacement_text = json.dumps(replacement, ensure_ascii=False) if isinstance(replacement, (dict, list)) else str(replacement)\n                value = value.replace(token, replacement_text)\n        return value\n\n    plan = load_json(query_plan_json)\n    route = load_json(route_card_json)\n    slot_payload = load_json(slot_validate_result_json)\n    slots = slot_payload.get(\"slots\") or {}\n\n    route_mongo = route.get(\"mongo\") if isinstance(route.get(\"mongo\"), dict) else {}\n    collection = str(plan.get(\"collection\") or route_mongo.get(\"collection\") or \"\").strip()\n    if not collection:\n        return fail(\"RouteCard.mongo.collection 缺失，无法确定 Mongo 主集合\")\n\n    dimension = plan.get(\"analysis_dimension\") or slots.get(\"analysis_dimension\") or \"\"\n    if not dimension:\n        return fail(\"analysis_dimension 为空，无法选择查询模板\")\n\n    templates = route.get(\"query_templates\")\n    if not isinstance(templates, dict):\n        return fail(\"RouteCard.query_templates 缺失或不是对象\")\n\n    template_item = templates.get(dimension)\n    if template_item is None:\n        return fail(\"未找到查询模板: %s\" % dimension)\n\n    try:\n        template = decode_template(template_item)\n    except Exception as exc:\n        return fail(\"查询模板解码失败: %s\" % exc)\n\n    context = {\n        \"target_objects\": plan.get(\"targets\") or slots.get(\"target_objects\") or [],\n        \"targets\": plan.get(\"targets\") or slots.get(\"target_objects\") or [],\n        \"object_scope\": plan.get(\"object_scope\") or slots.get(\"object_scope\") or \"\",\n        \"analysis_dimension\": dimension,\n        \"output_type\": plan.get(\"output_type\") or slots.get(\"output_type\") or \"\",\n        \"output_kind\": plan.get(\"output_kind\") or slots.get(\"output_kind\") or \"table\",\n        \"topic\": plan.get(\"topic\") or slots.get(\"topic\") or \"\"\n    }\n    rendered = render_value(copy.deepcopy(template), context)\n\n    template_collection = str(rendered.get(\"collection\") or \"\").strip()\n    if template_collection and template_collection != collection:\n        return fail(\"模板 collection 与 RouteCard.mongo.collection 不一致: %s != %s\" % (template_collection, collection))\n\n    pipeline = rendered.get(\"pipeline\")\n    if not isinstance(pipeline, list):\n        return fail(\"模板渲染后 pipeline 不是数组\")\n\n    request = {\"collection\": collection, \"pipeline\": pipeline}\n    request_text = json.dumps(request, ensure_ascii=False)\n    if re.search(r\"\\{\\{[^{}]+\\}\\}\", request_text):\n        return fail(\"Mongo 查询模板仍存在未填充占位符\")\n\n    return {\n        \"mongo_request_json\": request_text,\n        \"mongo_request_status\": \"ok\",\n        \"mongo_request_error_answer\": \"\"\n    }\n",
+            "variables": [
+              {
+                "variable": "query_plan_json",
+                "value_selector": [
+                  "plan",
+                  "query_plan_json"
+                ]
+              },
+              {
+                "variable": "slot_validate_result_json",
+                "value_selector": [
+                  "validate",
+                  "slot_validate_result_json"
+                ]
+              },
+              {
+                "variable": "route_card_json",
+                "value_selector": [
+                  "route",
+                  "route_card_json"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(query_plan_json='', slot_validate_result_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}') if query_plan_json else {}\n    if not plan and slot_validate_result_json:\n        v=json.loads(slot_validate_result_json); s=v.get('slots',{}); plan={'targets':s.get('target_objects',[]),'object_scope':s.get('object_scope'),'output_type':s.get('output_type'),'topic':s.get('topic'),'collection':'phone_jf'}\n    return {'mongo_request_json': json.dumps({'status':'ok','mongo_request':{'collection':plan.get('collection','phone_jf'),'pipeline':[{'$match':{'phone_model':{'$in':plan.get('targets',[])}}},{'$project':{'_id':0}}]},'query_plan':plan}, ensure_ascii=False)}\n"
+            "code": "def main(query_plan_json='', slot_validate_result_json='', route_card_json=''):\n    import json, gzip, base64, copy, re\n\n    def load_json(raw):\n        try:\n            return json.loads(raw or \"{}\")\n        except Exception:\n            return {}\n\n    def fail(message):\n        return {\n            \"mongo_request_json\": json.dumps({\"status\": \"error\", \"error\": message}, ensure_ascii=False),\n            \"mongo_request_status\": \"error\",\n            \"mongo_request_error_answer\": \"Mongo 请求生成失败，已停止查询。原因：%s\" % message\n        }\n\n    def decode_template(item):\n        if isinstance(item, str):\n            payload, encoding = item, \"gzip+base64\"\n        elif isinstance(item, dict):\n            if isinstance(item.get(\"template\"), dict):\n                return item[\"template\"]\n            if isinstance(item.get(\"pipeline\"), list):\n                return item\n            payload = item.get(\"payload\") or \"\"\n            encoding = str(item.get(\"encoding\") or \"gzip+base64\").lower()\n        else:\n            raise ValueError(\"模板配置不是字符串或对象\")\n\n        if not payload:\n            raise ValueError(\"模板 payload 为空\")\n        if encoding in (\"gzip+base64\", \"base64+gzip\"):\n            text = gzip.decompress(base64.b64decode(payload.encode(\"utf-8\"))).decode(\"utf-8\")\n        elif encoding == \"base64\":\n            text = base64.b64decode(payload.encode(\"utf-8\")).decode(\"utf-8\")\n        else:\n            raise ValueError(\"不支持的模板编码: %s\" % encoding)\n\n        obj = json.loads(text)\n        if not isinstance(obj, dict):\n            raise ValueError(\"模板解码结果不是 JSON 对象\")\n        return obj\n\n    def render_value(value, context):\n        if isinstance(value, dict):\n            return {k: render_value(v, context) for k, v in value.items()}\n        if isinstance(value, list):\n            return [render_value(v, context) for v in value]\n        if not isinstance(value, str):\n            return value\n\n        text = value.strip()\n        if text.startswith(\"{{\") and text.endswith(\"}}\"):\n            return context.get(text[2:-2].strip(), value)\n        for key, replacement in context.items():\n            token = \"{{\" + key + \"}}\"\n            if token in value:\n                replacement_text = json.dumps(replacement, ensure_ascii=False) if isinstance(replacement, (dict, list)) else str(replacement)\n                value = value.replace(token, replacement_text)\n        return value\n\n    plan = load_json(query_plan_json)\n    route = load_json(route_card_json)\n    slot_payload = load_json(slot_validate_result_json)\n    slots = slot_payload.get(\"slots\") or {}\n\n    route_mongo = route.get(\"mongo\") if isinstance(route.get(\"mongo\"), dict) else {}\n    collection = str(plan.get(\"collection\") or route_mongo.get(\"collection\") or \"\").strip()\n    if not collection:\n        return fail(\"RouteCard.mongo.collection 缺失，无法确定 Mongo 主集合\")\n\n    dimension = plan.get(\"analysis_dimension\") or slots.get(\"analysis_dimension\") or \"\"\n    if not dimension:\n        return fail(\"analysis_dimension 为空，无法选择查询模板\")\n\n    templates = route.get(\"query_templates\")\n    if not isinstance(templates, dict):\n        return fail(\"RouteCard.query_templates 缺失或不是对象\")\n\n    template_item = templates.get(dimension)\n    if template_item is None:\n        return fail(\"未找到查询模板: %s\" % dimension)\n\n    try:\n        template = decode_template(template_item)\n    except Exception as exc:\n        return fail(\"查询模板解码失败: %s\" % exc)\n\n    context = {\n        \"target_objects\": plan.get(\"targets\") or slots.get(\"target_objects\") or [],\n        \"targets\": plan.get(\"targets\") or slots.get(\"target_objects\") or [],\n        \"object_scope\": plan.get(\"object_scope\") or slots.get(\"object_scope\") or \"\",\n        \"analysis_dimension\": dimension,\n        \"output_type\": plan.get(\"output_type\") or slots.get(\"output_type\") or \"\",\n        \"output_kind\": plan.get(\"output_kind\") or slots.get(\"output_kind\") or \"table\",\n        \"topic\": plan.get(\"topic\") or slots.get(\"topic\") or \"\"\n    }\n    rendered = render_value(copy.deepcopy(template), context)\n\n    template_collection = str(rendered.get(\"collection\") or \"\").strip()\n    if template_collection and template_collection != collection:\n        return fail(\"模板 collection 与 RouteCard.mongo.collection 不一致: %s != %s\" % (template_collection, collection))\n\n    pipeline = rendered.get(\"pipeline\")\n    if not isinstance(pipeline, list):\n        return fail(\"模板渲染后 pipeline 不是数组\")\n\n    request = {\"collection\": collection, \"pipeline\": pipeline}\n    request_text = json.dumps(request, ensure_ascii=False)\n    if re.search(r\"\\{\\{[^{}]+\\}\\}\", request_text):\n        return fail(\"Mongo 查询模板仍存在未填充占位符\")\n\n    return {\n        \"mongo_request_json\": request_text,\n        \"mongo_request_status\": \"ok\",\n        \"mongo_request_error_answer\": \"\"\n    }\n"
           },
           "position": {
             "x": 2880,
@@ -491,11 +593,6 @@
           "data": {
             "title": "HTTP请求_执行Mongo查询",
             "type": "http-request",
-            "outputs": {
-              "mongo_result_json": {
-                "type": "string"
-              }
-            },
             "method": "POST",
             "url": "{{#env.SN_MONGODB_QUERY_URLS#}}",
             "body": {
@@ -522,11 +619,11 @@
             }
           },
           "position": {
-            "x": 3240,
+            "x": 3600,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 3240,
+            "x": 3600,
             "y": 300
           },
           "width": 320,
@@ -541,19 +638,40 @@
             "outputs": {
               "normalized_query_result_json": {
                 "type": "string"
+              },
+              "query_result_status": {
+                "type": "string"
+              },
+              "query_error_answer": {
+                "type": "string"
               }
             },
-            "source_code": "def main(mongo_result_json=''):\n    import json\n    return {'normalized_query_result_json': json.dumps({'status':'ok','rows':[],'raw':mongo_result_json}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(http_body='', status_code=200):\n    import json\n\n    def decode(raw):\n        if isinstance(raw, (dict, list)):\n            return raw\n        try:\n            return json.loads(raw or '{}')\n        except Exception:\n            return raw or ''\n\n    def is_success_code(code):\n        if code in (None, ''):\n            return None\n        text = str(code).strip().lower()\n        return text in ('0', '200', 'ok', 'success')\n\n    def pick_message(payload):\n        if not isinstance(payload, dict):\n            return ''\n        for key in ('msg', 'message', 'error', 'error_msg', 'errmsg'):\n            value = payload.get(key)\n            if value not in (None, ''):\n                return str(value)\n        return ''\n\n    http_ok = str(status_code).startswith('2')\n    payload = decode(http_body)\n    business_ok = http_ok\n    business_code = None\n\n    if isinstance(payload, dict):\n        business_code = payload.get('code')\n        code_ok = is_success_code(business_code)\n        if code_ok is False:\n            business_ok = False\n        if payload.get('success') is False:\n            business_ok = False\n        status_text = str(payload.get('status') or '').strip().lower()\n        if status_text in ('error', 'fail', 'failed', 'failure'):\n            business_ok = False\n\n    rows = payload if isinstance(payload, list) else []\n    if isinstance(payload, dict) and business_ok:\n        data = payload.get('data') or payload.get('rows') or payload.get('result') or []\n        rows = data.get('rows') if isinstance(data, dict) else data\n        rows = rows if isinstance(rows, list) else []\n    elif not business_ok:\n        rows = []\n\n    query_result_status = 'ok' if business_ok else 'error'\n    error_message = pick_message(payload)\n    if query_result_status != 'ok' and not error_message:\n        error_message = 'HTTP状态码=%s，Mongo查询未成功' % status_code\n    query_error_answer = '' if query_result_status == 'ok' else 'Mongo 查询失败，已停止后续分析/报告生成。原因：%s' % error_message\n\n    return {\n        'normalized_query_result_json': json.dumps({\n            'status': query_result_status,\n            'rows': rows,\n            'raw': payload,\n            'error': {\n                'http_status_code': status_code,\n                'business_code': business_code,\n                'message': error_message\n            } if query_result_status != 'ok' else None\n        }, ensure_ascii=False),\n        'query_result_status': query_result_status,\n        'query_error_answer': query_error_answer\n    }\n",
+            "variables": [
+              {
+                "variable": "http_body",
+                "value_selector": [
+                  "http",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http",
+                  "status_code"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(mongo_result_json=''):\n    import json\n    return {'normalized_query_result_json': json.dumps({'status':'ok','rows':[],'raw':mongo_result_json}, ensure_ascii=False)}\n"
+            "code": "def main(http_body='', status_code=200):\n    import json\n\n    def decode(raw):\n        if isinstance(raw, (dict, list)):\n            return raw\n        try:\n            return json.loads(raw or '{}')\n        except Exception:\n            return raw or ''\n\n    def is_success_code(code):\n        if code in (None, ''):\n            return None\n        text = str(code).strip().lower()\n        return text in ('0', '200', 'ok', 'success')\n\n    def pick_message(payload):\n        if not isinstance(payload, dict):\n            return ''\n        for key in ('msg', 'message', 'error', 'error_msg', 'errmsg'):\n            value = payload.get(key)\n            if value not in (None, ''):\n                return str(value)\n        return ''\n\n    http_ok = str(status_code).startswith('2')\n    payload = decode(http_body)\n    business_ok = http_ok\n    business_code = None\n\n    if isinstance(payload, dict):\n        business_code = payload.get('code')\n        code_ok = is_success_code(business_code)\n        if code_ok is False:\n            business_ok = False\n        if payload.get('success') is False:\n            business_ok = False\n        status_text = str(payload.get('status') or '').strip().lower()\n        if status_text in ('error', 'fail', 'failed', 'failure'):\n            business_ok = False\n\n    rows = payload if isinstance(payload, list) else []\n    if isinstance(payload, dict) and business_ok:\n        data = payload.get('data') or payload.get('rows') or payload.get('result') or []\n        rows = data.get('rows') if isinstance(data, dict) else data\n        rows = rows if isinstance(rows, list) else []\n    elif not business_ok:\n        rows = []\n\n    query_result_status = 'ok' if business_ok else 'error'\n    error_message = pick_message(payload)\n    if query_result_status != 'ok' and not error_message:\n        error_message = 'HTTP状态码=%s，Mongo查询未成功' % status_code\n    query_error_answer = '' if query_result_status == 'ok' else 'Mongo 查询失败，已停止后续分析/报告生成。原因：%s' % error_message\n\n    return {\n        'normalized_query_result_json': json.dumps({\n            'status': query_result_status,\n            'rows': rows,\n            'raw': payload,\n            'error': {\n                'http_status_code': status_code,\n                'business_code': business_code,\n                'message': error_message\n            } if query_result_status != 'ok' else None\n        }, ensure_ascii=False),\n        'query_result_status': query_result_status,\n        'query_error_answer': query_error_answer\n    }\n"
           },
           "position": {
-            "x": 3600,
+            "x": 3960,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 3600,
+            "x": 3960,
             "y": 300
           },
           "width": 320,
@@ -563,24 +681,42 @@
           "id": "analysis",
           "type": "custom",
           "data": {
-            "title": "代码执行_按output_type生成分析结果",
+            "title": "代码执行_准备输出Handler输入",
             "type": "code",
             "outputs": {
               "analysis_result_json": {
                 "type": "string"
+              },
+              "analysis_output_type": {
+                "type": "string"
               }
             },
-            "source_code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}')\n    return {'analysis_result_json': json.dumps({'status':'ok','output_type':plan.get('output_type','table'),'summary':'PHONE 查询分析完成','query_plan':plan}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    def rows_from_query_result(query_result):\n        rows = query_result.get('rows')\n        return rows if isinstance(rows, list) else []\n\n    plan = load_json(query_plan_json)\n    query_result = load_json(normalized_query_result_json)\n    rows = rows_from_query_result(query_result)\n    row_count = len(rows)\n    output_kind = str(plan.get('output_kind') or 'table').strip().lower() or 'table'\n    output_type = plan.get('output_type') or output_kind\n\n    summary = 'PHONE 查询成功，共返回 %s 条记录' % row_count\n    if row_count == 0:\n        summary = 'PHONE 查询成功，但未返回匹配记录'\n\n    context = {\n        'status': query_result.get('status') or 'ok',\n        'output_kind': output_kind,\n        'output_type': output_type,\n        'summary': summary,\n        'query_plan': plan,\n        'query_result': {\n            'status': query_result.get('status') or 'ok',\n            'row_count': row_count,\n            'rows': rows,\n            'raw': query_result.get('raw') if query_result.get('raw') is not None else {}\n        },\n        'handler_contract': {\n            'handler_status': 'ok',\n            'output_kind': output_kind,\n            'answer': '',\n            'artifact_type': '',\n            'artifact_payload_json': '{}',\n            'query_plan_json': json.dumps(plan, ensure_ascii=False),\n            'query_result_json': json.dumps({'row_count': row_count, 'rows': rows}, ensure_ascii=False),\n            'error': ''\n        }\n    }\n\n    return {\n        'analysis_result_json': json.dumps(context, ensure_ascii=False),\n        'analysis_output_type': output_kind\n    }\n",
+            "variables": [
+              {
+                "variable": "normalized_query_result_json",
+                "value_selector": [
+                  "norm",
+                  "normalized_query_result_json"
+                ]
+              },
+              {
+                "variable": "query_plan_json",
+                "value_selector": [
+                  "plan",
+                  "query_plan_json"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n    plan=json.loads(query_plan_json or '{}')\n    return {'analysis_result_json': json.dumps({'status':'ok','output_type':plan.get('output_type','table'),'summary':'PHONE 查询分析完成','query_plan':plan}, ensure_ascii=False)}\n"
+            "code": "def main(normalized_query_result_json='', query_plan_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    def rows_from_query_result(query_result):\n        rows = query_result.get('rows')\n        return rows if isinstance(rows, list) else []\n\n    plan = load_json(query_plan_json)\n    query_result = load_json(normalized_query_result_json)\n    rows = rows_from_query_result(query_result)\n    row_count = len(rows)\n    output_kind = str(plan.get('output_kind') or 'table').strip().lower() or 'table'\n    output_type = plan.get('output_type') or output_kind\n\n    summary = 'PHONE 查询成功，共返回 %s 条记录' % row_count\n    if row_count == 0:\n        summary = 'PHONE 查询成功，但未返回匹配记录'\n\n    context = {\n        'status': query_result.get('status') or 'ok',\n        'output_kind': output_kind,\n        'output_type': output_type,\n        'summary': summary,\n        'query_plan': plan,\n        'query_result': {\n            'status': query_result.get('status') or 'ok',\n            'row_count': row_count,\n            'rows': rows,\n            'raw': query_result.get('raw') if query_result.get('raw') is not None else {}\n        },\n        'handler_contract': {\n            'handler_status': 'ok',\n            'output_kind': output_kind,\n            'answer': '',\n            'artifact_type': '',\n            'artifact_payload_json': '{}',\n            'query_plan_json': json.dumps(plan, ensure_ascii=False),\n            'query_result_json': json.dumps({'row_count': row_count, 'rows': rows}, ensure_ascii=False),\n            'error': ''\n        }\n    }\n\n    return {\n        'analysis_result_json': json.dumps(context, ensure_ascii=False),\n        'analysis_output_type': output_kind\n    }\n"
           },
           "position": {
-            "x": 3960,
+            "x": 4680,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 3960,
+            "x": 4680,
             "y": 300
           },
           "width": 320,
@@ -590,7 +726,7 @@
           "id": "ifreport",
           "type": "custom",
           "data": {
-            "title": "IF_output_type是否为报告类",
+            "title": "IF_输出类型分发",
             "type": "if-else",
             "cases": [
               {
@@ -599,11 +735,56 @@
                   {
                     "variable_selector": [
                       "analysis",
-                      "analysis_result_json",
-                      "output_type"
+                      "analysis_output_type"
                     ],
-                    "comparison_operator": "contains",
-                    "value": "report"
+                    "comparison_operator": "is",
+                    "value": "report",
+                    "id": "if-output-report"
+                  }
+                ],
+                "logical_operator": "and"
+              },
+              {
+                "case_id": "table",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "analysis",
+                      "analysis_output_type"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "table",
+                    "id": "if-output-table"
+                  }
+                ],
+                "logical_operator": "and"
+              },
+              {
+                "case_id": "trend",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "analysis",
+                      "analysis_output_type"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "trend",
+                    "id": "if-output-trend"
+                  }
+                ],
+                "logical_operator": "and"
+              },
+              {
+                "case_id": "excel",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "analysis",
+                      "analysis_output_type"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "excel",
+                    "id": "if-output-excel"
                   }
                 ],
                 "logical_operator": "and"
@@ -612,11 +793,11 @@
             "logical_operator": "and"
           },
           "position": {
-            "x": 4320,
+            "x": 5040,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 4320,
+            "x": 5040,
             "y": 300
           },
           "width": 300,
@@ -626,24 +807,32 @@
           "id": "report_input",
           "type": "custom",
           "data": {
-            "title": "代码执行_准备报告LLM输入",
+            "title": "代码执行_准备对比报告输入",
             "type": "code",
             "outputs": {
               "report_input_json": {
                 "type": "string"
               }
             },
-            "source_code": "def main(analysis_result_json=''):\n    import json\n    return {'report_input_json': json.dumps({'status':'ok','analysis':json.loads(analysis_result_json or '{}'),'prompt':'生成竞分对比报告'}, ensure_ascii=False)}\n",
-            "variables": [],
+            "source_code": "def main(analysis_result_json=''):\n    import json\n\n    MAX_LLM_USER_PROMPT_CHARS = 180000\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    def dump_compact(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def as_list(value):\n        return value if isinstance(value, list) else []\n\n    def normalize_name(value):\n        return ''.join(ch for ch in str(value or '').lower() if ch not in ' _-\\t\\r\\n')\n\n    def device_name(row, idx):\n        if isinstance(row, dict):\n            for key in ('device_model', 'phone_model', 'model', 'name'):\n                value = row.get(key)\n                if isinstance(value, str) and value.strip():\n                    return value.strip()\n        return '对象%s' % (idx + 1)\n\n    def expected_targets(query_plan):\n        for key in ('targets', 'target_objects'):\n            values = query_plan.get(key)\n            if isinstance(values, list):\n                return [str(v).strip() for v in values if str(v).strip()]\n        return []\n\n    def meta_without(source, excluded):\n        if not isinstance(source, dict):\n            return {}\n        return {k: v for k, v in source.items() if k not in excluded}\n\n    def build_lossless_package(query_result, query_plan):\n        rows = as_list(query_result.get('rows'))\n        expected = expected_targets(query_plan)\n        present = []\n        present_norm = set()\n        entities = []\n        data_rows = []\n        for row_index, row in enumerate(rows):\n            if not isinstance(row, dict):\n                entities.append([row_index, '对象%s' % (row_index + 1), '', '', '', '', '', '', [], {'raw_row': row}])\n                continue\n            dev = device_name(row, row_index)\n            norm = normalize_name(dev)\n            if norm and norm not in present_norm:\n                present.append(dev)\n                present_norm.add(norm)\n            entity = [\n                row_index,\n                dev,\n                row.get('manufacturer', ''),\n                row.get('platform', ''),\n                row.get('device_type', ''),\n                row.get('device_pic_url', ''),\n                row.get('module_name', ''),\n                row.get('dimension', ''),\n                row.get('extra_items') if isinstance(row.get('extra_items'), list) else [],\n                meta_without(row, {'detail_groups', 'manufacturer', 'platform', 'device_type', 'device_model', 'phone_model', 'model', 'name', 'device_pic_url', 'module_name', 'dimension', 'extra_items'})\n            ]\n            entities.append(entity)\n            for group in as_list(row.get('detail_groups')):\n                if not isinstance(group, dict):\n                    continue\n                group_name = str(group.get('name') or '未分组')\n                group_meta = meta_without(group, {'name', 'items'})\n                for item in as_list(group.get('items')):\n                    if not isinstance(item, dict):\n                        continue\n                    item_name = str(item.get('name') or '').strip()\n                    if not item_name:\n                        continue\n                    metric = item.get('metric', group.get('metric', ''))\n                    item_meta = meta_without(item, {'name', 'value', 'type', 'metric'})\n                    data_rows.append([\n                        row_index,\n                        dev,\n                        group_name,\n                        item_name,\n                        item.get('value'),\n                        item.get('type', ''),\n                        metric,\n                        group_meta,\n                        item_meta\n                    ])\n        missing = []\n        for target in expected:\n            target_norm = normalize_name(target)\n            if target_norm and target_norm not in present_norm:\n                missing.append(target)\n        package = {\n            'contract_version': 'llm_query_result_package_v1',\n            'mode': 'full_lossless',\n            'lossless': True,\n            'truncated': False,\n            'packaging': {\n                'kind': 'detail_groups_schema_rows',\n                'compression': 'schema_rows_minified_json',\n                'description': '将 query_result.rows 中每个 detail_groups[].items[] 无损展开为 schema+rows；未做摘要、未裁剪、未 gzip。'\n            },\n            'coverage_check': {\n                'expected_targets': expected,\n                'present_targets': present,\n                'missing_targets': missing\n            },\n            'rows_original_count': query_result.get('row_count') if query_result.get('row_count') is not None else len(rows),\n            'entity_schema': ['row_index', 'device_model', 'manufacturer', 'platform', 'device_type', 'device_pic_url', 'module_name', 'dimension', 'extra_items', 'other_meta'],\n            'entities': entities,\n            'data_schema': ['row_index', 'device_model', 'group_name', 'item_name', 'item_value', 'item_type', 'metric', 'group_meta', 'item_meta'],\n            'data_rows': data_rows\n        }\n        return package\n\n    def error_payload(code, message, query_plan, query_result, output_type, artifact_type):\n        return {\n            'status': 'error',\n            'llm_task_type': 'report',\n            'output_kind': 'report',\n            'output_type': output_type,\n            'artifact_type': artifact_type,\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': message,\n            'query_plan': query_plan,\n            'query_result': query_result,\n            'handler_context': {'source_node': 'report_input'},\n            'error': code\n        }\n\n    context = load_json(analysis_result_json)\n    query_plan = context.get('query_plan') if isinstance(context.get('query_plan'), dict) else {}\n    query_result = context.get('query_result') if isinstance(context.get('query_result'), dict) else {}\n    output_type = query_plan.get('output_type') or context.get('output_type') or '对比报告'\n    object_scope = query_plan.get('object_scope') or ''\n    analysis_dimension = query_plan.get('analysis_dimension') or ''\n    topic = query_plan.get('topic') or ''\n    row_count = query_result.get('row_count') if query_result.get('row_count') is not None else len(as_list(query_result.get('rows')))\n    package = build_lossless_package(query_result, query_plan)\n    package_text = dump_compact(package)\n    plan_text = dump_compact(query_plan)\n\n    system_prompt = '你是 PHONE 摄像模组竞分对比报告助手。只依据输入数据作答，不要编造缺失字段。'\n    user_prompt = (\n        '请基于以下 PHONE 模组 Mongo 查询结果生成自然语言竞分对比报告。\\n'\n        '输入的 query_result_package 是 full_lossless 无损包：由 query_result.rows 的 detail_groups/items 全量展开而来，未摘要、未裁剪、未 gzip。\\n'\n        '必须依据 coverage_check 判断数据覆盖情况；如果 missing_targets 为空，不得声称任一目标缺失。\\n'\n        'data_rows 必须按 data_schema 解释；entities 必须按 entity_schema 解释。\\n'\n        'null 表示原始数据缺失或未提供，不得臆测数值。\\n'\n        '输出必须包含：1. 总体结论；2. 核心差异表；3. 规格/供电/功耗详细分析；4. 优劣势总结；5. 注意事项。\\n'\n        '核心差异表优先使用 Markdown 表格。\\n\\n'\n        '【输出类型】\\n' + str(output_type) + '\\n\\n'\n        '【对比范围】\\n' + str(object_scope) + '\\n\\n'\n        '【分析维度】\\n' + str(analysis_dimension) + '\\n\\n'\n        '【Topic Hint】\\n' + str(topic) + '\\n\\n'\n        '【查询计划】\\n' + plan_text + '\\n\\n'\n        '【Mongo查询结果无损包，原始 rows 共 %s 条】\\n' % row_count + package_text\n    )\n\n    if len(user_prompt) > MAX_LLM_USER_PROMPT_CHARS:\n        payload = error_payload(\n            'LLM_INPUT_TOO_LARGE',\n            'LLM_INPUT_TOO_LARGE: 全量无损 query_result_package 长度为 %s 字符，超过当前节点限制 %s 字符。已停止生成，未进行静默截断；请改用全量分片处理或提高模型/网关输入上限。' % (len(user_prompt), MAX_LLM_USER_PROMPT_CHARS),\n            query_plan,\n            {\n                'row_count': row_count,\n                'rows_omitted_from_handler_payload': True,\n                'query_result_package_omitted_from_handler_payload': True,\n                'omit_reason': 'avoid_single_output_variable_over_80000_chars'\n            },\n            output_type,\n            'markdown_report'\n        )\n        payload['handler_context']['lossless'] = True\n        payload['handler_context']['truncated'] = False\n        payload['handler_context']['deduplicated_handler_payload'] = True\n        return {'report_input_json': json.dumps(payload, ensure_ascii=False, separators=(\",\", \":\"))}\n\n    payload = {\n        'status': 'ok',\n        'llm_task_type': 'report',\n        'output_kind': 'report',\n        'output_type': output_type,\n        'artifact_type': 'markdown_report',\n        'system_prompt': system_prompt,\n        'user_prompt': user_prompt,\n        'query_plan': query_plan,\n        'query_result': {\n            'row_count': row_count,\n            'rows_omitted_from_handler_payload': True,\n            'query_result_package_embedded_in_user_prompt': True,\n            'omit_reason': 'avoid_duplicate_full_lossless_package_inside_report_input_json'\n        },\n        'handler_context': {\n            'object_scope': object_scope,\n            'analysis_dimension': analysis_dimension,\n            'topic': topic,\n            'source_node': 'report_input',\n            'lossless': True,\n            'truncated': False,\n            'deduplicated_handler_payload': True,\n            'query_result_package_location': 'user_prompt_only'\n        }\n    }\n    return {'report_input_json': json.dumps(payload, ensure_ascii=False, separators=(\",\", \":\"))}\n",
+            "variables": [
+              {
+                "variable": "analysis_result_json",
+                "value_selector": [
+                  "analysis",
+                  "analysis_result_json"
+                ]
+              }
+            ],
             "code_language": "python3",
-            "code": "def main(analysis_result_json=''):\n    import json\n    return {'report_input_json': json.dumps({'status':'ok','analysis':json.loads(analysis_result_json or '{}'),'prompt':'生成竞分对比报告'}, ensure_ascii=False)}\n"
+            "code": "def main(analysis_result_json=''):\n    import json\n\n    MAX_LLM_USER_PROMPT_CHARS = 180000\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    def dump_compact(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def as_list(value):\n        return value if isinstance(value, list) else []\n\n    def normalize_name(value):\n        return ''.join(ch for ch in str(value or '').lower() if ch not in ' _-\\t\\r\\n')\n\n    def device_name(row, idx):\n        if isinstance(row, dict):\n            for key in ('device_model', 'phone_model', 'model', 'name'):\n                value = row.get(key)\n                if isinstance(value, str) and value.strip():\n                    return value.strip()\n        return '对象%s' % (idx + 1)\n\n    def expected_targets(query_plan):\n        for key in ('targets', 'target_objects'):\n            values = query_plan.get(key)\n            if isinstance(values, list):\n                return [str(v).strip() for v in values if str(v).strip()]\n        return []\n\n    def meta_without(source, excluded):\n        if not isinstance(source, dict):\n            return {}\n        return {k: v for k, v in source.items() if k not in excluded}\n\n    def build_lossless_package(query_result, query_plan):\n        rows = as_list(query_result.get('rows'))\n        expected = expected_targets(query_plan)\n        present = []\n        present_norm = set()\n        entities = []\n        data_rows = []\n        for row_index, row in enumerate(rows):\n            if not isinstance(row, dict):\n                entities.append([row_index, '对象%s' % (row_index + 1), '', '', '', '', '', '', [], {'raw_row': row}])\n                continue\n            dev = device_name(row, row_index)\n            norm = normalize_name(dev)\n            if norm and norm not in present_norm:\n                present.append(dev)\n                present_norm.add(norm)\n            entity = [\n                row_index,\n                dev,\n                row.get('manufacturer', ''),\n                row.get('platform', ''),\n                row.get('device_type', ''),\n                row.get('device_pic_url', ''),\n                row.get('module_name', ''),\n                row.get('dimension', ''),\n                row.get('extra_items') if isinstance(row.get('extra_items'), list) else [],\n                meta_without(row, {'detail_groups', 'manufacturer', 'platform', 'device_type', 'device_model', 'phone_model', 'model', 'name', 'device_pic_url', 'module_name', 'dimension', 'extra_items'})\n            ]\n            entities.append(entity)\n            for group in as_list(row.get('detail_groups')):\n                if not isinstance(group, dict):\n                    continue\n                group_name = str(group.get('name') or '未分组')\n                group_meta = meta_without(group, {'name', 'items'})\n                for item in as_list(group.get('items')):\n                    if not isinstance(item, dict):\n                        continue\n                    item_name = str(item.get('name') or '').strip()\n                    if not item_name:\n                        continue\n                    metric = item.get('metric', group.get('metric', ''))\n                    item_meta = meta_without(item, {'name', 'value', 'type', 'metric'})\n                    data_rows.append([\n                        row_index,\n                        dev,\n                        group_name,\n                        item_name,\n                        item.get('value'),\n                        item.get('type', ''),\n                        metric,\n                        group_meta,\n                        item_meta\n                    ])\n        missing = []\n        for target in expected:\n            target_norm = normalize_name(target)\n            if target_norm and target_norm not in present_norm:\n                missing.append(target)\n        package = {\n            'contract_version': 'llm_query_result_package_v1',\n            'mode': 'full_lossless',\n            'lossless': True,\n            'truncated': False,\n            'packaging': {\n                'kind': 'detail_groups_schema_rows',\n                'compression': 'schema_rows_minified_json',\n                'description': '将 query_result.rows 中每个 detail_groups[].items[] 无损展开为 schema+rows；未做摘要、未裁剪、未 gzip。'\n            },\n            'coverage_check': {\n                'expected_targets': expected,\n                'present_targets': present,\n                'missing_targets': missing\n            },\n            'rows_original_count': query_result.get('row_count') if query_result.get('row_count') is not None else len(rows),\n            'entity_schema': ['row_index', 'device_model', 'manufacturer', 'platform', 'device_type', 'device_pic_url', 'module_name', 'dimension', 'extra_items', 'other_meta'],\n            'entities': entities,\n            'data_schema': ['row_index', 'device_model', 'group_name', 'item_name', 'item_value', 'item_type', 'metric', 'group_meta', 'item_meta'],\n            'data_rows': data_rows\n        }\n        return package\n\n    def error_payload(code, message, query_plan, query_result, output_type, artifact_type):\n        return {\n            'status': 'error',\n            'llm_task_type': 'report',\n            'output_kind': 'report',\n            'output_type': output_type,\n            'artifact_type': artifact_type,\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': message,\n            'query_plan': query_plan,\n            'query_result': query_result,\n            'handler_context': {'source_node': 'report_input'},\n            'error': code\n        }\n\n    context = load_json(analysis_result_json)\n    query_plan = context.get('query_plan') if isinstance(context.get('query_plan'), dict) else {}\n    query_result = context.get('query_result') if isinstance(context.get('query_result'), dict) else {}\n    output_type = query_plan.get('output_type') or context.get('output_type') or '对比报告'\n    object_scope = query_plan.get('object_scope') or ''\n    analysis_dimension = query_plan.get('analysis_dimension') or ''\n    topic = query_plan.get('topic') or ''\n    row_count = query_result.get('row_count') if query_result.get('row_count') is not None else len(as_list(query_result.get('rows')))\n    package = build_lossless_package(query_result, query_plan)\n    package_text = dump_compact(package)\n    plan_text = dump_compact(query_plan)\n\n    system_prompt = '你是 PHONE 摄像模组竞分对比报告助手。只依据输入数据作答，不要编造缺失字段。'\n    user_prompt = (\n        '请基于以下 PHONE 模组 Mongo 查询结果生成自然语言竞分对比报告。\\n'\n        '输入的 query_result_package 是 full_lossless 无损包：由 query_result.rows 的 detail_groups/items 全量展开而来，未摘要、未裁剪、未 gzip。\\n'\n        '必须依据 coverage_check 判断数据覆盖情况；如果 missing_targets 为空，不得声称任一目标缺失。\\n'\n        'data_rows 必须按 data_schema 解释；entities 必须按 entity_schema 解释。\\n'\n        'null 表示原始数据缺失或未提供，不得臆测数值。\\n'\n        '输出必须包含：1. 总体结论；2. 核心差异表；3. 规格/供电/功耗详细分析；4. 优劣势总结；5. 注意事项。\\n'\n        '核心差异表优先使用 Markdown 表格。\\n\\n'\n        '【输出类型】\\n' + str(output_type) + '\\n\\n'\n        '【对比范围】\\n' + str(object_scope) + '\\n\\n'\n        '【分析维度】\\n' + str(analysis_dimension) + '\\n\\n'\n        '【Topic Hint】\\n' + str(topic) + '\\n\\n'\n        '【查询计划】\\n' + plan_text + '\\n\\n'\n        '【Mongo查询结果无损包，原始 rows 共 %s 条】\\n' % row_count + package_text\n    )\n\n    if len(user_prompt) > MAX_LLM_USER_PROMPT_CHARS:\n        payload = error_payload(\n            'LLM_INPUT_TOO_LARGE',\n            'LLM_INPUT_TOO_LARGE: 全量无损 query_result_package 长度为 %s 字符，超过当前节点限制 %s 字符。已停止生成，未进行静默截断；请改用全量分片处理或提高模型/网关输入上限。' % (len(user_prompt), MAX_LLM_USER_PROMPT_CHARS),\n            query_plan,\n            {\n                'row_count': row_count,\n                'rows_omitted_from_handler_payload': True,\n                'query_result_package_omitted_from_handler_payload': True,\n                'omit_reason': 'avoid_single_output_variable_over_80000_chars'\n            },\n            output_type,\n            'markdown_report'\n        )\n        payload['handler_context']['lossless'] = True\n        payload['handler_context']['truncated'] = False\n        payload['handler_context']['deduplicated_handler_payload'] = True\n        return {'report_input_json': json.dumps(payload, ensure_ascii=False, separators=(\",\", \":\"))}\n\n    payload = {\n        'status': 'ok',\n        'llm_task_type': 'report',\n        'output_kind': 'report',\n        'output_type': output_type,\n        'artifact_type': 'markdown_report',\n        'system_prompt': system_prompt,\n        'user_prompt': user_prompt,\n        'query_plan': query_plan,\n        'query_result': {\n            'row_count': row_count,\n            'rows_omitted_from_handler_payload': True,\n            'query_result_package_embedded_in_user_prompt': True,\n            'omit_reason': 'avoid_duplicate_full_lossless_package_inside_report_input_json'\n        },\n        'handler_context': {\n            'object_scope': object_scope,\n            'analysis_dimension': analysis_dimension,\n            'topic': topic,\n            'source_node': 'report_input',\n            'lossless': True,\n            'truncated': False,\n            'deduplicated_handler_payload': True,\n            'query_result_package_location': 'user_prompt_only'\n        }\n    }\n    return {'report_input_json': json.dumps(payload, ensure_ascii=False, separators=(\",\", \":\"))}\n"
           },
           "position": {
-            "x": 4680,
+            "x": 5400,
             "y": 80
           },
           "positionAbsolute": {
-            "x": 4680,
+            "x": 5400,
             "y": 80
           },
           "width": 320,
@@ -665,7 +854,8 @@
                       "ENABLE_FULL_LLM"
                     ],
                     "comparison_operator": "is",
-                    "value": "true"
+                    "value": "true",
+                    "id": "ifllm-enabled"
                   }
                 ],
                 "logical_operator": "and"
@@ -674,12 +864,12 @@
             "logical_operator": "and"
           },
           "position": {
-            "x": 5040,
-            "y": 80
+            "x": 6120,
+            "y": 300
           },
           "positionAbsolute": {
-            "x": 5040,
-            "y": 80
+            "x": 6120,
+            "y": 300
           },
           "width": 300,
           "height": 154
@@ -691,12 +881,28 @@
             "title": "代码执行_准备满血版Token请求",
             "type": "code",
             "outputs": {
+              "full_llm_token_app_id": {
+                "type": "string"
+              },
+              "full_llm_token_credential": {
+                "type": "string"
+              },
               "full_llm_token_request_body_json": {
+                "type": "string"
+              },
+              "full_llm_token_request_debug_json": {
                 "type": "string"
               }
             },
-            "source_code": "def main(report_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth=''):\n    import json\n    body={'grant_type':'client_credentials','scope':'phone_report'}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    if llm_static_token:\n        body['static_token']=llm_static_token\n    if llm_basic_auth:\n        body['basic_auth_configured']=True\n    return {'full_llm_token_request_body_json': json.dumps(body, ensure_ascii=False)}\n",
+            "source_code": "def main(llm_handler_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth='', **kwargs):\n    import base64\n    import json\n\n    app_id = str(llm_app_id or '').strip()\n    static_token = str(llm_static_token or '')\n    credential = base64.b64encode(static_token.encode('utf-8')).decode('utf-8')\n\n    token_request_body = {\n        'appId': app_id,\n        'credential': credential,\n    }\n    body_json = json.dumps(token_request_body, ensure_ascii=False, separators=(',', ':'))\n    debug = {\n        'appId_present': bool(app_id),\n        'staticToken_present': bool(static_token),\n        'credential_len': len(credential),\n        'body_json_len': len(body_json),\n        'llm_input_present': bool(str(llm_handler_input_json or '').strip()),\n    }\n\n    return {\n        'full_llm_token_app_id': app_id,\n        'full_llm_token_credential': credential,\n        'full_llm_token_request_body_json': body_json,\n        'full_llm_token_request_debug_json': json.dumps(debug, ensure_ascii=False, separators=(',', ':')),\n    }\n",
             "variables": [
+              {
+                "variable": "llm_handler_input_json",
+                "value_selector": [
+                  "llm_input",
+                  "llm_handler_input_json"
+                ]
+              },
               {
                 "variable": "llm_app_id",
                 "value_selector": [
@@ -720,14 +926,14 @@
               }
             ],
             "code_language": "python3",
-            "code": "def main(report_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth=''):\n    import json\n    body={'grant_type':'client_credentials','scope':'phone_report'}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    if llm_static_token:\n        body['static_token']=llm_static_token\n    if llm_basic_auth:\n        body['basic_auth_configured']=True\n    return {'full_llm_token_request_body_json': json.dumps(body, ensure_ascii=False)}\n"
+            "code": "def main(llm_handler_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth='', **kwargs):\n    import base64\n    import json\n\n    app_id = str(llm_app_id or '').strip()\n    static_token = str(llm_static_token or '')\n    credential = base64.b64encode(static_token.encode('utf-8')).decode('utf-8')\n\n    token_request_body = {\n        'appId': app_id,\n        'credential': credential,\n    }\n    body_json = json.dumps(token_request_body, ensure_ascii=False, separators=(',', ':'))\n    debug = {\n        'appId_present': bool(app_id),\n        'staticToken_present': bool(static_token),\n        'credential_len': len(credential),\n        'body_json_len': len(body_json),\n        'llm_input_present': bool(str(llm_handler_input_json or '').strip()),\n    }\n\n    return {\n        'full_llm_token_app_id': app_id,\n        'full_llm_token_credential': credential,\n        'full_llm_token_request_body_json': body_json,\n        'full_llm_token_request_debug_json': json.dumps(debug, ensure_ascii=False, separators=(',', ':')),\n    }\n"
           },
           "position": {
-            "x": 5400,
+            "x": 6480,
             "y": 80
           },
           "positionAbsolute": {
-            "x": 5400,
+            "x": 6480,
             "y": 80
           },
           "width": 320,
@@ -743,9 +949,9 @@
             "url": "{{#env.LLM_TOKEN_URL#}}",
             "body": {
               "type": "json",
-              "data": "{{#token_req.full_llm_token_request_body_json#}}"
+              "data": "{\"appId\":\"{{#token_req.full_llm_token_app_id#}}\",\"credential\":\"{{#token_req.full_llm_token_credential#}}\"}"
             },
-            "headers": "Authorization: {{#env.LLM_BASIC_AUTH#}}",
+            "headers": "Content-Type: application/json\nAccept: application/json",
             "params": "",
             "variables": [],
             "authorization": {
@@ -765,153 +971,6 @@
             }
           },
           "position": {
-            "x": 5760,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 5760,
-            "y": 80
-          },
-          "width": 320,
-          "height": 130
-        },
-        {
-          "id": "token_parse",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_解析满血版Token结果",
-            "type": "code",
-            "outputs": {
-              "full_llm_token_result_json": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    token=''\n    if ok and body:\n        try:\n            payload=json.loads(body)\n            token=payload.get('access_token') or payload.get('token') or ''\n        except Exception:\n            token=''\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':token}, ensure_ascii=False)}\n",
-            "variables": [],
-            "code_language": "python3",
-            "code": "def main(body='', status_code=200):\n    import json\n    ok=str(status_code).startswith('2')\n    token=''\n    if ok and body:\n        try:\n            payload=json.loads(body)\n            token=payload.get('access_token') or payload.get('token') or ''\n        except Exception:\n            token=''\n    return {'full_llm_token_result_json': json.dumps({'status':'ok' if ok else 'error','access_token':token}, ensure_ascii=False)}\n"
-          },
-          "position": {
-            "x": 6120,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 6120,
-            "y": 80
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "if_token",
-          "type": "custom",
-          "data": {
-            "title": "IF_满血版Token是否成功",
-            "type": "if-else",
-            "cases": [
-              {
-                "case_id": "ok",
-                "conditions": [
-                  {
-                    "variable_selector": [
-                      "token_parse",
-                      "full_llm_token_result_json",
-                      "status"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "ok"
-                  }
-                ],
-                "logical_operator": "and"
-              }
-            ],
-            "logical_operator": "and"
-          },
-          "position": {
-            "x": 6480,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 6480,
-            "y": 80
-          },
-          "width": 300,
-          "height": 154
-        },
-        {
-          "id": "full_req",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_准备满血版LLM请求",
-            "type": "code",
-            "outputs": {
-              "full_llm_request_body_json": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(report_input_json='', full_llm_token_result_json='', llm_app_id='', llm_model='', llm_user='', llm_timeout_ms='', llm_temperature='', llm_top_p='', llm_max_completion_tokens='', llm_stream=''):\n    import json\n    def as_float(v, default):\n        try: return float(v) if v not in (None,'') else default\n        except Exception: return default\n    def as_int(v, default):\n        try: return int(v) if v not in (None,'') else default\n        except Exception: return default\n    body={'report_input': json.loads(report_input_json or '{}'), 'token': json.loads(full_llm_token_result_json or '{}').get('access_token',''), 'model': llm_model or '', 'user': llm_user or '', 'stream': str(llm_stream).lower() == 'true', 'temperature': as_float(llm_temperature, 0.2), 'top_p': as_float(llm_top_p, 0.9), 'max_completion_tokens': as_int(llm_max_completion_tokens, 4096), 'timeout_ms': as_int(llm_timeout_ms, 30000)}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    return {'full_llm_request_body_json': json.dumps(body, ensure_ascii=False)}\n",
-            "variables": [
-              {
-                "variable": "llm_app_id",
-                "value_selector": [
-                  "env",
-                  "LLM_APP_ID"
-                ]
-              },
-              {
-                "variable": "llm_model",
-                "value_selector": [
-                  "env",
-                  "LLM_MODEL"
-                ]
-              },
-              {
-                "variable": "llm_user",
-                "value_selector": [
-                  "env",
-                  "LLM_USER"
-                ]
-              },
-              {
-                "variable": "llm_timeout_ms",
-                "value_selector": [
-                  "env",
-                  "LLM_TIMEOUT_MS"
-                ]
-              },
-              {
-                "variable": "llm_temperature",
-                "value_selector": [
-                  "env",
-                  "LLM_TEMPERATURE"
-                ]
-              },
-              {
-                "variable": "llm_top_p",
-                "value_selector": [
-                  "env",
-                  "LLM_TOP_P"
-                ]
-              },
-              {
-                "variable": "llm_max_completion_tokens",
-                "value_selector": [
-                  "env",
-                  "LLM_MAX_COMPLETION_TOKENS"
-                ]
-              },
-              {
-                "variable": "llm_stream",
-                "value_selector": [
-                  "env",
-                  "LLM_STREAM"
-                ]
-              }
-            ],
-            "code_language": "python3",
-            "code": "def main(report_input_json='', full_llm_token_result_json='', llm_app_id='', llm_model='', llm_user='', llm_timeout_ms='', llm_temperature='', llm_top_p='', llm_max_completion_tokens='', llm_stream=''):\n    import json\n    def as_float(v, default):\n        try: return float(v) if v not in (None,'') else default\n        except Exception: return default\n    def as_int(v, default):\n        try: return int(v) if v not in (None,'') else default\n        except Exception: return default\n    body={'report_input': json.loads(report_input_json or '{}'), 'token': json.loads(full_llm_token_result_json or '{}').get('access_token',''), 'model': llm_model or '', 'user': llm_user or '', 'stream': str(llm_stream).lower() == 'true', 'temperature': as_float(llm_temperature, 0.2), 'top_p': as_float(llm_top_p, 0.9), 'max_completion_tokens': as_int(llm_max_completion_tokens, 4096), 'timeout_ms': as_int(llm_timeout_ms, 30000)}\n    if llm_app_id:\n        body['app_id']=llm_app_id\n    return {'full_llm_request_body_json': json.dumps(body, ensure_ascii=False)}\n"
-          },
-          "position": {
             "x": 6840,
             "y": 80
           },
@@ -920,231 +979,5 @@
             "y": 80
           },
           "width": 320,
-          "height": 150
-        },
-        {
-          "id": "http_full",
-          "type": "custom",
-          "data": {
-            "title": "HTTP请求_调用满血版LLM接口",
-            "type": "http-request",
-            "method": "POST",
-            "url": "{{#env.LLM_CHAT_URL#}}",
-            "body": {
-              "type": "json",
-              "data": "{{#full_req.full_llm_request_body_json#}}"
-            },
-            "headers": "Authorization: Bearer {{#token_parse.full_llm_token_result_json.access_token#}}\nX-Static-Token: {{#env.LLM_STATIC_TOKEN#}}\nAuthorization-Basic: {{#env.LLM_BASIC_AUTH#}}",
-            "params": "",
-            "variables": [],
-            "authorization": {
-              "type": "no-auth",
-              "config": null
-            },
-            "timeout": {
-              "max_connect_timeout": 0,
-              "max_read_timeout": 0,
-              "max_write_timeout": 0
-            },
-            "ssl_verify": true,
-            "retry_config": {
-              "retry_enabled": true,
-              "max_retries": 3,
-              "retry_interval": 100
-            }
-          },
-          "position": {
-            "x": 7200,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 7200,
-            "y": 80
-          },
-          "width": 320,
           "height": 130
         },
-        {
-          "id": "full_parse",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_解析满血版LLM响应",
-            "type": "code",
-            "outputs": {
-              "full_llm_result_json": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(body='', status_code=200):\n    import json\n    return {'full_llm_result_json': json.dumps({'status':'ok' if str(status_code).startswith('2') else 'error','answer':body or '满血版报告'}, ensure_ascii=False)}\n",
-            "variables": [],
-            "code_language": "python3",
-            "code": "def main(body='', status_code=200):\n    import json\n    return {'full_llm_result_json': json.dumps({'status':'ok' if str(status_code).startswith('2') else 'error','answer':body or '满血版报告'}, ensure_ascii=False)}\n"
-          },
-          "position": {
-            "x": 7560,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 7560,
-            "y": 80
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "if_full",
-          "type": "custom",
-          "data": {
-            "title": "IF_满血版LLM是否成功",
-            "type": "if-else",
-            "cases": [
-              {
-                "case_id": "ok",
-                "conditions": [
-                  {
-                    "variable_selector": [
-                      "full_parse",
-                      "full_llm_result_json",
-                      "status"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "ok"
-                  }
-                ],
-                "logical_operator": "and"
-              }
-            ],
-            "logical_operator": "and"
-          },
-          "position": {
-            "x": 7920,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 7920,
-            "y": 80
-          },
-          "width": 300,
-          "height": 154
-        },
-        {
-          "id": "llmlocal",
-          "type": "custom",
-          "data": {
-            "title": "LLM_生成竞分对比报告_本地版",
-            "type": "llm",
-            "outputs": {
-              "text": {
-                "type": "string"
-              }
-            },
-            "model": {
-              "provider": "langgenius/openai/openai",
-              "name": "gpt-4o-mini",
-              "mode": "chat"
-            },
-            "prompt_template": [
-              {
-                "role": "system",
-                "text": "你是PHONE竞分报告助手。"
-              },
-              {
-                "role": "user",
-                "text": "{{#report_input.report_input_json#}}"
-              }
-            ],
-            "context": {
-              "enabled": false,
-              "variable_selector": []
-            },
-            "vision": {
-              "enabled": false
-            }
-          },
-          "position": {
-            "x": 6120,
-            "y": 500
-          },
-          "positionAbsolute": {
-            "x": 6120,
-            "y": 500
-          },
-          "width": 340,
-          "height": 170
-        },
-        {
-          "id": "local_wrap",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_包装本地LLM报告结果",
-            "type": "code",
-            "outputs": {
-              "local_llm_result_json": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(text=''):\n    import json\n    return {'local_llm_result_json': json.dumps({'status':'ok','answer':text or '本地版竞分对比报告'}, ensure_ascii=False)}\n",
-            "variables": [],
-            "code_language": "python3",
-            "code": "def main(text=''):\n    import json\n    return {'local_llm_result_json': json.dumps({'status':'ok','answer':text or '本地版竞分对比报告'}, ensure_ascii=False)}\n"
-          },
-          "position": {
-            "x": 6480,
-            "y": 500
-          },
-          "positionAbsolute": {
-            "x": 6480,
-            "y": 500
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "final",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_合并最终回答",
-            "type": "code",
-            "outputs": {
-              "final_answer": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(analysis_result_json='', full_llm_result_json='', local_llm_result_json=''):\n    import json\n    for raw in (full_llm_result_json, local_llm_result_json, analysis_result_json):\n        if raw:\n            obj=json.loads(raw); return {'final_answer': obj.get('answer') or obj.get('summary') or json.dumps(obj, ensure_ascii=False)}\n    return {'final_answer':'PHONE 查询完成'}\n",
-            "variables": [],
-            "code_language": "python3",
-            "code": "def main(analysis_result_json='', full_llm_result_json='', local_llm_result_json=''):\n    import json\n    for raw in (full_llm_result_json, local_llm_result_json, analysis_result_json):\n        if raw:\n            obj=json.loads(raw); return {'final_answer': obj.get('answer') or obj.get('summary') or json.dumps(obj, ensure_ascii=False)}\n    return {'final_answer':'PHONE 查询完成'}\n"
-          },
-          "position": {
-            "x": 7200,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 7200,
-            "y": 300
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "ans",
-          "type": "custom",
-          "data": {
-            "title": "结束_返回最终回答",
-            "type": "answer",
-            "answer": "{{#final.final_answer#}}",
-            "outputs": [],
-            "variables": []
-          },
-          "position": {
-            "x": 7560,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 7560,
-            "y": 300
-          },
-          "width": 280,
-          "height": 110
-        }
-      ],
