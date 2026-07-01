@@ -67,6 +67,13 @@ EXPECTED_HTTP_URLS={
     'HTTP请求_获取满血版LLM Token':'{{#env.LLM_TOKEN_URL#}}',
     'HTTP请求_调用满血版LLM接口':'{{#env.LLM_CHAT_URL#}}',
 }
+REQUIRED_PRODUCER_VARS=[
+    'route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json',
+    'normalized_query_result_json','analysis_result_json','report_input_json',
+    'full_llm_token_request_body_json','full_llm_token_result_json',
+    'full_llm_request_body_json','full_llm_result_json','local_llm_result_json','final_answer',
+]
+OPTIONAL_LEGACY_PRODUCER_VARS=['mongo_result_json']
 
 
 def node_label(node):
@@ -232,8 +239,10 @@ def validate(doc):
     producers=defaultdict(set)
     for n in nodes:
         for k in (n.get('data',{}).get('outputs') or {}): producers[k].add(n['id'])
-    for var in ['route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json','mongo_result_json','normalized_query_result_json','analysis_result_json','report_input_json','full_llm_token_request_body_json','full_llm_token_result_json','full_llm_request_body_json','full_llm_result_json','local_llm_result_json','final_answer']:
+    for var in REQUIRED_PRODUCER_VARS:
         if var not in producers: fail(f'variable producer missing: {var}')
+    legacy_missing=[var for var in OPTIONAL_LEGACY_PRODUCER_VARS if var not in producers]
+    if legacy_missing: print(f'legacy_optional_missing: {legacy_missing}')
     return len(nodes),len(edges),refs,defs
 
 def check_full_consistency(text):
