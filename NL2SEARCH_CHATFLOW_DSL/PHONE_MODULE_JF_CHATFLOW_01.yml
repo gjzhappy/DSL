@@ -1,394 +1,613 @@
-      "edges": [
         {
-          "id": "e01_start_source_ctx",
+          "id": "token_parse",
           "type": "custom",
-          "source": "start",
-          "target": "ctx",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "代码执行_解析满血版Token结果",
+            "type": "code",
+            "outputs": {
+              "full_llm_token_result_json": {
+                "type": "string"
+              },
+              "full_llm_token_status": {
+                "type": "string"
+              },
+              "full_llm_access_token": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    status = 'error'\n    authorization_value = ''\n    error = ''\n\n    try:\n        code = int(status_code or 0)\n        if code < 200 or code >= 300:\n            raise ValueError('动态token获取失败, status=%s, body=%s' % (code, truncate(body)))\n\n        payload = json.loads(body or '{}')\n        if not isinstance(payload, dict):\n            raise ValueError('动态token响应不是JSON对象')\n\n        token_result = payload.get('result')\n        if not isinstance(token_result, str) or not token_result.strip():\n            status_obj = payload.get('status') if isinstance(payload.get('status'), dict) else {}\n            error_msg = status_obj.get('errorMsg') or status_obj.get('errorStackTrace') or ''\n            raise ValueError('TOKEN_RESULT_EMPTY: %s' % truncate(error_msg or body))\n\n        authorization_value = token_result.strip()\n        status = 'ok'\n    except Exception as exc:\n        error = truncate(str(exc))\n\n    return {\n        'full_llm_token_result_json': json.dumps({\n            'status': status,\n            'authorization_value': authorization_value,\n            'error': error\n        }, ensure_ascii=False),\n        'full_llm_token_status': status,\n        'full_llm_access_token': authorization_value\n    }\n",
+            "variables": [
+              {
+                "variable": "body",
+                "value_selector": [
+                  "http_token",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http_token",
+                  "status_code"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    status = 'error'\n    authorization_value = ''\n    error = ''\n\n    try:\n        code = int(status_code or 0)\n        if code < 200 or code >= 300:\n            raise ValueError('动态token获取失败, status=%s, body=%s' % (code, truncate(body)))\n\n        payload = json.loads(body or '{}')\n        if not isinstance(payload, dict):\n            raise ValueError('动态token响应不是JSON对象')\n\n        token_result = payload.get('result')\n        if not isinstance(token_result, str) or not token_result.strip():\n            status_obj = payload.get('status') if isinstance(payload.get('status'), dict) else {}\n            error_msg = status_obj.get('errorMsg') or status_obj.get('errorStackTrace') or ''\n            raise ValueError('TOKEN_RESULT_EMPTY: %s' % truncate(error_msg or body))\n\n        authorization_value = token_result.strip()\n        status = 'ok'\n    except Exception as exc:\n        error = truncate(str(exc))\n\n    return {\n        'full_llm_token_result_json': json.dumps({\n            'status': status,\n            'authorization_value': authorization_value,\n            'error': error\n        }, ensure_ascii=False),\n        'full_llm_token_status': status,\n        'full_llm_access_token': authorization_value\n    }\n"
           },
-          "zIndex": 0
+          "position": {
+            "x": 7200,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 7200,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
         },
         {
-          "id": "e02_ctx_source_kr",
+          "id": "if_token",
           "type": "custom",
-          "source": "ctx",
-          "target": "kr",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "IF_满血版Token是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "token_parse",
+                      "full_llm_token_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok",
+                    "id": "if-token-ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
           },
-          "zIndex": 0
+          "position": {
+            "x": 7560,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 7560,
+            "y": 80
+          },
+          "width": 300,
+          "height": 154
         },
         {
-          "id": "e03_kr_source_route",
+          "id": "full_req",
           "type": "custom",
-          "source": "kr",
-          "target": "route",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "代码执行_准备满血版LLM请求",
+            "type": "code",
+            "outputs": {
+              "full_llm_request_body_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(llm_handler_input_json='', full_llm_token_result_json='', llm_app_id='', llm_model='', llm_user='', llm_timeout_ms='', llm_temperature='', llm_top_p='', llm_max_completion_tokens='', llm_stream=''):\n    import json\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def as_float(value, default):\n        try:\n            return float(value) if value not in (None, '') else default\n        except Exception:\n            return default\n\n    def as_int(value, default):\n        try:\n            return int(value) if value not in (None, '') else default\n        except Exception:\n            return default\n\n    def as_bool(value):\n        if isinstance(value, bool):\n            return value\n        return str(value or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}\n\n    llm_input = load_json(llm_handler_input_json, {})\n    system_prompt = str(llm_input.get('system_prompt') or '你是 PHONE 数据分析助手。只依据输入数据作答，不要编造缺失字段。')\n    user_prompt = str(llm_input.get('user_prompt') or '请基于查询结果生成分析。')\n\n    model = str(llm_model or '').strip() or 'DeepSeek-V4-Flash'\n    request_body = {\n        'model': model,\n        'messages': [\n            {'role': 'system', 'content': system_prompt},\n            {'role': 'user', 'content': user_prompt}\n        ],\n        'stream': as_bool(llm_stream),\n        'temperature': as_float(llm_temperature, 0.2),\n        'top_p': as_float(llm_top_p, 0.9),\n        'max_completion_tokens': as_int(llm_max_completion_tokens, 4096)\n    }\n\n    if str(llm_user or '').strip():\n        request_body['user'] = str(llm_user).strip()\n\n    return {\n        'full_llm_request_body_json': json.dumps(request_body, ensure_ascii=False, separators=(',', ':'))\n    }\n",
+            "variables": [
+              {
+                "variable": "llm_handler_input_json",
+                "value_selector": [
+                  "llm_input",
+                  "llm_handler_input_json"
+                ]
+              },
+              {
+                "variable": "full_llm_token_result_json",
+                "value_selector": [
+                  "token_parse",
+                  "full_llm_token_result_json"
+                ]
+              },
+              {
+                "variable": "llm_app_id",
+                "value_selector": [
+                  "env",
+                  "LLM_APP_ID"
+                ]
+              },
+              {
+                "variable": "llm_model",
+                "value_selector": [
+                  "env",
+                  "LLM_MODEL"
+                ]
+              },
+              {
+                "variable": "llm_user",
+                "value_selector": [
+                  "env",
+                  "LLM_USER"
+                ]
+              },
+              {
+                "variable": "llm_timeout_ms",
+                "value_selector": [
+                  "env",
+                  "LLM_TIMEOUT_MS"
+                ]
+              },
+              {
+                "variable": "llm_temperature",
+                "value_selector": [
+                  "env",
+                  "LLM_TEMPERATURE"
+                ]
+              },
+              {
+                "variable": "llm_top_p",
+                "value_selector": [
+                  "env",
+                  "LLM_TOP_P"
+                ]
+              },
+              {
+                "variable": "llm_max_completion_tokens",
+                "value_selector": [
+                  "env",
+                  "LLM_MAX_COMPLETION_TOKENS"
+                ]
+              },
+              {
+                "variable": "llm_stream",
+                "value_selector": [
+                  "env",
+                  "LLM_STREAM"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(llm_handler_input_json='', full_llm_token_result_json='', llm_app_id='', llm_model='', llm_user='', llm_timeout_ms='', llm_temperature='', llm_top_p='', llm_max_completion_tokens='', llm_stream=''):\n    import json\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def as_float(value, default):\n        try:\n            return float(value) if value not in (None, '') else default\n        except Exception:\n            return default\n\n    def as_int(value, default):\n        try:\n            return int(value) if value not in (None, '') else default\n        except Exception:\n            return default\n\n    def as_bool(value):\n        if isinstance(value, bool):\n            return value\n        return str(value or '').strip().lower() in {'1', 'true', 'yes', 'y', 'on'}\n\n    llm_input = load_json(llm_handler_input_json, {})\n    system_prompt = str(llm_input.get('system_prompt') or '你是 PHONE 数据分析助手。只依据输入数据作答，不要编造缺失字段。')\n    user_prompt = str(llm_input.get('user_prompt') or '请基于查询结果生成分析。')\n\n    model = str(llm_model or '').strip() or 'DeepSeek-V4-Flash'\n    request_body = {\n        'model': model,\n        'messages': [\n            {'role': 'system', 'content': system_prompt},\n            {'role': 'user', 'content': user_prompt}\n        ],\n        'stream': as_bool(llm_stream),\n        'temperature': as_float(llm_temperature, 0.2),\n        'top_p': as_float(llm_top_p, 0.9),\n        'max_completion_tokens': as_int(llm_max_completion_tokens, 4096)\n    }\n\n    if str(llm_user or '').strip():\n        request_body['user'] = str(llm_user).strip()\n\n    return {\n        'full_llm_request_body_json': json.dumps(request_body, ensure_ascii=False, separators=(',', ':'))\n    }\n"
           },
-          "zIndex": 0
+          "position": {
+            "x": 7920,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 7920,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
         },
         {
-          "id": "e04_route_source_parse",
+          "id": "http_full",
           "type": "custom",
-          "source": "route",
-          "target": "parse",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "HTTP请求_调用满血版LLM接口",
+            "type": "http-request",
+            "method": "POST",
+            "url": "{{#env.LLM_CHAT_URL#}}",
+            "body": {
+              "type": "json",
+              "data": "{{#full_req.full_llm_request_body_json#}}"
+            },
+            "headers": "Content-Type: application/json\nAccept: application/json\nAuthorization: {{#token_parse.full_llm_access_token#}}",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 0,
+              "max_read_timeout": 0,
+              "max_write_timeout": 0
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 3,
+              "retry_interval": 100
+            }
           },
-          "zIndex": 0
+          "position": {
+            "x": 8280,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 8280,
+            "y": 80
+          },
+          "width": 320,
+          "height": 130
         },
         {
-          "id": "e05_parse_source_validate",
+          "id": "full_parse",
           "type": "custom",
-          "source": "parse",
-          "target": "validate",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "代码执行_解析满血版LLM响应",
+            "type": "code",
+            "outputs": {
+              "full_llm_result_json": {
+                "type": "string"
+              },
+              "full_llm_status": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(body='', status_code=200, llm_handler_input_json=''):\n    import json\n\n    def truncate(text, limit=2000):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def extract_answer(payload):\n        if isinstance(payload, dict):\n            choices = payload.get('choices')\n            if isinstance(choices, list) and choices:\n                first = choices[0] if isinstance(choices[0], dict) else {}\n                message = first.get('message') if isinstance(first.get('message'), dict) else {}\n                content = message.get('content')\n                if isinstance(content, str) and content.strip():\n                    return content.strip()\n                text = first.get('text')\n                if isinstance(text, str) and text.strip():\n                    return text.strip()\n            for key in ('answer', 'content', 'text', 'result'):\n                value = payload.get(key)\n                if isinstance(value, str) and value.strip():\n                    return value.strip()\n            return json.dumps(payload, ensure_ascii=False)\n        if isinstance(payload, str):\n            return payload.strip()\n        return ''\n\n    status = 'error'\n    answer = ''\n    error = ''\n    try:\n        code = int(status_code or 0)\n        if code < 200 or code >= 300:\n            raise ValueError('满血版LLM调用失败, status=%s, body=%s' % (code, truncate(body)))\n        try:\n            payload = json.loads(body or '{}')\n            answer = extract_answer(payload)\n        except Exception:\n            answer = str(body or '').strip()\n        if not answer:\n            raise ValueError('FULL_LLM_EMPTY_ANSWER')\n        status = 'ok'\n    except Exception as exc:\n        error = truncate(str(exc))\n        answer = ''\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n",
+            "variables": [
+              {
+                "variable": "body",
+                "value_selector": [
+                  "http_full",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http_full",
+                  "status_code"
+                ]
+              },
+              {
+                "variable": "llm_handler_input_json",
+                "value_selector": [
+                  "llm_input",
+                  "llm_handler_input_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(body='', status_code=200, llm_handler_input_json=''):\n    import json\n\n    def truncate(text, limit=2000):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def extract_answer(payload):\n        if isinstance(payload, dict):\n            choices = payload.get('choices')\n            if isinstance(choices, list) and choices:\n                first = choices[0] if isinstance(choices[0], dict) else {}\n                message = first.get('message') if isinstance(first.get('message'), dict) else {}\n                content = message.get('content')\n                if isinstance(content, str) and content.strip():\n                    return content.strip()\n                text = first.get('text')\n                if isinstance(text, str) and text.strip():\n                    return text.strip()\n            for key in ('answer', 'content', 'text', 'result'):\n                value = payload.get(key)\n                if isinstance(value, str) and value.strip():\n                    return value.strip()\n            return json.dumps(payload, ensure_ascii=False)\n        if isinstance(payload, str):\n            return payload.strip()\n        return ''\n\n    status = 'error'\n    answer = ''\n    error = ''\n    try:\n        code = int(status_code or 0)\n        if code < 200 or code >= 300:\n            raise ValueError('满血版LLM调用失败, status=%s, body=%s' % (code, truncate(body)))\n        try:\n            payload = json.loads(body or '{}')\n            answer = extract_answer(payload)\n        except Exception:\n            answer = str(body or '').strip()\n        if not answer:\n            raise ValueError('FULL_LLM_EMPTY_ANSWER')\n        status = 'ok'\n    except Exception as exc:\n        error = truncate(str(exc))\n        answer = ''\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n"
           },
-          "zIndex": 0
+          "position": {
+            "x": 8640,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 8640,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
         },
         {
-          "id": "e06_validate_source_ifslot",
+          "id": "if_full",
           "type": "custom",
-          "source": "validate",
-          "target": "ifslot",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "IF_满血版LLM是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "full_parse",
+                      "full_llm_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok",
+                    "id": "if-full-ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
           },
-          "zIndex": 0
+          "position": {
+            "x": 9000,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 9000,
+            "y": 80
+          },
+          "width": 300,
+          "height": 154
         },
         {
-          "id": "e07_ifslot_need_slot_fill",
+          "id": "llmlocal",
           "type": "custom",
-          "source": "ifslot",
-          "target": "fill",
-          "sourceHandle": "need_slot",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "LLM_生成文本结果_本地版",
+            "type": "llm",
+            "outputs": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "model": {
+              "provider": "langgenius/ollama/ollama",
+              "name": "qwen3.5:35b",
+              "mode": "chat",
+              "completion_params": {
+                "temperature": 0,
+                "top_p": 1,
+                "max_tokens": 12000,
+                "think": false
+              }
+            },
+            "prompt_template": [
+              {
+                "role": "system",
+                "text": "{{#llm_input.llm_system_prompt#}}"
+              },
+              {
+                "role": "user",
+                "text": "{{#llm_input.llm_user_prompt#}}"
+              }
+            ],
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            }
           },
-          "zIndex": 0
+          "position": {
+            "x": 7920,
+            "y": 500
+          },
+          "positionAbsolute": {
+            "x": 7920,
+            "y": 500
+          },
+          "width": 340,
+          "height": 170
         },
         {
-          "id": "e08_fill_source_ansslot",
+          "id": "local_wrap",
           "type": "custom",
-          "source": "fill",
-          "target": "ansslot",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "代码执行_包装LLM类Handler结果",
+            "type": "code",
+            "outputs": {
+              "llm_handler_result_json": {
+                "type": "string"
+              },
+              "local_llm_result_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(local_text='', full_llm_result_json='', llm_handler_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    llm_input = load_json(llm_handler_input_json)\n    full_result = load_json(full_llm_result_json)\n    query_plan = llm_input.get('query_plan') if isinstance(llm_input.get('query_plan'), dict) else {}\n    query_result = llm_input.get('query_result') if isinstance(llm_input.get('query_result'), dict) else {}\n    output_kind = str(llm_input.get('output_kind') or 'text')\n    artifact_type = str(llm_input.get('artifact_type') or 'markdown_text')\n    task_type = str(llm_input.get('llm_task_type') or output_kind)\n\n    if llm_input.get('status') == 'error':\n        error = str(llm_input.get('error') or 'LLM_INPUT_ERROR')\n        text = str(llm_input.get('user_prompt') or error)\n        result = {\n            'handler_status': 'error',\n            'output_kind': output_kind,\n            'answer': text,\n            'artifact_type': artifact_type,\n            'artifact_payload_json': json.dumps({'source': 'llm_input_guard', 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n            'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n            'query_result_json': json.dumps(query_result, ensure_ascii=False),\n            'error': text\n        }\n        encoded = json.dumps(result, ensure_ascii=False)\n        return {\n            'llm_handler_result_json': encoded,\n            'local_llm_result_json': encoded\n        }\n\n    source = 'local_llm'\n    text = str(local_text or '').strip()\n    error = ''\n    if full_result.get('llm_status') == 'ok' and str(full_result.get('llm_text') or '').strip():\n        source = 'full_llm'\n        text = str(full_result.get('llm_text') or '').strip()\n    elif text:\n        source = 'local_llm'\n    else:\n        error = full_result.get('error') or 'LLM 未返回有效文本'\n        text = 'LLM 输出生成完成，但模型未返回有效文本。'\n\n    result = {\n        'handler_status': 'ok' if not error else 'error',\n        'output_kind': output_kind,\n        'answer': text,\n        'artifact_type': artifact_type,\n        'artifact_payload_json': json.dumps({'source': source, 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': error\n    }\n    encoded = json.dumps(result, ensure_ascii=False)\n    return {\n        'llm_handler_result_json': encoded,\n        'local_llm_result_json': encoded\n    }\n",
+            "variables": [
+              {
+                "variable": "local_text",
+                "value_selector": [
+                  "llmlocal",
+                  "text"
+                ]
+              },
+              {
+                "variable": "full_llm_result_json",
+                "value_selector": [
+                  "full_parse",
+                  "full_llm_result_json"
+                ]
+              },
+              {
+                "variable": "llm_handler_input_json",
+                "value_selector": [
+                  "llm_input",
+                  "llm_handler_input_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(local_text='', full_llm_result_json='', llm_handler_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    llm_input = load_json(llm_handler_input_json)\n    full_result = load_json(full_llm_result_json)\n    query_plan = llm_input.get('query_plan') if isinstance(llm_input.get('query_plan'), dict) else {}\n    query_result = llm_input.get('query_result') if isinstance(llm_input.get('query_result'), dict) else {}\n    output_kind = str(llm_input.get('output_kind') or 'text')\n    artifact_type = str(llm_input.get('artifact_type') or 'markdown_text')\n    task_type = str(llm_input.get('llm_task_type') or output_kind)\n\n    if llm_input.get('status') == 'error':\n        error = str(llm_input.get('error') or 'LLM_INPUT_ERROR')\n        text = str(llm_input.get('user_prompt') or error)\n        result = {\n            'handler_status': 'error',\n            'output_kind': output_kind,\n            'answer': text,\n            'artifact_type': artifact_type,\n            'artifact_payload_json': json.dumps({'source': 'llm_input_guard', 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n            'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n            'query_result_json': json.dumps(query_result, ensure_ascii=False),\n            'error': text\n        }\n        encoded = json.dumps(result, ensure_ascii=False)\n        return {\n            'llm_handler_result_json': encoded,\n            'local_llm_result_json': encoded\n        }\n\n    source = 'local_llm'\n    text = str(local_text or '').strip()\n    error = ''\n    if full_result.get('llm_status') == 'ok' and str(full_result.get('llm_text') or '').strip():\n        source = 'full_llm'\n        text = str(full_result.get('llm_text') or '').strip()\n    elif text:\n        source = 'local_llm'\n    else:\n        error = full_result.get('error') or 'LLM 未返回有效文本'\n        text = 'LLM 输出生成完成，但模型未返回有效文本。'\n\n    result = {\n        'handler_status': 'ok' if not error else 'error',\n        'output_kind': output_kind,\n        'answer': text,\n        'artifact_type': artifact_type,\n        'artifact_payload_json': json.dumps({'source': source, 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': error\n    }\n    encoded = json.dumps(result, ensure_ascii=False)\n    return {\n        'llm_handler_result_json': encoded,\n        'local_llm_result_json': encoded\n    }\n"
           },
-          "zIndex": 0
+          "position": {
+            "x": 9360,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 9360,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
         },
         {
-          "id": "e09_ifslot_success_plan",
+          "id": "final",
           "type": "custom",
-          "source": "ifslot",
-          "target": "plan",
-          "sourceHandle": "success",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "代码执行_合并最终回答",
+            "type": "code",
+            "outputs": {
+              "final_answer": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(llm_handler_result_json='', table_handler_result_json='', excel_handler_result_json='', default_handler_result_json='', analysis_result_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    for raw in (llm_handler_result_json, table_handler_result_json, excel_handler_result_json, default_handler_result_json):\n        obj = load_json(raw)\n        if obj:\n            if obj.get('handler_status') == 'error':\n                return {'final_answer': obj.get('error') or 'PHONE 输出处理失败'}\n            return {'final_answer': obj.get('answer') or json.dumps(obj, ensure_ascii=False)}\n\n    context = load_json(analysis_result_json)\n    if context:\n        return {'final_answer': context.get('summary') or json.dumps(context, ensure_ascii=False)}\n\n    return {'final_answer': 'PHONE 查询完成'}\n",
+            "variables": [
+              {
+                "variable": "llm_handler_result_json",
+                "value_selector": [
+                  "local_wrap",
+                  "llm_handler_result_json"
+                ]
+              },
+              {
+                "variable": "table_handler_result_json",
+                "value_selector": [
+                  "table_handler",
+                  "table_handler_result_json"
+                ]
+              },
+              {
+                "variable": "excel_handler_result_json",
+                "value_selector": [
+                  "excel_handler",
+                  "excel_handler_result_json"
+                ]
+              },
+              {
+                "variable": "default_handler_result_json",
+                "value_selector": [
+                  "default_handler",
+                  "default_handler_result_json"
+                ]
+              },
+              {
+                "variable": "analysis_result_json",
+                "value_selector": [
+                  "analysis",
+                  "analysis_result_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(llm_handler_result_json='', table_handler_result_json='', excel_handler_result_json='', default_handler_result_json='', analysis_result_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    for raw in (llm_handler_result_json, table_handler_result_json, excel_handler_result_json, default_handler_result_json):\n        obj = load_json(raw)\n        if obj:\n            if obj.get('handler_status') == 'error':\n                return {'final_answer': obj.get('error') or 'PHONE 输出处理失败'}\n            return {'final_answer': obj.get('answer') or json.dumps(obj, ensure_ascii=False)}\n\n    context = load_json(analysis_result_json)\n    if context:\n        return {'final_answer': context.get('summary') or json.dumps(context, ensure_ascii=False)}\n\n    return {'final_answer': 'PHONE 查询完成'}\n"
           },
-          "zIndex": 0
+          "position": {
+            "x": 9720,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 9720,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
         },
         {
-          "id": "e10_plan_source_mongo",
+          "id": "ans",
           "type": "custom",
-          "source": "plan",
-          "target": "mongo",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "结束_返回最终回答",
+            "type": "answer",
+            "answer": "{{#final.final_answer#}}",
+            "outputs": [],
+            "variables": []
           },
-          "zIndex": 0
+          "position": {
+            "x": 10080,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 10080,
+            "y": 300
+          },
+          "width": 280,
+          "height": 110
         },
         {
-          "id": "e11_mongo_source_http",
+          "id": "if_query_ok",
           "type": "custom",
-          "source": "mongo",
-          "target": "http",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "IF_Mongo查询是否成功",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "success",
+                "conditions": [
+                  {
+                    "id": "if-query-ok-success",
+                    "variable_selector": [
+                      "norm",
+                      "query_result_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
           },
-          "zIndex": 0
+          "position": {
+            "x": 4320,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 4320,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
         },
         {
-          "id": "e12_http_source_norm",
+          "id": "ans_query_error",
           "type": "custom",
-          "source": "http",
-          "target": "norm",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "结束_返回Mongo查询失败",
+            "type": "answer",
+            "answer": "{{#norm.query_error_answer#}}",
+            "outputs": [],
+            "variables": []
           },
-          "zIndex": 0
+          "position": {
+            "x": 4680,
+            "y": 560
+          },
+          "positionAbsolute": {
+            "x": 4680,
+            "y": 560
+          },
+          "width": 280,
+          "height": 110
         },
         {
-          "id": "e13_norm_source_analysis",
+          "id": "if_mongo_request_ok",
           "type": "custom",
-          "source": "norm",
-          "target": "analysis",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "IF_Mongo请求是否有效",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "success",
+                "conditions": [
+                  {
+                    "id": "if-mongo-request-ok-success",
+                    "variable_selector": [
+                      "mongo",
+                      "mongo_request_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
           },
-          "zIndex": 0
+          "position": {
+            "x": 3240,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 3240,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
         },
         {
-          "id": "e14_analysis_source_ifreport",
+          "id": "ans_mongo_request_error",
           "type": "custom",
-          "source": "analysis",
-          "target": "ifreport",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "结束_返回Mongo请求生成失败",
+            "type": "answer",
+            "answer": "{{#mongo.mongo_request_error_answer#}}",
+            "outputs": [],
+            "variables": []
           },
-          "zIndex": 0
+          "position": {
+            "x": 3600,
+            "y": 560
+          },
+          "positionAbsolute": {
+            "x": 3600,
+            "y": 560
+          },
+          "width": 280,
+          "height": 110
         },
-        {
-          "id": "e15_ifreport_false_final",
-          "type": "custom",
-          "source": "ifreport",
-          "target": "final",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e16_final_source_ans",
-          "type": "custom",
-          "source": "final",
-          "target": "ans",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e17_ifreport_report_report_input",
-          "type": "custom",
-          "source": "ifreport",
-          "target": "report_input",
-          "sourceHandle": "report",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e18_report_input_source_ifllm",
-          "type": "custom",
-          "source": "report_input",
-          "target": "ifllm",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e19_ifllm_false_llmlocal",
-          "type": "custom",
-          "source": "ifllm",
-          "target": "llmlocal",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e20_llmlocal_source_local_wrap",
-          "type": "custom",
-          "source": "llmlocal",
-          "target": "local_wrap",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e21_local_wrap_source_final",
-          "type": "custom",
-          "source": "local_wrap",
-          "target": "final",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e22_ifllm_enabled_token_req",
-          "type": "custom",
-          "source": "ifllm",
-          "target": "token_req",
-          "sourceHandle": "enabled",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e23_token_req_source_http_token",
-          "type": "custom",
-          "source": "token_req",
-          "target": "http_token",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e24_http_token_source_token_parse",
-          "type": "custom",
-          "source": "http_token",
-          "target": "token_parse",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e25_token_parse_source_if_token",
-          "type": "custom",
-          "source": "token_parse",
-          "target": "if_token",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e26_if_token_ok_full_req",
-          "type": "custom",
-          "source": "if_token",
-          "target": "full_req",
-          "sourceHandle": "ok",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e27_full_req_source_http_full",
-          "type": "custom",
-          "source": "full_req",
-          "target": "http_full",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e28_http_full_source_full_parse",
-          "type": "custom",
-          "source": "http_full",
-          "target": "full_parse",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e29_full_parse_source_if_full",
-          "type": "custom",
-          "source": "full_parse",
-          "target": "if_full",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e30_if_token_false_llmlocal",
-          "type": "custom",
-          "source": "if_token",
-          "target": "llmlocal",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e31_if_full_ok_final",
-          "type": "custom",
-          "source": "if_full",
-          "target": "final",
-          "sourceHandle": "ok",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e32_if_full_false_llmlocal",
-          "type": "custom",
-          "source": "if_full",
-          "target": "llmlocal",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        }
-      ],
-      "viewport": {
-        "x": -770.4707768996122,
-        "y": 280.37131952901615,
-        "zoom": 0.4694654630250833
-      }
-    }
-  }
-}
