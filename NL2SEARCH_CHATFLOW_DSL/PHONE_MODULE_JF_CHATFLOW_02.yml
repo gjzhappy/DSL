@@ -1,3 +1,67 @@
+ "def main(analysis_result_json=''):\n    import json\n\n    INLINE_JSON_DISPLAY_LIMIT = 12000\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    context = load_json(analysis_result_json)\n    query_plan = context.get('query_plan') if isinstance(context.get('query_plan'), dict) else {}\n    query_result = context.get('query_result') if isinstance(context.get('query_result'), dict) else {}\n    rows = query_result.get('rows') if isinstance(query_result.get('rows'), list) else []\n    answer = context.get('summary') or 'PHONE 查询完成'\n    if rows:\n        text = json.dumps(rows, ensure_ascii=False, indent=2)\n        if len(text) <= INLINE_JSON_DISPLAY_LIMIT:\n            answer += '\\n\\n```json\\n' + text + '\\n```'\n        else:\n            answer += '\\n\\n查询结果较长，未在最终回答中内联展示，避免静默裁剪；完整 rows 已保留在 artifact_payload_json 和 query_result_json。'\n    result = {\n        'handler_status': 'ok',\n        'output_kind': str(context.get('output_kind') or 'default'),\n        'answer': answer,\n        'artifact_type': 'query_result_json',\n        'artifact_payload_json': json.dumps({'rows': rows}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': ''\n    }\n    return {'default_handler_result_json': json.dumps(result, ensure_ascii=False)}\n"
+          }
+        },
+        {
+          "id": "llm_input",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备统一LLM调用输入",
+            "type": "code",
+            "outputs": {
+              "llm_handler_input_json": {
+                "type": "string"
+              },
+              "llm_task_type": {
+                "type": "string"
+              },
+              "llm_output_kind": {
+                "type": "string"
+              },
+              "llm_artifact_type": {
+                "type": "string"
+              },
+              "llm_system_prompt": {
+                "type": "string"
+              },
+              "llm_user_prompt": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(report_input_json='', trend_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    candidates = [load_json(report_input_json), load_json(trend_input_json)]\n    payload = {}\n    first_error = {}\n    for item in candidates:\n        if item and item.get('status') == 'error' and not first_error:\n            first_error = item\n        if item and item.get('status') == 'ok' and item.get('user_prompt'):\n            payload = item\n            break\n    if not payload and first_error:\n        payload = first_error\n    if not payload:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'unknown',\n            'output_kind': 'unknown',\n            'artifact_type': 'markdown_text',\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': 'LLM 输入准备失败，缺少有效 handler 输入。',\n            'query_plan': {},\n            'query_result': {},\n            'handler_context': {},\n            'error': '缺少有效 LLM handler 输入'\n        }\n\n    return {\n        'llm_handler_input_json': json.dumps(payload, ensure_ascii=False),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(payload.get('system_prompt') or ''),\n        'llm_user_prompt': str(payload.get('user_prompt') or '')\n    }\n",
+            "variables": [
+              {
+                "variable": "report_input_json",
+                "value_selector": [
+                  "report_input",
+                  "report_input_json"
+                ]
+              },
+              {
+                "variable": "trend_input_json",
+                "value_selector": [
+                  "trend_input",
+                  "trend_input_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(report_input_json='', trend_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    candidates = [load_json(report_input_json), load_json(trend_input_json)]\n    payload = {}\n    first_error = {}\n    for item in candidates:\n        if item and item.get('status') == 'error' and not first_error:\n            first_error = item\n        if item and item.get('status') == 'ok' and item.get('user_prompt'):\n            payload = item\n            break\n    if not payload and first_error:\n        payload = first_error\n    if not payload:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'unknown',\n            'output_kind': 'unknown',\n            'artifact_type': 'markdown_text',\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': 'LLM 输入准备失败，缺少有效 handler 输入。',\n            'query_plan': {},\n            'query_result': {},\n            'handler_context': {},\n            'error': '缺少有效 LLM handler 输入'\n        }\n\n    return {\n        'llm_handler_input_json': json.dumps(payload, ensure_ascii=False),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(payload.get('system_prompt') or ''),\n        'llm_user_prompt': str(payload.get('user_prompt') or '')\n    }\n"
+          },
+          "position": {
+            "x": 5760,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 5760,
+            "y": 300
+          },
+          "width": 320,
+          "height": 170
+        }
+      ],
+      "edges": [
+        {
+          "id": "e01_start_source_ctx",
           "type": "custom",
           "source": "start",
           "target": "ctx",

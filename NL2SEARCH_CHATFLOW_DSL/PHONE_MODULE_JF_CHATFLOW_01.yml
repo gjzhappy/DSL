@@ -1,3 +1,76 @@
+ = query_plan.get('object_scope') or ''\n    analysis_dimension = query_plan.get('analysis_dimension') or ''\n    topic = query_plan.get('topic') or ''\n    row_count = query_result.get('row_count') if query_result.get('row_count') is not None else len(as_list(query_result.get('rows')))\n    package = build_lossless_package(query_result, query_plan)\n    package_text = dump_compact(package)\n    plan_text = dump_compact(query_plan)\n\n    system_prompt = '你是 PHONE 摄像模组竞分对比报告助手。只依据输入数据作答，不要编造缺失字段。'\n    user_prompt = (\n        '请基于以下 PHONE 模组 Mongo 查询结果生成自然语言竞分对比报告。\\n'\n        '输入的 query_result_package 是 full_lossless 无损包：由 query_result.rows 的 detail_groups/items 全量展开而来，未摘要、未裁剪、未 gzip。\\n'\n        '必须依据 coverage_check 判断数据覆盖情况；如果 missing_targets 为空，不得声称任一目标缺失。\\n'\n        'data_rows 必须按 data_schema 解释；entities 必须按 entity_schema 解释。\\n'\n        'null 表示原始数据缺失或未提供，不得臆测数值。\\n'\n        '输出必须包含：1. 总体结论；2. 核心差异表；3. 规格/供电/功耗详细分析；4. 优劣势总结；5. 注意事项。\\n'\n        '核心差异表优先使用 Markdown 表格。\\n\\n'\n        '【输出类型】\\n' + str(output_type) + '\\n\\n'\n        '【对比范围】\\n' + str(object_scope) + '\\n\\n'\n        '【分析维度】\\n' + str(analysis_dimension) + '\\n\\n'\n        '【Topic Hint】\\n' + str(topic) + '\\n\\n'\n        '【查询计划】\\n' + plan_text + '\\n\\n'\n        '【Mongo查询结果无损包，原始 rows 共 %s 条】\\n' % row_count + package_text\n    )\n\n    if len(user_prompt) > MAX_LLM_USER_PROMPT_CHARS:\n        payload = error_payload(\n            'LLM_INPUT_TOO_LARGE',\n            'LLM_INPUT_TOO_LARGE: 全量无损 query_result_package 长度为 %s 字符，超过当前节点限制 %s 字符。已停止生成，未进行静默截断；请改用全量分片处理或提高模型/网关输入上限。' % (len(user_prompt), MAX_LLM_USER_PROMPT_CHARS),\n            query_plan,\n            {\n                'row_count': row_count,\n                'rows_omitted_from_handler_payload': True,\n                'query_result_package_omitted_from_handler_payload': True,\n                'omit_reason': 'avoid_single_output_variable_over_80000_chars'\n            },\n            output_type,\n            'markdown_report'\n        )\n        payload['handler_context']['lossless'] = True\n        payload['handler_context']['truncated'] = False\n        payload['handler_context']['deduplicated_handler_payload'] = True\n        return {'report_input_json': json.dumps(payload, ensure_ascii=False, separators=(\",\", \":\"))}\n\n    payload = {\n        'status': 'ok',\n        'llm_task_type': 'report',\n        'output_kind': 'report',\n        'output_type': output_type,\n        'artifact_type': 'markdown_report',\n        'system_prompt': system_prompt,\n        'user_prompt': user_prompt,\n        'query_plan': query_plan,\n        'query_result': {\n            'row_count': row_count,\n            'rows_omitted_from_handler_payload': True,\n            'query_result_package_embedded_in_user_prompt': True,\n            'omit_reason': 'avoid_duplicate_full_lossless_package_inside_report_input_json'\n        },\n        'handler_context': {\n            'object_scope': object_scope,\n            'analysis_dimension': analysis_dimension,\n            'topic': topic,\n            'source_node': 'report_input',\n            'lossless': True,\n            'truncated': False,\n            'deduplicated_handler_payload': True,\n            'query_result_package_location': 'user_prompt_only'\n        }\n    }\n    return {'report_input_json': json.dumps(payload, ensure_ascii=False, separators=(\",\", \":\"))}\n"
+          },
+          "position": {
+            "x": 5400,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5400,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "ifllm",
+          "type": "custom",
+          "data": {
+            "title": "IF_满血版LLM开关",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "enabled",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "env",
+                      "ENABLE_FULL_LLM"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "true",
+                    "id": "ifllm-enabled"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
+          },
+          "position": {
+            "x": 6120,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 6120,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "token_req",
+          "type": "custom",
+          "data": {
+            "title": "代码执行_准备满血版Token请求",
+            "type": "code",
+            "outputs": {
+              "full_llm_token_app_id": {
+                "type": "string"
+              },
+              "full_llm_token_credential": {
+                "type": "string"
+              },
+              "full_llm_token_request_body_json": {
+                "type": "string"
+              },
+              "full_llm_token_request_debug_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(llm_handler_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth='', **kwargs):\n    import base64\n    import json\n\n    app_id = str(llm_app_id or '').strip()\n    static_token = str(llm_static_token or '')\n    credential = base64.b64encode(static_token.encode('utf-8')).decode('utf-8')\n\n    token_request_body = {\n        'appId': app_id,\n        'credential': credential,\n    }\n    body_json = json.dumps(token_request_body, ensure_ascii=False, separators=(',', ':'))\n    debug = {\n        'appId_present': bool(app_id),\n        'staticToken_present': bool(static_token),\n        'credential_len': len(credential),\n        'body_json_len': len(body_json),\n        'llm_input_present': bool(str(llm_handler_input_json or '').strip()),\n    }\n\n    return {\n        'full_llm_token_app_id': app_id,\n        'full_llm_token_credential': credential,\n        'full_llm_token_request_body_json': body_json,\n        'full_llm_token_request_debug_json': json.dumps(debug, ensure_ascii=False, separators=(',', ':')),\n    }\n",
+            "variables": [
+              {
+                "variable": "llm_handler_input_json",
                 "value_selector": [
                   "llm_input",
                   "llm_handler_input_json"
@@ -834,67 +907,4 @@
               }
             ],
             "code_language": "python3",
-            "code": "def main(analysis_result_json=''):\n    import json\n\n    INLINE_JSON_DISPLAY_LIMIT = 12000\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    context = load_json(analysis_result_json)\n    query_plan = context.get('query_plan') if isinstance(context.get('query_plan'), dict) else {}\n    query_result = context.get('query_result') if isinstance(context.get('query_result'), dict) else {}\n    rows = query_result.get('rows') if isinstance(query_result.get('rows'), list) else []\n    answer = context.get('summary') or 'PHONE 查询完成'\n    if rows:\n        text = json.dumps(rows, ensure_ascii=False, indent=2)\n        if len(text) <= INLINE_JSON_DISPLAY_LIMIT:\n            answer += '\\n\\n```json\\n' + text + '\\n```'\n        else:\n            answer += '\\n\\n查询结果较长，未在最终回答中内联展示，避免静默裁剪；完整 rows 已保留在 artifact_payload_json 和 query_result_json。'\n    result = {\n        'handler_status': 'ok',\n        'output_kind': str(context.get('output_kind') or 'default'),\n        'answer': answer,\n        'artifact_type': 'query_result_json',\n        'artifact_payload_json': json.dumps({'rows': rows}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': ''\n    }\n    return {'default_handler_result_json': json.dumps(result, ensure_ascii=False)}\n"
-          }
-        },
-        {
-          "id": "llm_input",
-          "type": "custom",
-          "data": {
-            "title": "代码执行_准备统一LLM调用输入",
-            "type": "code",
-            "outputs": {
-              "llm_handler_input_json": {
-                "type": "string"
-              },
-              "llm_task_type": {
-                "type": "string"
-              },
-              "llm_output_kind": {
-                "type": "string"
-              },
-              "llm_artifact_type": {
-                "type": "string"
-              },
-              "llm_system_prompt": {
-                "type": "string"
-              },
-              "llm_user_prompt": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(report_input_json='', trend_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    candidates = [load_json(report_input_json), load_json(trend_input_json)]\n    payload = {}\n    first_error = {}\n    for item in candidates:\n        if item and item.get('status') == 'error' and not first_error:\n            first_error = item\n        if item and item.get('status') == 'ok' and item.get('user_prompt'):\n            payload = item\n            break\n    if not payload and first_error:\n        payload = first_error\n    if not payload:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'unknown',\n            'output_kind': 'unknown',\n            'artifact_type': 'markdown_text',\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': 'LLM 输入准备失败，缺少有效 handler 输入。',\n            'query_plan': {},\n            'query_result': {},\n            'handler_context': {},\n            'error': '缺少有效 LLM handler 输入'\n        }\n\n    return {\n        'llm_handler_input_json': json.dumps(payload, ensure_ascii=False),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(payload.get('system_prompt') or ''),\n        'llm_user_prompt': str(payload.get('user_prompt') or '')\n    }\n",
-            "variables": [
-              {
-                "variable": "report_input_json",
-                "value_selector": [
-                  "report_input",
-                  "report_input_json"
-                ]
-              },
-              {
-                "variable": "trend_input_json",
-                "value_selector": [
-                  "trend_input",
-                  "trend_input_json"
-                ]
-              }
-            ],
-            "code_language": "python3",
-            "code": "def main(report_input_json='', trend_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    candidates = [load_json(report_input_json), load_json(trend_input_json)]\n    payload = {}\n    first_error = {}\n    for item in candidates:\n        if item and item.get('status') == 'error' and not first_error:\n            first_error = item\n        if item and item.get('status') == 'ok' and item.get('user_prompt'):\n            payload = item\n            break\n    if not payload and first_error:\n        payload = first_error\n    if not payload:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'unknown',\n            'output_kind': 'unknown',\n            'artifact_type': 'markdown_text',\n            'system_prompt': '你是 PHONE 数据分析助手。',\n            'user_prompt': 'LLM 输入准备失败，缺少有效 handler 输入。',\n            'query_plan': {},\n            'query_result': {},\n            'handler_context': {},\n            'error': '缺少有效 LLM handler 输入'\n        }\n\n    return {\n        'llm_handler_input_json': json.dumps(payload, ensure_ascii=False),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(payload.get('system_prompt') or ''),\n        'llm_user_prompt': str(payload.get('user_prompt') or '')\n    }\n"
-          },
-          "position": {
-            "x": 5760,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 5760,
-            "y": 300
-          },
-          "width": 320,
-          "height": 170
-        }
-      ],
-      "edges": [
-        {
-          "id": "e01_start_source_ctx",
+            "code":
