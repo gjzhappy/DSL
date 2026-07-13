@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Merge, validate, or print PHONE_MODULE_JF_CHATFLOW fragments.
 
-PHONE_MODULE_JF_CHATFLOW_*.yml fragments are the source of truth.  The full
+PHONE_MODULE_JF_CHATFLOW_*.yml fragments are the source of truth. The full
 PHONE_MODULE_JF_CHATFLOW.yml file is a local generated Dify import artifact and
 must not be maintained as source.
+
+The validation contract follows the current JF MySQL-over-HTTP chatflow:
+registry-driven SQL planning, Spring Boot MySQL query execution, and full/local
+LLM result generation.
 """
 from __future__ import annotations
 import argparse, re, subprocess, sys
@@ -57,23 +61,41 @@ ENV_BRACE_RE=re.compile(r'\{\{#env\.([A-Za-z_][A-Za-z0-9_]*)#\}\}')
 ENV_DOT_RE=re.compile(r'(?<![A-Za-z0-9_])env\.([A-Za-z_][A-Za-z0-9_]*)')
 ENV_DOLLAR_RE=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 REQUIRED_ENV_NAMES={
-    'ENABLE_FULL_LLM','SN_MONGODB_QUERY_URLS','LLM_TOKEN_URL','LLM_CHAT_URL',
-    'LLM_APP_ID','LLM_STATIC_TOKEN','LLM_MODEL','LLM_USER','LLM_BASIC_AUTH',
-    'LLM_TIMEOUT_MS','LLM_TEMPERATURE','LLM_TOP_P','LLM_MAX_COMPLETION_TOKENS','LLM_STREAM',
+    'JF_QUERY_REGISTRY_JSON','ENABLE_FULL_LLM','SN_MYSQL_QUERY_URLS',
+    'LLM_TOKEN_URL','LLM_CHAT_URL','LLM_APP_ID','LLM_STATIC_TOKEN',
+    'LLM_MODEL','LLM_USER','LLM_BASIC_AUTH','LLM_TIMEOUT_MS',
+    'LLM_TEMPERATURE','LLM_TOP_P','LLM_MAX_COMPLETION_TOKENS','LLM_STREAM',
 }
-DEPRECATED_ENV_NAMES={'MONGO_QUERY_URL','FULL_LLM_TOKEN_URL','FULL_LLM_CHAT_URL'}
+DEPRECATED_ENV_NAMES={
+    'MONGO_QUERY_URL','SN_MONGODB_QUERY_URLS',
+    'FULL_LLM_TOKEN_URL','FULL_LLM_CHAT_URL',
+}
+DEPRECATED_ENV_PREFIXES=('MYSQL_',)
 EXPECTED_HTTP_URLS={
-    'HTTP请求_执行Mongo查询':'{{#env.SN_MONGODB_QUERY_URLS#}}',
+    'HTTP请求_执行MySQL查询':'{{#env.SN_MYSQL_QUERY_URLS#}}',
     'HTTP请求_获取满血版LLM Token':'{{#env.LLM_TOKEN_URL#}}',
     'HTTP请求_调用满血版LLM接口':'{{#env.LLM_CHAT_URL#}}',
 }
 REQUIRED_PRODUCER_VARS=[
-    'route_card_json','slot_validate_result_json','query_plan_json','mongo_request_json',
-    'normalized_query_result_json','analysis_result_json','report_input_json',
+    'context_json',
+    'jf_registry_raw_json','jf_registry_load_status','jf_registry_load_error',
+    'jf_registry_source','jf_registry_json','jf_alias_index_json',
+    'jf_registry_parse_status','jf_registry_warnings_json','jf_registry_error',
+    'jf_sql_plan_json','jf_sql_compile_status','jf_sql_compile_error_answer',
+    'jf_selected_field_meta_json',
+    'mysql_request_body_json','mysql_request_status','mysql_request_error_answer',
+    'mysql_query_result_json','mysql_query_status','mysql_query_error_answer',
+    'llm_handler_input_json','llm_task_type','llm_output_kind',
+    'llm_artifact_type','llm_system_prompt','llm_user_prompt',
     'full_llm_token_request_body_json','full_llm_token_result_json',
-    'full_llm_request_body_json','full_llm_result_json','local_llm_result_json','final_answer',
+    'full_llm_request_body_json','full_llm_result_json',
+    'llm_handler_result_json','local_llm_result_json','final_answer',
 ]
-OPTIONAL_LEGACY_PRODUCER_VARS=['mongo_result_json']
+DEPRECATED_PRODUCER_VARS={
+    'route_card_json','slot_validate_result_json','query_plan_json',
+    'normalized_query_result_json','analysis_result_json','report_input_json',
+}
+DEPRECATED_PRODUCER_PREFIXES=('mongo_',)
 
 
 def node_label(node):
@@ -127,15 +149,31 @@ def validate_env(doc):
     if missing: fail(f'env references missing workflow.environment_variables definitions: {missing}')
     missing_required=sorted(REQUIRED_ENV_NAMES-set(defs))
     if missing_required: fail(f'required environment variables missing: {missing_required}')
-    deprecated=sorted((set(refs)|set(defs)) & DEPRECATED_ENV_NAMES)
-    if deprecated: fail(f'deprecated PHONE env names found; use roadmap env names instead: {deprecated}')
+    all_env_names=set(refs)|set(defs)
+    deprecated=sorted(
+        name for name in all_env_names
+        if name in DEPRECATED_ENV_NAMES
+        or any(name.startswith(prefix) for prefix in DEPRECATED_ENV_PREFIXES)
+    )
+    if deprecated:
+        fail(f'deprecated PHONE env names found for current MySQL HTTP flow: {deprecated}')
     for name in REQUIRED_ENV_NAMES:
         e=defs.get(name,{})
         selector = e.get("selector")
         if selector != ["env", name]:
             fail(f"environment variable selector mismatch for {name}: {selector}")
-    if defs.get('ENABLE_FULL_LLM',{}).get('value_type') != 'string': fail('ENABLE_FULL_LLM value_type must be string')
-    if defs.get('LLM_STATIC_TOKEN',{}).get('value_type') != 'secret' or defs.get('LLM_STATIC_TOKEN',{}).get('value') != '': fail('LLM_STATIC_TOKEN must be secret with empty value')
+    if defs.get('ENABLE_FULL_LLM',{}).get('value_type') != 'string':
+        fail('ENABLE_FULL_LLM value_type must be string')
+    if defs.get('JF_QUERY_REGISTRY_JSON',{}).get('value_type') != 'string':
+        fail('JF_QUERY_REGISTRY_JSON value_type must be string')
+    if not str(defs.get('JF_QUERY_REGISTRY_JSON',{}).get('value') or '').strip():
+        fail('JF_QUERY_REGISTRY_JSON value must not be empty')
+    if defs.get('SN_MYSQL_QUERY_URLS',{}).get('value_type') != 'string':
+        fail('SN_MYSQL_QUERY_URLS value_type must be string')
+    if not str(defs.get('SN_MYSQL_QUERY_URLS',{}).get('value') or '').strip():
+        fail('SN_MYSQL_QUERY_URLS value must not be empty')
+    if defs.get('LLM_STATIC_TOKEN',{}).get('value_type') != 'secret' or defs.get('LLM_STATIC_TOKEN',{}).get('value') != '':
+        fail('LLM_STATIC_TOKEN must be secret with empty value')
     nodes=doc.get('workflow',{}).get('graph',{}).get('nodes') or []
     actual={}
     for n in nodes:
@@ -158,7 +196,12 @@ def print_env_report(refs, defs):
     ref_names=sorted(refs)
     def_names=sorted(defs)
     http_refs=sorted({k for k,v in refs.items() for r in v if r['kind'] in ('template-env','dollar-env') and '.url' in r['path']})
-    deprecated=sorted((set(refs)|set(defs)) & DEPRECATED_ENV_NAMES)
+    all_env_names=set(refs)|set(defs)
+    deprecated=sorted(
+        name for name in all_env_names
+        if name in DEPRECATED_ENV_NAMES
+        or any(name.startswith(prefix) for prefix in DEPRECATED_ENV_PREFIXES)
+    )
     print(f'all_env_refs: {ref_names}')
     print(f'defined_env_names: {def_names}')
     print(f'missing_env_defs: {sorted(set(ref_names)-set(def_names))}')
@@ -175,6 +218,10 @@ def print_env_report(refs, defs):
         print(f'  {title}: {actual!r} (expected {expected!r})')
     e=defs.get('ENABLE_FULL_LLM',{})
     print(f'ENABLE_FULL_LLM default/value: {e.get("value")!r}, value_type: {e.get("value_type")!r}')
+    registry=defs.get('JF_QUERY_REGISTRY_JSON',{})
+    print(f'JF_QUERY_REGISTRY_JSON value_type: {registry.get("value_type")!r}, empty: {not bool(str(registry.get("value") or "").strip())}')
+    mysql_url=defs.get('SN_MYSQL_QUERY_URLS',{})
+    print(f'SN_MYSQL_QUERY_URLS default/value: {mysql_url.get("value")!r}, value_type: {mysql_url.get("value_type")!r}')
     st=defs.get('LLM_STATIC_TOKEN',{})
     print(f'LLM_STATIC_TOKEN value_type: {st.get("value_type")!r}, value: {st.get("value")!r}')
 
@@ -240,9 +287,15 @@ def validate(doc):
     for n in nodes:
         for k in (n.get('data',{}).get('outputs') or {}): producers[k].add(n['id'])
     for var in REQUIRED_PRODUCER_VARS:
-        if var not in producers: fail(f'variable producer missing: {var}')
-    legacy_missing=[var for var in OPTIONAL_LEGACY_PRODUCER_VARS if var not in producers]
-    if legacy_missing: print(f'legacy_optional_missing: {legacy_missing}')
+        if var not in producers:
+            fail(f'variable producer missing: {var}')
+    deprecated_producers=sorted(
+        name for name in producers
+        if name in DEPRECATED_PRODUCER_VARS
+        or any(name.startswith(prefix) for prefix in DEPRECATED_PRODUCER_PREFIXES)
+    )
+    if deprecated_producers:
+        fail(f'deprecated Mongo/RouteCard producer variables found: {deprecated_producers}')
     return len(nodes),len(edges),refs,defs
 
 def check_full_consistency(text):
