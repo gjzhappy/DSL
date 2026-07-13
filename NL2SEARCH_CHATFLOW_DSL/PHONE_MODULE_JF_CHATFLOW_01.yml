@@ -712,3 +712,264 @@
           },
           "zIndex": 0
         },
+        {
+          "id": "e12_http_token_source_token_parse",
+          "type": "custom",
+          "source": "http_token",
+          "target": "token_parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e13_token_parse_source_if_token",
+          "type": "custom",
+          "source": "token_parse",
+          "target": "if_token",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e14_if_token_ok_full_req",
+          "type": "custom",
+          "source": "if_token",
+          "target": "full_req",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15_full_req_source_http_full",
+          "type": "custom",
+          "source": "full_req",
+          "target": "http_full",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e16_http_full_source_full_parse",
+          "type": "custom",
+          "source": "http_full",
+          "target": "full_parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e17_full_parse_source_if_full",
+          "type": "custom",
+          "source": "full_parse",
+          "target": "if_full",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e18_if_full_ok_local_wrap",
+          "type": "custom",
+          "source": "if_full",
+          "target": "local_wrap",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e19_if_full_false_llmlocal",
+          "type": "custom",
+          "source": "if_full",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e20_if_token_false_llmlocal",
+          "type": "custom",
+          "source": "if_token",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e21_ifllm_false_llmlocal",
+          "type": "custom",
+          "source": "ifllm",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e22_llmlocal_source_local_wrap",
+          "type": "custom",
+          "source": "llmlocal",
+          "target": "local_wrap",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e23_local_wrap_source_final",
+          "type": "custom",
+          "source": "local_wrap",
+          "target": "final",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e24_final_source_ans",
+          "type": "custom",
+          "source": "final",
+          "target": "ans",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e01_plan_request",
+          "type": "custom",
+          "source": "jf_sql_plan",
+          "target": "mysql_request",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e02_request_if",
+          "type": "custom",
+          "source": "mysql_request",
+          "target": "if_mysql_request_ok",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e03_if_http",
+          "type": "custom",
+          "source": "if_mysql_request_ok",
+          "target": "http_mysql_query",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e04_if_error",
+          "type": "custom",
+          "source": "if_mysql_request_ok",
+          "target": "ans_sql_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e05_http_norm",
+          "type": "custom",
+          "source": "http_mysql_query",
+          "target": "mysql_normalize",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e06_norm_if",
+          "type": "custom",
+          "source": "mysql_normalize",
+          "target": "if_sql_ok",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e07_if_llm",
+          "type": "custom",
+          "source": "if_sql_ok",
+          "target": "llm_input",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e08_if_error",
+          "type": "custom",
+          "source": "if_sql_ok",
+          "target": "ans_sql_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        }
+      ],
+      "viewport": {
+        "x": -300,
+        "y": 200,
+        "zoom": 0.6
+      }
+    }
+  }
+}
