@@ -73,8 +73,8 @@ DEPRECATED_ENV_NAMES={
 }
 DEPRECATED_ENV_PREFIXES=('MYSQL_',)
 EXPECTED_HTTP_URLS={
-    'HTTP请求_执行MySQL查询':'{{#env.SN_MYSQL_QUERY_URLS#}}',
-    'HTTP请求_调用Java满血版LLM接口':'{{#env.SN_FULL_LLM_CHAT_URLS#}}',
+    'http_mysql_query':'{{#env.SN_MYSQL_QUERY_URLS#}}',
+    'http_full':'{{#env.SN_FULL_LLM_CHAT_URLS#}}',
 }
 REQUIRED_PRODUCER_VARS=[
     'context_json',
@@ -178,10 +178,10 @@ def validate_env(doc):
     nodes=doc.get('workflow',{}).get('graph',{}).get('nodes') or []
     actual={}
     for n in nodes:
-        title=(n.get('data') or {}).get('title')
-        if title in EXPECTED_HTTP_URLS: actual[title]=(n.get('data') or {}).get('url')
-    for title,expected in EXPECTED_HTTP_URLS.items():
-        if actual.get(title) != expected: fail(f'HTTP URL for {title} must be {expected}, got {actual.get(title)!r}')
+        node_id=n.get('id')
+        if node_id in EXPECTED_HTTP_URLS: actual[node_id]=(n.get('data') or {}).get('url')
+    for node_id,expected in EXPECTED_HTTP_URLS.items():
+        if actual.get(node_id) != expected: fail(f'HTTP URL for {node_id} must be {expected}, got {actual.get(node_id)!r}')
     return refs, defs
 
 
@@ -210,13 +210,13 @@ def print_env_report(refs, defs):
     print(f'deprecated_env_names: {deprecated}')
     print(f'http_env_refs: {http_refs}')
     print('HTTP URL actual values:')
-    for title, expected in EXPECTED_HTTP_URLS.items():
+    for node_id, expected in EXPECTED_HTTP_URLS.items():
         actual=''
         for refs_for_name in refs.values():
             for r in refs_for_name:
-                if r.get('title') == title and '.url' in r.get('path',''):
+                if r.get('node_id') == node_id and '.url' in r.get('path',''):
                     actual=r.get('value')
-        print(f'  {title}: {actual!r} (expected {expected!r})')
+        print(f'  {node_id}: {actual!r} (expected {expected!r})')
     e=defs.get('ENABLE_FULL_LLM',{})
     print(f'ENABLE_FULL_LLM default/value: {e.get("value")!r}, value_type: {e.get("value_type")!r}')
     registry=defs.get('JF_QUERY_REGISTRY_JSON',{})
