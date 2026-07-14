@@ -78,7 +78,7 @@
           "id": "ctx",
           "type": "custom",
           "data": {
-            "title": "代码执行_读取用户问题",
+            "title": "理解问题",
             "type": "code",
             "outputs": {
               "context_json": {
@@ -120,7 +120,7 @@
           "id": "jf_registry_load",
           "type": "custom",
           "data": {
-            "title": "代码执行_加载JF查询配置",
+            "title": "识别查询范围",
             "type": "code",
             "outputs": {
               "jf_registry_raw_json": {
@@ -164,7 +164,7 @@
           "id": "jf_registry_parse",
           "type": "custom",
           "data": {
-            "title": "代码执行_解析JF查询配置并构建AliasIndex",
+            "title": "整理查询规则",
             "type": "code",
             "outputs": {
               "jf_registry_json": {
@@ -218,7 +218,7 @@
           "id": "jf_sql_plan",
           "type": "custom",
           "data": {
-            "title": "代码执行_编译JF SQL查询计划",
+            "title": "规划查询方案",
             "type": "code",
             "outputs": {
               "jf_sql_plan_json": {
@@ -293,7 +293,7 @@
           "id": "mysql_request",
           "type": "custom",
           "data": {
-            "title": "代码执行_构建MySQL查询请求",
+            "title": "准备数据查询",
             "type": "code",
             "outputs": {
               "mysql_request_body_json": {
@@ -341,7 +341,7 @@
           "id": "if_sql_ok",
           "type": "custom",
           "data": {
-            "title": "IF_MySQL查询是否成功",
+            "title": "检查查询结果",
             "type": "if-else",
             "cases": [
               {
@@ -377,7 +377,7 @@
           "id": "ans_sql_error",
           "type": "custom",
           "data": {
-            "title": "结束_返回SQL查询失败",
+            "title": "返回查询提示",
             "type": "answer",
             "answer": "{{#mysql_request.mysql_request_error_answer#}}{{#mysql_normalize.mysql_query_error_answer#}}",
             "outputs": [],

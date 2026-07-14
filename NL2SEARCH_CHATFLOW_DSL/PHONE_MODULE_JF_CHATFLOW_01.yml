@@ -2,7 +2,7 @@
           "id": "llm_input",
           "type": "custom",
           "data": {
-            "title": "代码执行_准备SQL结果LLM输入",
+            "title": "准备分析内容",
             "type": "code",
             "outputs": {
               "llm_handler_input_json": {
@@ -378,7 +378,7 @@
           "id": "final",
           "type": "custom",
           "data": {
-            "title": "代码执行_合并最终回答",
+            "title": "生成最终回答",
             "type": "code",
             "outputs": {
               "final_answer": {
@@ -413,7 +413,7 @@
           "id": "ans",
           "type": "custom",
           "data": {
-            "title": "结束_返回最终回答",
+            "title": "返回最终回答",
             "type": "answer",
             "answer": "{{#final.final_answer#}}",
             "outputs": [],
@@ -434,7 +434,7 @@
           "id": "if_mysql_request_ok",
           "type": "custom",
           "data": {
-            "title": "IF_MySQL查询请求是否有效",
+            "title": "检查查询方案",
             "type": "if-else",
             "logical_operator": "and",
             "cases": [
@@ -470,7 +470,7 @@
           "id": "http_mysql_query",
           "type": "custom",
           "data": {
-            "title": "HTTP请求_执行MySQL查询",
+            "title": "查询业务数据",
             "type": "http-request",
             "method": "POST",
             "url": "{{#env.SN_MYSQL_QUERY_URLS#}}",
@@ -512,7 +512,7 @@
           "id": "mysql_normalize",
           "type": "custom",
           "data": {
-            "title": "代码执行_标准化MySQL查询结果",
+            "title": "整理查询结果",
             "type": "code",
             "code_language": "python3",
             "outputs": {
