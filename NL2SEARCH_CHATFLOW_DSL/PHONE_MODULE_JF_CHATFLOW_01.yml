@@ -125,7 +125,7 @@
                 "type": "string"
               }
             },            
-			"source_code": "def main(llm_handler_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth='', **kwargs):\n    import base64\n    import json\n\n    app_id = str(llm_app_id or '').strip()\n    static_token = str(llm_static_token or '')\n    credential = base64.b64encode(static_token.encode('utf-8')).decode('utf-8')\n\n    token_request_body = {\n        'appId': app_id,\n        'credential': credential,\n    }\n    body_json = json.dumps(token_request_body, ensure_ascii=False, separators=(',', ':'))\n    debug = {\n        'appId_present': bool(app_id),\n        'staticToken_present': bool(static_token),\n        'credential_len': len(credential),\n        'body_json_len': len(body_json),\n        'llm_input_present': bool(str(llm_handler_input_json or '').strip()),\n    }\n\n    return {\n        'full_llm_token_app_id': app_id,\n        'full_llm_token_credential': credential,\n        'full_llm_token_request_body_json': body_json,\n        'full_llm_token_request_debug_json': json.dumps(debug, ensure_ascii=False, separators=(',', ':')),\n    }\n",
+            "source_code": "def main(llm_handler_input_json='', llm_app_id='', llm_static_token='', llm_basic_auth='', **kwargs):\n    import base64\n    import json\n\n    app_id = str(llm_app_id or '').strip()\n    static_token = str(llm_static_token or '')\n    credential = base64.b64encode(static_token.encode('utf-8')).decode('utf-8')\n\n    token_request_body = {\n        'appId': app_id,\n        'credential': credential,\n    }\n    body_json = json.dumps(token_request_body, ensure_ascii=False, separators=(',', ':'))\n    debug = {\n        'appId_present': bool(app_id),\n        'staticToken_present': bool(static_token),\n        'credential_len': len(credential),\n        'body_json_len': len(body_json),\n        'llm_input_present': bool(str(llm_handler_input_json or '').strip()),\n    }\n\n    return {\n        'full_llm_token_app_id': app_id,\n        'full_llm_token_credential': credential,\n        'full_llm_token_request_body_json': body_json,\n        'full_llm_token_request_debug_json': json.dumps(debug, ensure_ascii=False, separators=(',', ':')),\n    }\n",
             "variables": [
               {
                 "variable": "llm_handler_input_json",
@@ -189,7 +189,7 @@
               "type": "no-auth",
               "config": null
             },      
-			"timeout": {
+            "timeout": {
               "max_connect_timeout": 0,
               "max_read_timeout": 0,
               "max_write_timeout": 0
