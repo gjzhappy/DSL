@@ -62,19 +62,19 @@ ENV_DOT_RE=re.compile(r'(?<![A-Za-z0-9_])env\.([A-Za-z_][A-Za-z0-9_]*)')
 ENV_DOLLAR_RE=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 REQUIRED_ENV_NAMES={
     'JF_QUERY_REGISTRY_JSON','ENABLE_FULL_LLM','SN_MYSQL_QUERY_URLS',
-    'LLM_TOKEN_URL','LLM_CHAT_URL','LLM_APP_ID','LLM_STATIC_TOKEN',
-    'LLM_MODEL','LLM_USER','LLM_BASIC_AUTH','LLM_TIMEOUT_MS',
-    'LLM_TEMPERATURE','LLM_TOP_P','LLM_MAX_COMPLETION_TOKENS','LLM_STREAM',
+    'SN_FULL_LLM_CHAT_URLS',
 }
 DEPRECATED_ENV_NAMES={
     'MONGO_QUERY_URL','SN_MONGODB_QUERY_URLS',
     'FULL_LLM_TOKEN_URL','FULL_LLM_CHAT_URL',
+    'LLM_TOKEN_URL','LLM_CHAT_URL','LLM_APP_ID','LLM_STATIC_TOKEN',
+    'LLM_MODEL','LLM_USER','LLM_BASIC_AUTH','LLM_TIMEOUT_MS',
+    'LLM_TEMPERATURE','LLM_TOP_P','LLM_MAX_COMPLETION_TOKENS','LLM_STREAM',
 }
 DEPRECATED_ENV_PREFIXES=('MYSQL_',)
 EXPECTED_HTTP_URLS={
     'HTTP请求_执行MySQL查询':'{{#env.SN_MYSQL_QUERY_URLS#}}',
-    'HTTP请求_获取满血版LLM Token':'{{#env.LLM_TOKEN_URL#}}',
-    'HTTP请求_调用满血版LLM接口':'{{#env.LLM_CHAT_URL#}}',
+    'HTTP请求_调用Java满血版LLM接口':'{{#env.SN_FULL_LLM_CHAT_URLS#}}',
 }
 REQUIRED_PRODUCER_VARS=[
     'context_json',
@@ -87,8 +87,7 @@ REQUIRED_PRODUCER_VARS=[
     'mysql_query_result_json','mysql_query_status','mysql_query_error_answer',
     'llm_handler_input_json','llm_task_type','llm_output_kind',
     'llm_artifact_type','llm_system_prompt','llm_user_prompt',
-    'full_llm_token_request_body_json','full_llm_token_result_json',
-    'full_llm_request_body_json','full_llm_result_json',
+    'java_full_llm_request_body_json','full_llm_result_json',
     'llm_handler_result_json','local_llm_result_json','final_answer',
 ]
 DEPRECATED_PRODUCER_VARS={
@@ -172,8 +171,10 @@ def validate_env(doc):
         fail('SN_MYSQL_QUERY_URLS value_type must be string')
     if not str(defs.get('SN_MYSQL_QUERY_URLS',{}).get('value') or '').strip():
         fail('SN_MYSQL_QUERY_URLS value must not be empty')
-    if defs.get('LLM_STATIC_TOKEN',{}).get('value_type') != 'secret' or defs.get('LLM_STATIC_TOKEN',{}).get('value') != '':
-        fail('LLM_STATIC_TOKEN must be secret with empty value')
+    if defs.get('SN_FULL_LLM_CHAT_URLS',{}).get('value_type') != 'string':
+        fail('SN_FULL_LLM_CHAT_URLS value_type must be string')
+    if not str(defs.get('SN_FULL_LLM_CHAT_URLS',{}).get('value') or '').strip():
+        fail('SN_FULL_LLM_CHAT_URLS value must not be empty')
     nodes=doc.get('workflow',{}).get('graph',{}).get('nodes') or []
     actual={}
     for n in nodes:
@@ -222,8 +223,8 @@ def print_env_report(refs, defs):
     print(f'JF_QUERY_REGISTRY_JSON value_type: {registry.get("value_type")!r}, empty: {not bool(str(registry.get("value") or "").strip())}')
     mysql_url=defs.get('SN_MYSQL_QUERY_URLS',{})
     print(f'SN_MYSQL_QUERY_URLS default/value: {mysql_url.get("value")!r}, value_type: {mysql_url.get("value_type")!r}')
-    st=defs.get('LLM_STATIC_TOKEN',{})
-    print(f'LLM_STATIC_TOKEN value_type: {st.get("value_type")!r}, value: {st.get("value")!r}')
+    full_url=defs.get('SN_FULL_LLM_CHAT_URLS',{})
+    print(f'SN_FULL_LLM_CHAT_URLS default/value: {full_url.get("value")!r}, value_type: {full_url.get("value_type")!r}')
 
 def validate(doc):
     if doc.get('version')!='0.6.0': fail('version must be 0.6.0')
