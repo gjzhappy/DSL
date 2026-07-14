@@ -20,6 +20,28 @@
         "value_type": "string"
       },
       {
+        "description": "PHONE JF analysis LLM system prompt. Defines domain assistant role and high-level answer behavior; does not contain runtime data.",
+        "id": "env-phone-jf-analysis-system-prompt",
+        "name": "JF_ANALYSIS_SYSTEM_PROMPT",
+        "selector": [
+          "env",
+          "JF_ANALYSIS_SYSTEM_PROMPT"
+        ],
+        "value": "你是 PHONE 摄像模组竞分查询与分析助手。只能依据输入数据回答，不得编造。根据用户问题自行选择普通查询、对比、趋势或报告等合适形式。",
+        "value_type": "string"
+      },
+      {
+        "description": "PHONE JF analysis LLM user prompt rules. Defines analysis and answer constraints; runtime input package is appended by llm_input code.",
+        "id": "env-phone-jf-analysis-user-prompt",
+        "name": "JF_ANALYSIS_USER_PROMPT",
+        "selector": [
+          "env",
+          "JF_ANALYSIS_USER_PROMPT"
+        ],
+        "value": "请回答输入数据包中的 user_question。\n规则：\n1. 普通查询直接给结果；对比问题先给结论再给表格和依据；趋势问题说明变化方向；报告问题输出结构化报告。\n2. SQL 仅做机型、模组、厂商、平台、设备类型等粗粒度过滤。HDR 模式、normal、拍照预览等细粒度条件应结合 user_question 与 rows 判断。\n3. 字段含义以 field_meta 为准；空值表示缺失。数据不足或存在多个符合条件的 Case 时必须明确说明，不要猜测。\n4. 回答前先根据 user_question 识别用户明确要求的全部分析维度，并把 sql_plan.selected_composites 作为必须覆盖的复合维度清单；对清单中每个维度逐项回答，禁止静默遗漏。\n5. 使用 sql_plan.selected_composite_meta 理解复合维度的名称、含义和基础字段；即使某个 composite 只有部分基础字段有值，也必须保留该维度，说明哪些字段有数据、哪些字段缺失、当前能得出的有限结论、以及哪些结论因数据不足不能得出。\n6. 不得因为数据不完整而跳过整个维度；不得编造缺失字段；不得用不相关字段替代缺失字段；不得自行发明 Registry 未定义的计算公式、综合分数或排名规则。\n7. 综合对比和报告类问题在结束输出前必须检查所有用户要求维度和 sql_plan.selected_composites 是否均已处理；若用户要求的某个维度在 SQL 结果中完全无相关字段，也必须明确说明当前数据未覆盖。\n",
+        "value_type": "string"
+      },
+      {
         "description": "Use full LLM HTTP path when true; otherwise local LLM is used.",
         "id": "env-phone-enable-full-llm",
         "name": "ENABLE_FULL_LLM",
