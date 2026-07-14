@@ -87,7 +87,7 @@ REQUIRED_PRODUCER_VARS=[
     'mysql_query_result_json','mysql_query_status','mysql_query_error_answer',
     'llm_handler_input_json','llm_task_type','llm_output_kind',
     'llm_artifact_type','llm_system_prompt','llm_user_prompt',
-    'java_full_llm_request_body_json','full_llm_result_json',
+    'full_llm_request_body_json','full_llm_result_json',
     'llm_handler_result_json','local_llm_result_json','final_answer',
 ]
 DEPRECATED_PRODUCER_VARS={
