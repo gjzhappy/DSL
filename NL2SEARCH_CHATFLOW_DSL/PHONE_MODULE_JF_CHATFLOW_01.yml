@@ -73,7 +73,7 @@
           "id": "ifllm",
           "type": "custom",
           "data": {
-            "title": "IF_满血版LLM开关",
+            "title": "选择分析方式",
             "type": "if-else",
             "cases": [
               {
@@ -109,7 +109,7 @@
           "id": "full_req",
           "type": "custom",
           "data": {
-            "title": "代码执行_准备Java满血版LLM请求",
+            "title": "准备深度分析",
             "type": "code",
             "outputs": {
               "java_full_llm_request_body_json": {
@@ -151,12 +151,12 @@
           "id": "http_full",
           "type": "custom",
           "data": {
-            "title": "HTTP请求_调用Java满血版LLM接口",
+            "title": "执行深度分析",
             "type": "http-request",
             "method": "POST",
             "url": "{{#env.SN_FULL_LLM_CHAT_URLS#}}",
             "body": {
-              "type": "json",
+              "type": "raw-text",
               "data": "{{#full_req.java_full_llm_request_body_json#}}"
             },
             "headers": "Content-Type: application/json\nAccept: application/json",
@@ -193,7 +193,7 @@
           "id": "full_parse",
           "type": "custom",
           "data": {
-            "title": "代码执行_解析Java满血版LLM结果",
+            "title": "整理分析结果",
             "type": "code",
             "outputs": {
               "full_llm_result_json": {
@@ -238,7 +238,7 @@
           "id": "if_full",
           "type": "custom",
           "data": {
-            "title": "IF_Java满血版LLM是否成功",
+            "title": "检查分析结果",
             "type": "if-else",
             "cases": [
               {
@@ -274,7 +274,7 @@
           "id": "llmlocal",
           "type": "custom",
           "data": {
-            "title": "LLM_生成文本结果_本地版",
+            "title": "生成分析结果",
             "type": "llm",
             "outputs": {
               "text": {
@@ -326,7 +326,7 @@
           "id": "local_wrap",
           "type": "custom",
           "data": {
-            "title": "代码执行_包装LLM结果",
+            "title": "汇总分析结果",
             "type": "code",
             "outputs": {
               "llm_handler_result_json": {
