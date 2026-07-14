@@ -61,7 +61,8 @@ ENV_BRACE_RE=re.compile(r'\{\{#env\.([A-Za-z_][A-Za-z0-9_]*)#\}\}')
 ENV_DOT_RE=re.compile(r'(?<![A-Za-z0-9_])env\.([A-Za-z_][A-Za-z0-9_]*)')
 ENV_DOLLAR_RE=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 REQUIRED_ENV_NAMES={
-    'JF_QUERY_REGISTRY_JSON','ENABLE_FULL_LLM','SN_MYSQL_QUERY_URLS',
+    'JF_QUERY_REGISTRY_JSON','JF_ANALYSIS_SYSTEM_PROMPT',
+    'JF_ANALYSIS_USER_PROMPT','ENABLE_FULL_LLM','SN_MYSQL_QUERY_URLS',
     'SN_FULL_LLM_CHAT_URLS',
 }
 DEPRECATED_ENV_NAMES={
@@ -167,6 +168,11 @@ def validate_env(doc):
         fail('JF_QUERY_REGISTRY_JSON value_type must be string')
     if not str(defs.get('JF_QUERY_REGISTRY_JSON',{}).get('value') or '').strip():
         fail('JF_QUERY_REGISTRY_JSON value must not be empty')
+    for prompt_env in ('JF_ANALYSIS_SYSTEM_PROMPT','JF_ANALYSIS_USER_PROMPT'):
+        if defs.get(prompt_env,{}).get('value_type') != 'string':
+            fail(f'{prompt_env} value_type must be string')
+        if not str(defs.get(prompt_env,{}).get('value') or '').strip():
+            fail(f'{prompt_env} value must not be empty')
     if defs.get('SN_MYSQL_QUERY_URLS',{}).get('value_type') != 'string':
         fail('SN_MYSQL_QUERY_URLS value_type must be string')
     if not str(defs.get('SN_MYSQL_QUERY_URLS',{}).get('value') or '').strip():
