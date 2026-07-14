@@ -112,11 +112,11 @@
             "title": "准备深度分析",
             "type": "code",
             "outputs": {
-              "java_full_llm_request_body_json": {
+              "full_llm_request_body_json": {
                 "type": "string"
               }
             },
-            "source_code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'java_full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n",
+            "source_code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n",
             "variables": [
               {
                 "variable": "llm_system_prompt",
@@ -134,7 +134,7 @@
               }
             ],
             "code_language": "python3",
-            "code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'java_full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n"
+            "code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n"
           },
           "position": {
             "x": 4320,
@@ -157,7 +157,7 @@
             "url": "{{#env.SN_FULL_LLM_CHAT_URLS#}}",
             "body": {
               "type": "raw-text",
-              "data": "{{#full_req.java_full_llm_request_body_json#}}"
+              "data": "{{#full_req.full_llm_request_body_json#}}"
             },
             "headers": "Content-Type: application/json\nAccept: application/json",
             "params": "",
