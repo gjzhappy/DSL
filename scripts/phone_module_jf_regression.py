@@ -191,16 +191,101 @@ def fuzzy_device_model_samples(nodes):
     must(compile('iPhone16 Pto Max', strict)['where_filters'].get('device_model') is None, 'missing protected fuzzy config changed strict behavior')
     return 48
 
+def query_memory_regressions(doc, nodes):
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
+    parsed = parse_ns['main'](registry_raw, 'ok')
+    must(parsed['jf_registry_parse_status'] == 'ok', parsed['jf_registry_error'])
+
+    def compile(question, memory='{}'):
+        result = plan_ns['main'](
+            json.dumps({'question': question}, ensure_ascii=False),
+            parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', memory)
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return result, json.loads(result['jf_sql_plan_json']), json.loads(result['jf_current_execution_context_json'])
+
+    first_result, first, first_context = compile('请查询 vvo X200 Pto 的主摄规格。')
+    must(first_context['version'] == 'jf_query_memory_v1' and len(first_context['query_scopes']) == 1, 'first scope missing')
+    first_scope = first_context['query_scopes'][0]
+    must(first_scope['where_filters'] == {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']}, 'first canonical scope changed')
+    must(first['current_query_delta']['explicit_where_filters'] == first_scope['where_filters'], 'current query delta audit invalid')
+    must(first_result['jf_memory_write_ready'] == 'true', 'persist-ready output missing')
+
+    second_result, second, second_context = compile('它的Sensor型号呢。', first_result['jf_current_execution_context_json'])
+    must(second_context['previous_user_query'] == '请查询 vvo X200 Pto 的主摄规格。', 'previous query missing')
+    must(second_context['current_user_query'] == '它的Sensor型号呢。', 'current query missing')
+    must(second_context['query_scopes'][0] == first_scope and len(second_context['query_scopes']) in (1, 2), 'field continuation did not preserve/deduplicate immutably')
+    must('sensor_model' in second['select_fields'], 'continued field absent from SELECT')
+
+    _, module_plan, module_context = compile('长焦呢。', first_result['jf_current_execution_context_json'])
+    must([scope['where_filters']['module_name'] for scope in module_context['query_scopes']] == [['主摄'], ['长焦']], 'module scopes not independent')
+    must(' OR ' in module_plan['sql'] and module_plan['params'][:4] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦'], 'module OR SQL/params invalid')
+
+    _, compare, compare_context = compile('和小米15 Ultra对比一下。', first_result['jf_current_execution_context_json'])
+    must([scope['where_filters']['device_model'] for scope in compare_context['query_scopes']] == [['Vivo X200 pro'], ['小米15Ultra']], 'model scopes not independent')
+    must(compare['sql'].count('`device_model` IN (?)') == 2 and ' OR ' in compare['sql'], 'scope SQL was flattened')
+    must(compare['params'][:4] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄'], 'stable scope params changed')
+
+    _, analysis, analysis_context = compile('分析一下这些规格。', first_result['jf_current_execution_context_json'])
+    must(analysis_context['query_scopes'] == [first_scope], 'empty delta appended a scope')
+    must(analysis['query_scopes'] == [first_scope], 'memory scope not re-queried')
+
+    _, duplicate, duplicate_context = compile('请查询 Vivo X200 Pro 的主摄规格。', first_result['jf_current_execution_context_json'])
+    must(len(duplicate_context['query_scopes']) == 1, 'identical scope was duplicated')
+
+    empty_result, empty_plan, empty_context = compile('分析一下。', '')
+    must(empty_context['query_scopes'] == [] and empty_result['jf_memory_write_ready'] == 'false', 'empty scope became persistable')
+    must(empty_plan['params'] == [200] and any(w.get('type') == 'NO_STRUCTURED_FILTER_FOUND' for w in empty_plan['warnings']), 'no-filter compatibility changed')
+
+    for invalid in ('{', json.dumps({'version': 'bad', 'query_scopes': [first_scope]}), json.dumps({'version': 'jf_query_memory_v1', 'query_scopes': [{'source_user_query': 'x', 'where_filters': {'unregistered': ['x']}, 'select_fields': [], 'selected_composites': []}], 'sql': 'DELETE FROM x', 'params': ['x']})):
+        _, invalid_plan, invalid_context = compile('查询Sensor型号。', invalid)
+        must(invalid_context['query_scopes'] == [], 'invalid memory entered execution context')
+        must(any(w.get('type') == 'QUERY_MEMORY_INVALID_IGNORED' for w in invalid_plan['warnings']), 'invalid memory warning missing')
+        must('DELETE' not in invalid_plan['sql'] and invalid_plan['params'] == [200], 'untrusted memory SQL/params executed')
+
+    # Same WHERE with different field semantics stays in context but compiles one WHERE group.
+    same_where_memory = dict(first_context)
+    extra = dict(first_scope)
+    extra['select_fields'] = list(first_scope['select_fields']) + ['sensor_model']
+    same_where_memory['query_scopes'] = [first_scope, extra]
+    _, dedup_plan, dedup_context = compile('分析一下。', json.dumps(same_where_memory, ensure_ascii=False))
+    must(len(dedup_context['query_scopes']) == 2, 'semantic scopes were removed from context')
+    must(dedup_plan['sql'].count('`device_model` IN (?)') == 1, 'duplicate WHERE execution group retained')
+    must('sensor_model' in dedup_plan['select_fields'], 'scope SELECT union missing')
+    return 16
+
+def graph_memory_contract(doc, nodes, out, inc):
+    conversation = {item['name']: item for item in doc['workflow'].get('conversation_variables', [])}
+    memory = conversation.get('jf_query_memory_json')
+    must(memory and memory['selector'] == ['conversation', 'jf_query_memory_json'] and memory['value'] == '{}' and memory['value_type'] == 'string', 'conversation variable schema invalid')
+    plan = nodes['jf_sql_plan']['data']
+    must(any(v['variable'] == 'jf_query_memory_json' and v['value_selector'] == ['conversation', 'jf_query_memory_json'] for v in plan['variables']), 'plan memory selector invalid')
+    must({'jf_current_execution_context_json', 'jf_memory_write_ready'} <= set(plan['outputs']), 'plan memory outputs missing')
+    assign = nodes['save_query_memory']['data']['items'][0]
+    must(assign['variable_selector'] == ['conversation', 'jf_query_memory_json'] and assign['value'] == ['jf_sql_plan', 'jf_current_execution_context_json'], 'assigner selector invalid')
+    must(any(source == 'if_sql_ok' and handle == 'success' for source, edges in out.items() for handle, target, _ in edges if target == 'if_memory_write'), 'memory branch not downstream of MySQL success')
+    must(not inc.get('save_query_memory') == [], 'memory assigner orphaned')
+    for node in nodes.values():
+        data = node['data']
+        if data.get('type') == 'code':
+            must(data.get('source_code') == data.get('code'), 'source_code != code: %s' % node['id'])
+
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
     check_frontend_checkvalid_schema(d)
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
+    memory_count = query_memory_regressions(d, nodes)
+    graph_memory_contract(d, nodes, out, inc)
     print('PASS frontend schema')
     for idx, actual in enumerate(sample_results, 1):
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
+    print('PASS query memory regression groups: %d' % memory_count)
+    print('PASS query memory graph/variable/frontend contracts')
 if __name__=='__main__':
     try: main()
     except Exception as e: print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)
