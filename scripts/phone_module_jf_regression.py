@@ -57,7 +57,7 @@ def fuzzy_device_model_samples(nodes):
     exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
     exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
 
-    def registry(models, fuzzy=True, gap=0.08, min_alias_length=5, min_score=0.84):
+    def registry(models, fuzzy=True, gap=0.08, min_alias_length=5, legacy_min_score=None):
         value = {
             'version': 'test', 'table': 'phone_test',
             'query_roles': {'sql_filter_fields': ['device_model', 'manufacturer'], 'sql_select_fields': 'all_fields'},
@@ -71,12 +71,14 @@ def fuzzy_device_model_samples(nodes):
         if fuzzy:
             value['match_policies'] = {'device_model': {'fuzzy': {
                 'enabled': True, 'min_alias_length': min_alias_length, 'require_same_digits': True,
-                'min_score': min_score, 'min_score_gap': gap,
+                'min_score_gap': gap,
                 'distance_rules': [{'max_length': 7, 'max_distance': 1}, {'max_length': 12, 'max_distance': 2}, {'max_length': 999, 'max_distance': 2}],
                 'protected_tokens': ['pro', 'promax', 'max', 'ultra', 'plus', 'mini', 'se'],
                 'require_protected_tokens_equal': True,
                 'protected_token_fuzzy': {'enabled': True, 'max_distance': 1},
             }}}
+            if legacy_min_score is not None:
+                value['match_policies']['device_model']['fuzzy']['min_score'] = legacy_min_score
         return value
 
     def compile(question, value):
@@ -89,13 +91,15 @@ def fuzzy_device_model_samples(nodes):
         return json.loads(result['jf_sql_plan_json'])
 
     base = {'Magic6': {'aliases': ['magic6']}, 'Iphone16 Pro Max': {'aliases': ['iphone16promax']}}
-    for typo in ('Maigic6', 'Magc6', 'Mgaic6'):
-        # Magic6↔Magc6 scores 5/6 under the mandated formula, so that
-        # algorithm case uses an explicitly lower test policy threshold.
-        plan = compile(typo, registry(base, min_score=0.84 if typo == 'Maigic6' else 0.83))
+    for typo in ('Maigic6', 'Mgaic6', 'Magc6', 'Magix6'):
+        plan = compile(typo, registry(base))
         must(plan['where_filters'].get('device_model') == ['Magic6'], f"fuzzy typo failed: {typo}: {plan}")
         must(plan['fuzzy_alias_hits']['device_model'][0]['target'] == 'Magic6', f'fuzzy audit failed: {typo}')
         must(plan['fuzzy_alias_hits']['device_model'][0]['mode'] == 'overall', f'fuzzy mode failed: {typo}')
+        if typo == 'Mgaic6':
+            hit = plan['fuzzy_alias_hits']['device_model'][0]
+            must(hit['distance'] == 1 and hit['score'] == 0.833333, 'historical below-min_score candidate was rejected')
+            must(plan['params'][0] == 'Magic6', 'canonical fuzzy value did not reach SQL params')
     protected = {
         'Magic6': {'aliases': ['magic6']},
         'Iphone16 Pro Max': {'aliases': ['iphone16promax']},
@@ -116,10 +120,10 @@ def fuzzy_device_model_samples(nodes):
         must(hit['mode'] == 'segmented', f'segmented audit mode failed: {question}: {hit}')
     vivo_hit = compile('vvo X200 Pto', registry(protected))['fuzzy_alias_hits']['device_model'][0]
     must(vivo_hit['score'] < 0.84 and vivo_hit['distance'] == 2, 'segmented path did not preserve overall audit score')
-    mixed = compile('对比 Magic6、iPhone 16 Pto Max 和 vvo X200 Pto', registry(protected))
+    mixed = compile('对比 Magic6、Mgaic6、iPhone 16 Pto Max 和 vvo X200 Pto', registry(protected))
     must(mixed['where_filters']['device_model'] == ['Magic6', 'Iphone16 Pro Max', 'Vivo X200 pro'], 'mixed exact/segmented failed')
     must(mixed['value_alias_hits']['device_model'] == ['Magic6'], 'mixed exact audit changed')
-    must(all(hit['mode'] == 'segmented' for hit in mixed['fuzzy_alias_hits']['device_model']), 'mixed fuzzy modes failed')
+    must([hit['mode'] for hit in mixed['fuzzy_alias_hits']['device_model']] == ['overall', 'segmented', 'segmented'], 'mixed fuzzy modes failed')
     must(compile('小米16 Ultra', registry(protected))['where_filters'].get('device_model') is None, 'segmented digit mismatch accepted')
     must(compile('X20 Pto', registry(protected))['where_filters'].get('device_model') is None, 'segmented missing digit accepted')
     must(compile('X200 Ultra', registry({'X200 Pro': {'aliases': ['x200pro']}}))['where_filters'].get('device_model') is None, 'protected semantics changed')
@@ -131,10 +135,10 @@ def fuzzy_device_model_samples(nodes):
     must(compile('Magic6', registry(suffixes))['where_filters']['device_model'] == ['Magic6'], 'protected suffix addition failed')
     must(compile('Magic6 Pro', registry(suffixes))['where_filters']['device_model'] == ['Magic6 Pro'], 'protected suffix removal failed')
     same = {'Magic6': {'aliases': ['magic6', 'magix6']}}
-    plan = compile('magio6', registry(same, gap=0.20, min_score=0.83))
+    plan = compile('magio6', registry(same, gap=0.20))
     must(plan['where_filters']['device_model'] == ['Magic6'], 'same-canonical alias merge failed')
     ambiguous = {'ModelA': {'aliases': ['magic6']}, 'ModelB': {'aliases': ['magix6']}}
-    plan = compile('magio6', registry(ambiguous, gap=0.20, min_score=0.83))
+    plan = compile('magio6', registry(ambiguous, gap=0.20))
     must(plan['where_filters']['device_model'] == ['ModelA', 'ModelB'], 'small score gap failed')
     must('matches' in plan['fuzzy_alias_hits']['device_model'][0], 'ambiguous audit failed')
     plan = compile('magix6', registry(ambiguous, gap=0.08))
@@ -150,19 +154,42 @@ def fuzzy_device_model_samples(nodes):
     must(exact['where_filters']['device_model'] == ['Magic6'] and not exact.get('fuzzy_alias_hits'), 'exact priority failed')
     must(compile('查询主摄规格', registry(base))['where_filters'].get('device_model') is None, 'no-model false positive')
 
+    words = {'Milla': {'aliases': ['milla']}, 'Delphi': {'aliases': ['delphi']}, 'Iceland': {'aliases': ['iceland']}}
+    for exact_word in ('milla', 'delphi', 'iceland'):
+        plan = compile(exact_word, registry(words))
+        must(plan['where_filters'].get('device_model'), f'non-numeric exact alias failed: {exact_word}')
+        must(not plan.get('fuzzy_alias_hits'), f'non-numeric exact alias became fuzzy: {exact_word}')
+    for typo in ('mila', 'delphx', 'iceladn', 'icelaand'):
+        must(compile(typo, registry(words))['where_filters'].get('device_model') is None, f'non-numeric alias fuzzy accepted: {typo}')
+    must(compile('please deliver an ordinary english question', registry(words))['where_filters'].get('device_model') is None, 'ordinary prose recalled non-numeric alias')
+    must(compile('Mxxic6', registry(base))['where_filters'].get('device_model') is None, 'over-distance typo accepted')
+
+    legacy = registry(base, legacy_min_score=0.99)
+    parsed = parse_ns['main'](json.dumps(legacy, ensure_ascii=False), 'ok')
+    must(parsed['jf_registry_parse_status'] == 'ok', 'legacy min_score rejected')
+    must('min_score' in json.loads(parsed['jf_registry_json'])['match_policies']['device_model']['fuzzy'], 'legacy registry contract unexpectedly rewrote input')
+    must(compile('Mgaic6', legacy)['where_filters'].get('device_model') == ['Magic6'], 'legacy min_score still gates candidates')
     invalid = registry(base)
-    invalid['match_policies']['device_model']['fuzzy']['min_score'] = 1.1
+    invalid['match_policies']['device_model']['fuzzy']['min_score_gap'] = 1.1
     parsed = parse_ns['main'](json.dumps(invalid, ensure_ascii=False), 'ok')
     must(parsed['jf_registry_parse_status'] == 'error', 'invalid fuzzy policy accepted')
+    invalid = registry(base)
+    invalid['match_policies']['device_model']['fuzzy']['require_same_digits'] = 'yes'
+    parsed = parse_ns['main'](json.dumps(invalid, ensure_ascii=False), 'ok')
+    must(parsed['jf_registry_parse_status'] == 'error', 'invalid require_same_digits accepted')
+    invalid = registry(base)
+    invalid['match_policies']['device_model']['fuzzy']['distance_rules'][0]['max_distance'] = -1
+    parsed = parse_ns['main'](json.dumps(invalid, ensure_ascii=False), 'ok')
+    must(parsed['jf_registry_parse_status'] == 'error', 'invalid distance_rules accepted')
     for bad_value in ('bad', {'enabled': 'yes'}, {'enabled': True, 'max_distance': -1}):
         invalid = registry(base)
         invalid['match_policies']['device_model']['fuzzy']['protected_token_fuzzy'] = bad_value
         parsed = parse_ns['main'](json.dumps(invalid, ensure_ascii=False), 'ok')
         must(parsed['jf_registry_parse_status'] == 'error', f'invalid protected token fuzzy policy accepted: {bad_value}')
-    legacy = registry({'Iphone16 Pro Max': {'aliases': ['iphone16promax']}})
-    del legacy['match_policies']['device_model']['fuzzy']['protected_token_fuzzy']
-    must(compile('iPhone16 Pto Max', legacy)['where_filters'].get('device_model') is None, 'missing protected fuzzy config changed strict behavior')
-    return 32
+    strict = registry({'Iphone16 Pro Max': {'aliases': ['iphone16promax']}})
+    del strict['match_policies']['device_model']['fuzzy']['protected_token_fuzzy']
+    must(compile('iPhone16 Pto Max', strict)['where_filters'].get('device_model') is None, 'missing protected fuzzy config changed strict behavior')
+    return 48
 
 def main():
     d = load_doc()
