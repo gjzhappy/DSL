@@ -1,10 +1,86 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, sys
+import ast, copy, json, sys
 from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema
 
 def must(p,msg):
     if not p: raise AssertionError(msg)
+
+def check_query_memory_schema(doc):
+    workflow = doc.get('workflow') or {}
+    variables = workflow.get('conversation_variables')
+    must(isinstance(variables, list), 'conversation_variables must be list')
+    names = []
+    for item in variables:
+        must(item.get('id') and item.get('name'), 'conversation variable identity missing')
+        must(isinstance(item.get('description'), str), 'conversation variable description invalid')
+        must(item.get('value_type') == 'string' and isinstance(item.get('value'), str), 'conversation variable string schema invalid')
+        must(item.get('selector') == ['conversation', item['name']], 'conversation variable selector invalid')
+        names.append(item['name'])
+    must(len(names) == len(set(names)) and 'jf_query_memory_json' in names, 'conversation variable missing/duplicate')
+    nodes = workflow.get('graph', {}).get('nodes')
+    edges = workflow.get('graph', {}).get('edges')
+    must(isinstance(nodes, list) and all(isinstance(n.get('data'), dict) for n in nodes), 'node data missing')
+    by_id = {n['id']: n for n in nodes}
+    must(len(by_id) == len(nodes), 'duplicate node id')
+    plan = by_id['jf_sql_plan']['data']
+    must(isinstance(plan.get('variables'), list) and isinstance(plan.get('outputs'), dict), 'code schema containers invalid')
+    for variable in plan['variables']:
+        must(isinstance(variable.get('value_selector'), list) and all(isinstance(x, str) for x in variable['value_selector']), 'selector is not string array')
+    args = [a.arg for a in ast.parse(plan['code']).body[0].args.args]
+    must(args == [v['variable'] for v in plan['variables']], 'main parameters differ from variables')
+    must(plan['source_code'] == plan['code'], 'source_code differs from code')
+    for output in plan['outputs'].values():
+        must('type' in output and 'children' in output, 'code output schema incomplete')
+    must(plan['outputs']['jf_memory_write_ready']['type'] == 'boolean', 'memory ready output is not boolean')
+    must("'jf_memory_write_ready': bool(memory_write_ready)" in plan['code'], 'memory ready return is not bool')
+    condition = by_id['if_memory_write']['data']['cases'][0]['conditions'][0]
+    must(condition.get('id') and condition.get('variable_selector') == ['jf_sql_plan','jf_memory_write_ready'], 'boolean IF selector/id invalid')
+    must(condition.get('comparison_operator') == 'is' and condition.get('varType') == 'boolean' and condition.get('value') is True, 'boolean IF contract invalid')
+    assign = by_id['save_query_memory']['data']
+    must(assign.get('type') == 'assigner' and assign.get('version') == '2' and isinstance(assign.get('desc'), str) and isinstance(assign.get('selected'), bool), 'assigner v2 schema invalid')
+    must(isinstance(assign.get('items'), list) and assign['items'], 'assigner items invalid')
+    item = assign['items'][0]
+    must(item.get('input_type') == 'variable' and item.get('operation') == 'over-write', 'assigner operation invalid')
+    must(item.get('variable_selector') == ['conversation','jf_query_memory_json'], 'assigner target invalid')
+    must(item.get('value') == ['jf_sql_plan','jf_current_execution_context_json'], 'assigner source invalid')
+    ids = [e.get('id') for e in edges]
+    must(len(ids) == len(set(ids)), 'duplicate edge id')
+    must(all(e.get('source') in by_id and e.get('target') in by_id for e in edges), 'dangling edge')
+    triples = {(e['source'],e.get('sourceHandle'),e['target']) for e in edges}
+    must({('if_sql_ok','success','if_memory_write'),('if_memory_write','memory_write_true','save_query_memory'),('if_memory_write','false','llm_input'),('save_query_memory','source','llm_input')} <= triples, 'memory graph wiring invalid')
+
+def negative_schema_injections(doc):
+    cases = []
+    def add(name, mutate): cases.append((name, mutate))
+    add('conversation value object', lambda d: d['workflow']['conversation_variables'][0].update(value={}))
+    add('conversation description missing', lambda d: d['workflow']['conversation_variables'][0].pop('description'))
+    for key in ('children','type'):
+        add('output missing '+key, lambda d,k=key: d['workflow']['graph']['nodes'][next(i for i,n in enumerate(d['workflow']['graph']['nodes']) if n['id']=='jf_sql_plan')]['data']['outputs']['jf_memory_write_ready'].pop(k))
+    add('boolean declared string', lambda d: next(n for n in d['workflow']['graph']['nodes'] if n['id']=='jf_sql_plan')['data']['outputs']['jf_memory_write_ready'].update(type='string'))
+    add('boolean returned string', lambda d: next(n for n in d['workflow']['graph']['nodes'] if n['id']=='jf_sql_plan')['data'].update(code=next(n for n in d['workflow']['graph']['nodes'] if n['id']=='jf_sql_plan')['data']['code'].replace("'jf_memory_write_ready': bool(memory_write_ready)", "'jf_memory_write_ready': 'true'")))
+    def cond(d): return next(n for n in d['workflow']['graph']['nodes'] if n['id']=='if_memory_write')['data']['cases'][0]['conditions'][0]
+    add('IF string true', lambda d: cond(d).update(value='true'))
+    add('IF string vartype', lambda d: cond(d).update(varType='string'))
+    add('IF cases missing', lambda d: next(n for n in d['workflow']['graph']['nodes'] if n['id']=='if_memory_write')['data'].pop('cases'))
+    add('IF conditions missing', lambda d: next(n for n in d['workflow']['graph']['nodes'] if n['id']=='if_memory_write')['data']['cases'][0].pop('conditions'))
+    add('selector scalar', lambda d: cond(d).update(variable_selector='bad'))
+    def ass(d): return next(n for n in d['workflow']['graph']['nodes'] if n['id']=='save_query_memory')['data']
+    add('assigner old type', lambda d: ass(d).update(type='variable-assigner'))
+    add('assigner items missing', lambda d: ass(d).pop('items'))
+    add('assigner operation', lambda d: ass(d)['items'][0].update(operation='append'))
+    add('assigner input type', lambda d: ass(d)['items'][0].update(input_type='constant'))
+    add('assigner target missing', lambda d: ass(d)['items'][0].update(variable_selector=['conversation','missing']))
+    add('assigner source missing', lambda d: ass(d)['items'][0].update(value=['jf_sql_plan','missing']))
+    add('node data missing', lambda d: next(n for n in d['workflow']['graph']['nodes'] if n['id']=='save_query_memory').pop('data'))
+    add('edge target missing', lambda d: d['workflow']['graph']['edges'][0].update(target='missing'))
+    caught = 0
+    for name, mutate in cases:
+        broken = copy.deepcopy(doc); mutate(broken)
+        try: check_query_memory_schema(broken)
+        except Exception: caught += 1
+        else: raise AssertionError('negative injection not caught: '+name)
+    return caught
 
 def parse_slot_samples(nodes):
     if 'parse' not in nodes:
@@ -81,12 +157,12 @@ def fuzzy_device_model_samples(nodes):
                 value['match_policies']['device_model']['fuzzy']['min_score'] = legacy_min_score
         return value
 
-    def compile(question, value):
+    def compile(question, value, memory=''):
         parsed = parse_ns['main'](json.dumps(value, ensure_ascii=False), 'ok')
         must(parsed['jf_registry_parse_status'] == 'ok', parsed['jf_registry_error'])
         result = plan_ns['main'](
             json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'],
-            parsed['jf_alias_index_json'], parsed['jf_registry_parse_status'], parsed['jf_registry_error'])
+            parsed['jf_alias_index_json'], parsed['jf_registry_parse_status'], parsed['jf_registry_error'], memory)
         must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
         return json.loads(result['jf_sql_plan_json'])
 
@@ -189,15 +265,34 @@ def fuzzy_device_model_samples(nodes):
     strict = registry({'Iphone16 Pro Max': {'aliases': ['iphone16promax']}})
     del strict['match_policies']['device_model']['fuzzy']['protected_token_fuzzy']
     must(compile('iPhone16 Pto Max', strict)['where_filters'].get('device_model') is None, 'missing protected fuzzy config changed strict behavior')
+
+    memory_registry = registry(protected)
+    first = compile('vvo X200 Pto', memory_registry)
+    memory = json.dumps({
+        'version': 'jf_query_memory_v1', 'previous_user_query': '',
+        'current_user_query': 'vvo X200 Pto', 'query_scopes': first['query_scopes'],
+        'sql': 'must be ignored', 'params': ['must be ignored'],
+    }, ensure_ascii=False)
+    follow = compile('厂商', memory_registry, memory)
+    must(follow['query_scopes'][0]['where_filters'] == {'device_model': ['Vivo X200 pro']}, 'memory filter inheritance failed')
+    must('manufacturer' in follow['select_fields'], 'memory field follow-up failed')
+    must(follow['params'] == ['Vivo X200 pro', 200], 'memory params are unstable or untrusted fields leaked')
+    must(follow['sql'].count('`device_model` IN (?)') == 1, 'scoped WHERE compilation/duplicate removal failed')
+    invalid = compile('Magic6', memory_registry, '{bad json')
+    must(any(w.get('type') == 'QUERY_MEMORY_INVALID_IGNORED' for w in invalid['warnings']), 'invalid memory warning missing')
+    must(invalid['where_filters'] == {'device_model': ['Magic6']}, 'invalid memory did not preserve single-turn behavior')
     return 48
 
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
     check_frontend_checkvalid_schema(d)
+    check_query_memory_schema(d)
+    negative_count = negative_schema_injections(d)
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
     print('PASS frontend schema')
+    print('PASS query-memory schema/graph/contract and negative injections: %d' % negative_count)
     for idx, actual in enumerate(sample_results, 1):
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)

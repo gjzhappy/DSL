@@ -1,3 +1,270 @@
+            "code_language": "python3",
+            "code": "def main(context_json='', mysql_query_result_json='', jf_selected_field_meta_json='', jf_alias_index_json='', analysis_system_prompt='', analysis_user_prompt='', jf_current_execution_context_json=''):\n    import json\n\n    LOCAL_CONTEXT_TOKENS = 32768\n    LOCAL_MAX_PREDICT_TOKENS = 8192\n    PROMPT_TOKEN_SAFETY_MARGIN = 1024\n    MAX_ESTIMATED_PROMPT_TOKENS = (\n        LOCAL_CONTEXT_TOKENS\n        - LOCAL_MAX_PREDICT_TOKENS\n        - PROMPT_TOKEN_SAFETY_MARGIN\n    )\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump_compact(obj):\n        return json.dumps(\n            obj,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n\n    def estimate_tokens(text):\n        # 保守估算：中日韩字符按 1 token，其余字符约 4 字符/token。\n        cjk_count = 0\n        other_count = 0\n        for char in str(text or ''):\n            code = ord(char)\n            is_cjk = (\n                0x3400 <= code <= 0x4DBF\n                or 0x4E00 <= code <= 0x9FFF\n                or 0xF900 <= code <= 0xFAFF\n                or 0x3040 <= code <= 0x30FF\n                or 0xAC00 <= code <= 0xD7AF\n            )\n            if is_cjk:\n                cjk_count += 1\n            else:\n                other_count += 1\n        return cjk_count + ((other_count + 3) // 4)\n\n    def compact_composite_meta(alias_index, selected_composites, warnings):\n        composite_meta = (\n            alias_index.get('composite_meta')\n            if isinstance(alias_index.get('composite_meta'), dict)\n            else {}\n        )\n        result = {}\n        for composite_id in selected_composites:\n            meta = (\n                composite_meta.get(composite_id)\n                if isinstance(composite_meta.get(composite_id), dict)\n                else {}\n            )\n            if not meta:\n                warnings.append(\n                    'selected composite metadata missing: %s' % composite_id\n                )\n                continue\n            result[composite_id] = {\n                'label': str(meta.get('label') or composite_id),\n                'description': str(meta.get('description') or ''),\n                'expand_to': (\n                    meta.get('expand_to')\n                    if isinstance(meta.get('expand_to'), list)\n                    else []\n                ),\n            }\n        return result\n\n    def compact_sql_plan(plan, alias_index):\n        selected_composites = (\n            plan.get('selected_composites')\n            if isinstance(plan.get('selected_composites'), list)\n            else []\n        )\n        warnings = list(plan.get('warnings')) if isinstance(plan.get('warnings'), list) else []\n        selected_composite_meta = compact_composite_meta(\n            alias_index,\n            selected_composites,\n            warnings\n        )\n        return {\n            'table': plan.get('table'),\n            'select_fields': (\n                plan.get('select_fields')\n                if isinstance(plan.get('select_fields'), list)\n                else []\n            ),\n            'where_filters': (\n                plan.get('where_filters')\n                if isinstance(plan.get('where_filters'), dict)\n                else {}\n            ),\n            'selected_composites': selected_composites,\n            'selected_composite_meta': selected_composite_meta,\n            'warnings': warnings,\n        }\n\n    def compact_field_meta(field_meta, select_fields):\n        result = {}\n        for field in select_fields:\n            meta = (\n                field_meta.get(field)\n                if isinstance(field_meta.get(field), dict)\n                else {}\n            )\n            result[field] = {\n                'label': str(meta.get('label') or field),\n                'description': str(meta.get('description') or ''),\n            }\n        return result\n\n    context = load_json(context_json, {})\n    execution_context = load_json(jf_current_execution_context_json, {})\n    query_result = load_json(mysql_query_result_json, {})\n    raw_field_meta = load_json(jf_selected_field_meta_json, {})\n    alias_index = load_json(jf_alias_index_json, {})\n\n    user_question = str(context.get('question') or '')\n    rows = (\n        query_result.get('rows')\n        if isinstance(query_result.get('rows'), list)\n        else []\n    )\n    raw_sql_plan = (\n        query_result.get('sql_plan')\n        if isinstance(query_result.get('sql_plan'), dict)\n        else {}\n    )\n\n    sql_plan = compact_sql_plan(raw_sql_plan, alias_index)\n    field_meta = compact_field_meta(\n        raw_field_meta,\n        sql_plan.get('select_fields') or []\n    )\n\n    # 交给 LLM 的数据包包含受控查询上下文和本轮真实结果。\n    package = {\n        'user_question': user_question,\n        'previous_user_query': str(execution_context.get('previous_user_query') or ''),\n        'current_user_query': str(execution_context.get('current_user_query') or user_question),\n        'jf_current_execution_context_json': jf_current_execution_context_json,\n        'sql_plan': sql_plan,\n        'field_meta': field_meta,\n        'rows': rows,\n    }\n\n    system_prompt = str(analysis_system_prompt or '').strip()\n    user_prompt_rules = str(analysis_user_prompt or '').strip()\n    if user_prompt_rules:\n        user_prompt_rules += '\\n\\n数据库结果可能包含历史查询产生的候选数据。请结合上一轮问题、当前问题、当前执行上下文和本轮数据库结果，判断用户本轮要查询、分析、总结或对比哪些数据。当前问题优先于上一轮问题。只使用数据库结果中真实存在的数据；历史候选数据不要求全部展示。不得重新生成SQL，不得修改canonical过滤范围，不得捏造缺失数据。\\n'\n\n    if not system_prompt or not user_prompt_rules:\n        missing_prompt_envs = []\n        if not system_prompt:\n            missing_prompt_envs.append('JF_ANALYSIS_SYSTEM_PROMPT')\n        if not user_prompt_rules:\n            missing_prompt_envs.append('JF_ANALYSIS_USER_PROMPT')\n        message = 'LLM_PROMPT_CONFIG_MISSING: ' + ','.join(missing_prompt_envs)\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows_omitted': True,\n            },\n            'error': message,\n        }\n        return {\n            'llm_handler_input_json': dump_compact(payload),\n            'llm_task_type': str(payload.get('llm_task_type') or ''),\n            'llm_output_kind': str(payload.get('output_kind') or ''),\n            'llm_artifact_type': str(payload.get('artifact_type') or ''),\n            'llm_system_prompt': '',\n            'llm_user_prompt': message,\n        }\n\n    user_prompt = (\n        user_prompt_rules\n        + '【输入数据包】\\n'\n        + dump_compact(package)\n    )\n\n    estimated_prompt_tokens = estimate_tokens(\n        system_prompt + '\\n' + user_prompt\n    )\n\n    if estimated_prompt_tokens > MAX_ESTIMATED_PROMPT_TOKENS:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'system_prompt': system_prompt,\n            'user_prompt': (\n                'LLM_INPUT_TOO_LARGE: SQL 查询结果超过本地模型安全上下文预算，'\n                '请缩小查询范围后重试。'\n            ),\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows_omitted': True,\n            },\n            'error': 'LLM_INPUT_TOO_LARGE',\n        }\n    else:\n        payload = {\n            'status': 'ok',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows': rows,\n            },\n            'handler_context': {\n                'source_node': 'llm_input',\n                'input_fields': [\n                    'user_question',\n                    'sql_plan',\n                    'field_meta',\n                    'rows',\n                ],\n                'estimated_prompt_tokens': estimated_prompt_tokens,\n                'local_context_tokens': LOCAL_CONTEXT_TOKENS,\n                'local_max_predict_tokens': LOCAL_MAX_PREDICT_TOKENS,\n            },\n        }\n\n    return {\n        'llm_handler_input_json': dump_compact(payload),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(system_prompt),\n        'llm_user_prompt': str(user_prompt),\n    }\n"
+          },
+          "position": {
+            "x": 3600,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 3600,
+            "y": 300
+          },
+          "width": 320,
+          "height": 170
+        },
+        {
+          "id": "ifllm",
+          "type": "custom",
+          "data": {
+            "title": "选择分析方式",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "enabled",
+                "conditions": [
+                  {
+                    "id": "if-full-llm-enabled",
+                    "variable_selector": [
+                      "env",
+                      "ENABLE_FULL_LLM"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "true"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
+          },
+          "position": {
+            "x": 3960,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 3960,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "full_req",
+          "type": "custom",
+          "data": {
+            "title": "准备深度分析",
+            "type": "code",
+            "outputs": {
+              "full_llm_request_body_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n",
+            "variables": [
+              {
+                "variable": "llm_system_prompt",
+                "value_selector": [
+                  "llm_input",
+                  "llm_system_prompt"
+                ]
+              },
+              {
+                "variable": "llm_user_prompt",
+                "value_selector": [
+                  "llm_input",
+                  "llm_user_prompt"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n"
+          },
+          "position": {
+            "x": 4320,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 4320,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "http_full",
+          "type": "custom",
+          "data": {
+            "title": "执行深度分析",
+            "type": "http-request",
+            "method": "POST",
+            "url": "{{#env.SN_FULL_LLM_CHAT_URLS#}}",
+            "body": {
+              "type": "raw-text",
+              "data": "{{#full_req.full_llm_request_body_json#}}"
+            },
+            "headers": "Content-Type: application/json\nAccept: application/json",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 10000,
+              "max_read_timeout": 600000,
+              "max_write_timeout": 10000
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 3,
+              "retry_interval": 100
+            }
+          },
+          "position": {
+            "x": 4680,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 4680,
+            "y": 80
+          },
+          "width": 320,
+          "height": 130
+        },
+        {
+          "id": "full_parse",
+          "type": "custom",
+          "data": {
+            "title": "整理分析结果",
+            "type": "code",
+            "outputs": {
+              "full_llm_result_json": {
+                "type": "string"
+              },
+              "full_llm_status": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def load_payload(raw):\n        if isinstance(raw, dict):\n            return raw, ''\n        if raw is None:\n            return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n        if isinstance(raw, str):\n            if not raw.strip():\n                return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n            try:\n                return json.loads(raw), ''\n            except Exception as exc:\n                return None, 'JAVA_FULL_LLM_BODY_JSON_INVALID: %s' % truncate(exc)\n        return None, 'JAVA_FULL_LLM_BODY_TYPE_INVALID'\n\n    def error_summary(payload, fallback):\n        parts = []\n        if fallback:\n            parts.append(str(fallback))\n        if isinstance(payload, dict):\n            for key in ('msg', 'errorCode', 'retryable', 'requestId'):\n                if key in payload and payload.get(key) not in (None, ''):\n                    parts.append('%s=%s' % (key, payload.get(key)))\n        return truncate('; '.join(parts))\n\n    def parse_http_code(value):\n        try:\n            return int(value)\n        except Exception:\n            return 0\n\n    status = 'error'\n    answer = ''\n    error = ''\n\n    payload, load_error = load_payload(body)\n    http_code = parse_http_code(status_code)\n\n    try:\n        if load_error:\n            error = error_summary(payload, load_error)\n        elif not isinstance(payload, dict):\n            error = error_summary(payload, 'JAVA_FULL_LLM_JSON_NOT_OBJECT')\n        elif http_code < 200 or http_code >= 300:\n            error = error_summary(\n                payload,\n                'JAVA_FULL_LLM_HTTP_ERROR status=%s' % http_code\n            )\n        elif payload.get('code') != 200:\n            error = error_summary(payload, 'JAVA_FULL_LLM_CODE_NOT_200')\n        else:\n            data = payload.get('data')\n            if not isinstance(data, dict):\n                error = error_summary(payload, 'JAVA_FULL_LLM_DATA_MISSING')\n            else:\n                choices = data.get('choices')\n                if not isinstance(choices, list) or not choices:\n                    error = error_summary(payload, 'JAVA_FULL_LLM_CHOICES_EMPTY')\n                else:\n                    first = choices[0] if isinstance(choices[0], dict) else {}\n                    message = (\n                        first.get('message')\n                        if isinstance(first.get('message'), dict)\n                        else {}\n                    )\n                    content = message.get('content')\n                    if not isinstance(content, str) or not content.strip():\n                        error = error_summary(\n                            payload,\n                            'JAVA_FULL_LLM_CONTENT_EMPTY'\n                        )\n                    else:\n                        answer = content.strip()\n                        status = 'ok'\n    except Exception as exc:\n        error = error_summary(payload, 'JAVA_FULL_LLM_PARSE_FAILED: %s' % exc)\n        answer = ''\n        status = 'error'\n\n    if status != 'ok':\n        answer = ''\n        status = 'error'\n        if not error:\n            error = 'JAVA_FULL_LLM_ERROR'\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n",
+            "variables": [
+              {
+                "variable": "body",
+                "value_selector": [
+                  "http_full",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http_full",
+                  "status_code"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def load_payload(raw):\n        if isinstance(raw, dict):\n            return raw, ''\n        if raw is None:\n            return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n        if isinstance(raw, str):\n            if not raw.strip():\n                return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n            try:\n                return json.loads(raw), ''\n            except Exception as exc:\n                return None, 'JAVA_FULL_LLM_BODY_JSON_INVALID: %s' % truncate(exc)\n        return None, 'JAVA_FULL_LLM_BODY_TYPE_INVALID'\n\n    def error_summary(payload, fallback):\n        parts = []\n        if fallback:\n            parts.append(str(fallback))\n        if isinstance(payload, dict):\n            for key in ('msg', 'errorCode', 'retryable', 'requestId'):\n                if key in payload and payload.get(key) not in (None, ''):\n                    parts.append('%s=%s' % (key, payload.get(key)))\n        return truncate('; '.join(parts))\n\n    def parse_http_code(value):\n        try:\n            return int(value)\n        except Exception:\n            return 0\n\n    status = 'error'\n    answer = ''\n    error = ''\n\n    payload, load_error = load_payload(body)\n    http_code = parse_http_code(status_code)\n\n    try:\n        if load_error:\n            error = error_summary(payload, load_error)\n        elif not isinstance(payload, dict):\n            error = error_summary(payload, 'JAVA_FULL_LLM_JSON_NOT_OBJECT')\n        elif http_code < 200 or http_code >= 300:\n            error = error_summary(\n                payload,\n                'JAVA_FULL_LLM_HTTP_ERROR status=%s' % http_code\n            )\n        elif payload.get('code') != 200:\n            error = error_summary(payload, 'JAVA_FULL_LLM_CODE_NOT_200')\n        else:\n            data = payload.get('data')\n            if not isinstance(data, dict):\n                error = error_summary(payload, 'JAVA_FULL_LLM_DATA_MISSING')\n            else:\n                choices = data.get('choices')\n                if not isinstance(choices, list) or not choices:\n                    error = error_summary(payload, 'JAVA_FULL_LLM_CHOICES_EMPTY')\n                else:\n                    first = choices[0] if isinstance(choices[0], dict) else {}\n                    message = (\n                        first.get('message')\n                        if isinstance(first.get('message'), dict)\n                        else {}\n                    )\n                    content = message.get('content')\n                    if not isinstance(content, str) or not content.strip():\n                        error = error_summary(\n                            payload,\n                            'JAVA_FULL_LLM_CONTENT_EMPTY'\n                        )\n                    else:\n                        answer = content.strip()\n                        status = 'ok'\n    except Exception as exc:\n        error = error_summary(payload, 'JAVA_FULL_LLM_PARSE_FAILED: %s' % exc)\n        answer = ''\n        status = 'error'\n\n    if status != 'ok':\n        answer = ''\n        status = 'error'\n        if not error:\n            error = 'JAVA_FULL_LLM_ERROR'\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n"
+          },
+          "position": {
+            "x": 5040,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5040,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "if_full",
+          "type": "custom",
+          "data": {
+            "title": "检查分析结果",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "full_parse",
+                      "full_llm_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok",
+                    "id": "if-full-ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
+          },
+          "position": {
+            "x": 5400,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5400,
+            "y": 80
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "llmlocal",
+          "type": "custom",
+          "data": {
+            "title": "生成分析结果",
+            "type": "llm",
+            "outputs": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "model": {
+              "provider": "langgenius/ollama/ollama",
+              "name": "qwen3.5:35b",
+              "mode": "chat",
+              "completion_params": {
+                "temperature": 0,
+                "top_p": 1,
+                "think": false,
+                "num_ctx": 32768,
+                "num_predict": 8192
+              }
+            },
+            "prompt_template": [
+              {
+                "role": "system",
+                "text": "{{#llm_input.llm_system_prompt#}}"
+              },
+              {
+                "role": "user",
+                "text": "{{#llm_input.llm_user_prompt#}}"
+              }
+            ],
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            }
+          },
+          "position": {
+            "x": 5760,
+            "y": 500
+          },
+          "positionAbsolute": {
+            "x": 5760,
+            "y": 500
+          },
+          "width": 340,
+          "height": 170
+        },
         {
           "id": "local_wrap",
           "type": "custom",
@@ -238,6 +505,88 @@
           },
           "width": 320,
           "height": 160
+        },
+        {
+          "id": "if_memory_write",
+          "type": "custom",
+          "data": {
+            "cases": [
+              {
+                "case_id": "memory_write_true",
+                "conditions": [
+                  {
+                    "comparison_operator": "is",
+                    "id": "d63dc58c-e794-4c8c-b59d-a14851665268",
+                    "value": true,
+                    "varType": "boolean",
+                    "variable_selector": [
+                      "jf_sql_plan",
+                      "jf_memory_write_ready"
+                    ]
+                  }
+                ],
+                "id": "memory_write_true",
+                "logical_operator": "and"
+              }
+            ],
+            "desc": "仅在存在可持久化查询范围时写回",
+            "isInIteration": false,
+            "isInLoop": false,
+            "selected": false,
+            "title": "检查查询记忆写回",
+            "type": "if-else"
+          },
+          "height": 126,
+          "position": {
+            "x": 3420,
+            "y": 900
+          },
+          "positionAbsolute": {
+            "x": 3420,
+            "y": 900
+          },
+          "selected": false,
+          "sourcePosition": "right",
+          "targetPosition": "left",
+          "width": 244
+        },
+        {
+          "id": "save_query_memory",
+          "type": "custom",
+          "data": {
+            "desc": "",
+            "items": [
+              {
+                "input_type": "variable",
+                "operation": "over-write",
+                "value": [
+                  "jf_sql_plan",
+                  "jf_current_execution_context_json"
+                ],
+                "variable_selector": [
+                  "conversation",
+                  "jf_query_memory_json"
+                ]
+              }
+            ],
+            "selected": false,
+            "title": "保存查询记忆",
+            "type": "assigner",
+            "version": "2"
+          },
+          "height": 88,
+          "position": {
+            "x": 3780,
+            "y": 900
+          },
+          "positionAbsolute": {
+            "x": 3780,
+            "y": 900
+          },
+          "selected": false,
+          "sourcePosition": "right",
+          "targetPosition": "left",
+          "width": 244
         }
       ],
       "edges": [
@@ -494,10 +843,22 @@
           "zIndex": 0
         },
         {
-          "id": "mysql_e07_if_llm",
+          "id": "mysql_e08_if_error",
           "type": "custom",
           "source": "if_sql_ok",
-          "target": "llm_input",
+          "target": "ans_sql_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "memory_e01_sql_ok_check",
+          "type": "custom",
+          "source": "if_sql_ok",
+          "target": "if_memory_write",
           "sourceHandle": "success",
           "targetHandle": "target",
           "data": {
@@ -506,11 +867,35 @@
           "zIndex": 0
         },
         {
-          "id": "mysql_e08_if_error",
+          "id": "memory_e02_true_save",
           "type": "custom",
-          "source": "if_sql_ok",
-          "target": "ans_sql_error",
+          "source": "if_memory_write",
+          "target": "save_query_memory",
+          "sourceHandle": "memory_write_true",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "memory_e03_false_llm",
+          "type": "custom",
+          "source": "if_memory_write",
+          "target": "llm_input",
           "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "memory_e04_save_llm",
+          "type": "custom",
+          "source": "save_query_memory",
+          "target": "llm_input",
+          "sourceHandle": "source",
           "targetHandle": "target",
           "data": {
             "isInIteration": false
@@ -523,6 +908,19 @@
         "y": 200,
         "zoom": 0.6
       }
-    }
+    },
+    "conversation_variables": [
+      {
+        "description": "查询记忆",
+        "id": "8d284552-ec57-45e1-a36d-37e391abb3cd",
+        "name": "jf_query_memory_json",
+        "selector": [
+          "conversation",
+          "jf_query_memory_json"
+        ],
+        "value": "{}",
+        "value_type": "string"
+      }
+    ]
   }
 }
