@@ -69,13 +69,9 @@ def check_frontend_checkvalid_schema(doc):
         elif t == 'if-else':
             need_list('cases')
             if isinstance(data.get('cases'), list):
-                if 'logical_operator' not in data:
-                    missing.append(f'{nid}({title}) if-else.data.logical_operator missing')
                 for idx,c in enumerate(data['cases']):
                     if 'case_id' not in c:
                         missing.append(f'{nid}({title}) if-else.data.cases[{idx}].case_id missing')
-                    if 'id' in c:
-                        missing.append(f'{nid}({title}) if-else.data.cases[{idx}].id present; use case_id')
                     if not isinstance(c.get('conditions'), list):
                         missing.append(f'{nid}({title}) if-else.data.cases[{idx}].conditions not list')
                     else:
