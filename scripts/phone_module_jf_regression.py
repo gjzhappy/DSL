@@ -283,6 +283,60 @@ def fuzzy_device_model_samples(nodes):
     must(invalid['where_filters'] == {'device_model': ['Magic6']}, 'invalid memory did not preserve single-turn behavior')
     return 48
 
+def query_memory_warning_samples(doc, nodes):
+    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    parsed = parse_ns['main'](registry_raw, 'ok')
+
+    def compile(question, memory=''):
+        result = plan_ns['main'](json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', memory)
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return json.loads(result['jf_sql_plan_json']), result['jf_current_execution_context_json']
+
+    first, memory = compile('请查询 Vivo X200 Pro 的主摄规格。')
+    expected_scope = first['query_scopes'][0]
+    expected_sql = first['sql']
+    expected_params = first['params']
+    scenarios = {}
+    for name, question in (
+        ('field_follow_up', '它的 Sensor 型号呢。'),
+        ('module_switch', '长焦呢？'),
+        ('comparison', '和小米15 Ultra对比一下。'),
+        ('continued_analysis', '分析一下这些规格。'),
+    ):
+        scenarios[name], _ = compile(question, memory)
+
+    for name in ('field_follow_up', 'continued_analysis'):
+        plan = scenarios[name]
+        warning_types = [item.get('type') for item in plan['warnings']]
+        must('NO_STRUCTURED_FILTER_FOUND' not in warning_types, name + ' emitted misleading filter warning')
+        must('将仅按 SELECT 字段查询' not in json.dumps(plan['warnings'], ensure_ascii=False), name + ' emitted misleading warning text')
+        must(plan['sql'] == expected_sql and plan['params'] == expected_params, name + ' changed SQL or params')
+        must(plan['query_scopes'] == [expected_scope], name + ' changed or duplicated query scope')
+
+    switched = scenarios['module_switch']
+    must(switched['warnings'] == [], 'module switch warnings changed')
+    must(switched['params'] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦', 200], 'module switch params changed')
+    must([scope['where_filters'] for scope in switched['query_scopes']] == [
+        {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']},
+        {'device_model': ['Vivo X200 pro'], 'module_name': ['长焦']},
+    ], 'module switch scopes changed')
+
+    compared = scenarios['comparison']
+    must(compared['params'] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄', 200], 'comparison params changed')
+    must(compared['query_scopes'][1]['select_fields'] == expected_scope['select_fields'], 'comparison did not inherit specification fields')
+    must('device_pic_url' not in compared['query_scopes'][1]['select_fields'] and '`device_pic_url`' not in compared['sql'], 'comparison fallback added device_pic_url')
+    must('SELECT_FIELDS_FALLBACK_USED' not in [item.get('type') for item in compared['warnings']], 'comparison emitted field fallback warning')
+
+    no_filter, _ = compile('Sensor型号有哪些？')
+    must(' WHERE ' not in no_filter['sql'] and 'NO_STRUCTURED_FILTER_FOUND' in [item.get('type') for item in no_filter['warnings']], 'unscoped query lost filter warning')
+    no_fields, _ = compile('请查询数据')
+    fallback = next((item for item in no_fields['warnings'] if item.get('type') == 'SELECT_FIELDS_FALLBACK_USED'), None)
+    must(fallback and fallback['fields'] == ['manufacturer', 'platform', 'device_type', 'device_model', 'module_name', 'device_pic_url'], 'field fallback or order changed')
+    return scenarios
+
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
@@ -291,11 +345,13 @@ def main():
     negative_count = negative_schema_injections(d)
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
+    memory_scenarios = query_memory_warning_samples(d, nodes)
     print('PASS frontend schema')
     print('PASS query-memory schema/graph/contract and negative injections: %d' % negative_count)
     for idx, actual in enumerate(sample_results, 1):
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
+    print('PASS query-memory warning/fallback scenarios: %d' % len(memory_scenarios))
 if __name__=='__main__':
     try: main()
     except Exception as e: print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)
