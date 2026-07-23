@@ -360,3 +360,136 @@
           "width": 320,
           "height": 130
         },
+        {
+          "id": "full_parse",
+          "type": "custom",
+          "data": {
+            "title": "整理分析结果",
+            "type": "code",
+            "outputs": {
+              "full_llm_result_json": {
+                "type": "string"
+              },
+              "full_llm_status": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def load_payload(raw):\n        if isinstance(raw, dict):\n            return raw, ''\n        if raw is None:\n            return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n        if isinstance(raw, str):\n            if not raw.strip():\n                return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n            try:\n                return json.loads(raw), ''\n            except Exception as exc:\n                return None, 'JAVA_FULL_LLM_BODY_JSON_INVALID: %s' % truncate(exc)\n        return None, 'JAVA_FULL_LLM_BODY_TYPE_INVALID'\n\n    def error_summary(payload, fallback):\n        parts = []\n        if fallback:\n            parts.append(str(fallback))\n        if isinstance(payload, dict):\n            for key in ('msg', 'errorCode', 'retryable', 'requestId'):\n                if key in payload and payload.get(key) not in (None, ''):\n                    parts.append('%s=%s' % (key, payload.get(key)))\n        return truncate('; '.join(parts))\n\n    def parse_http_code(value):\n        try:\n            return int(value)\n        except Exception:\n            return 0\n\n    status = 'error'\n    answer = ''\n    error = ''\n\n    payload, load_error = load_payload(body)\n    http_code = parse_http_code(status_code)\n\n    try:\n        if load_error:\n            error = error_summary(payload, load_error)\n        elif not isinstance(payload, dict):\n            error = error_summary(payload, 'JAVA_FULL_LLM_JSON_NOT_OBJECT')\n        elif http_code < 200 or http_code >= 300:\n            error = error_summary(\n                payload,\n                'JAVA_FULL_LLM_HTTP_ERROR status=%s' % http_code\n            )\n        elif payload.get('code') != 200:\n            error = error_summary(payload, 'JAVA_FULL_LLM_CODE_NOT_200')\n        else:\n            data = payload.get('data')\n            if not isinstance(data, dict):\n                error = error_summary(payload, 'JAVA_FULL_LLM_DATA_MISSING')\n            else:\n                choices = data.get('choices')\n                if not isinstance(choices, list) or not choices:\n                    error = error_summary(payload, 'JAVA_FULL_LLM_CHOICES_EMPTY')\n                else:\n                    first = choices[0] if isinstance(choices[0], dict) else {}\n                    message = (\n                        first.get('message')\n                        if isinstance(first.get('message'), dict)\n                        else {}\n                    )\n                    content = message.get('content')\n                    if not isinstance(content, str) or not content.strip():\n                        error = error_summary(\n                            payload,\n                            'JAVA_FULL_LLM_CONTENT_EMPTY'\n                        )\n                    else:\n                        answer = content.strip()\n                        status = 'ok'\n    except Exception as exc:\n        error = error_summary(payload, 'JAVA_FULL_LLM_PARSE_FAILED: %s' % exc)\n        answer = ''\n        status = 'error'\n\n    if status != 'ok':\n        answer = ''\n        status = 'error'\n        if not error:\n            error = 'JAVA_FULL_LLM_ERROR'\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n",
+            "variables": [
+              {
+                "variable": "body",
+                "value_selector": [
+                  "http_full",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http_full",
+                  "status_code"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def load_payload(raw):\n        if isinstance(raw, dict):\n            return raw, ''\n        if raw is None:\n            return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n        if isinstance(raw, str):\n            if not raw.strip():\n                return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n            try:\n                return json.loads(raw), ''\n            except Exception as exc:\n                return None, 'JAVA_FULL_LLM_BODY_JSON_INVALID: %s' % truncate(exc)\n        return None, 'JAVA_FULL_LLM_BODY_TYPE_INVALID'\n\n    def error_summary(payload, fallback):\n        parts = []\n        if fallback:\n            parts.append(str(fallback))\n        if isinstance(payload, dict):\n            for key in ('msg', 'errorCode', 'retryable', 'requestId'):\n                if key in payload and payload.get(key) not in (None, ''):\n                    parts.append('%s=%s' % (key, payload.get(key)))\n        return truncate('; '.join(parts))\n\n    def parse_http_code(value):\n        try:\n            return int(value)\n        except Exception:\n            return 0\n\n    status = 'error'\n    answer = ''\n    error = ''\n\n    payload, load_error = load_payload(body)\n    http_code = parse_http_code(status_code)\n\n    try:\n        if load_error:\n            error = error_summary(payload, load_error)\n        elif not isinstance(payload, dict):\n            error = error_summary(payload, 'JAVA_FULL_LLM_JSON_NOT_OBJECT')\n        elif http_code < 200 or http_code >= 300:\n            error = error_summary(\n                payload,\n                'JAVA_FULL_LLM_HTTP_ERROR status=%s' % http_code\n            )\n        elif payload.get('code') != 200:\n            error = error_summary(payload, 'JAVA_FULL_LLM_CODE_NOT_200')\n        else:\n            data = payload.get('data')\n            if not isinstance(data, dict):\n                error = error_summary(payload, 'JAVA_FULL_LLM_DATA_MISSING')\n            else:\n                choices = data.get('choices')\n                if not isinstance(choices, list) or not choices:\n                    error = error_summary(payload, 'JAVA_FULL_LLM_CHOICES_EMPTY')\n                else:\n                    first = choices[0] if isinstance(choices[0], dict) else {}\n                    message = (\n                        first.get('message')\n                        if isinstance(first.get('message'), dict)\n                        else {}\n                    )\n                    content = message.get('content')\n                    if not isinstance(content, str) or not content.strip():\n                        error = error_summary(\n                            payload,\n                            'JAVA_FULL_LLM_CONTENT_EMPTY'\n                        )\n                    else:\n                        answer = content.strip()\n                        status = 'ok'\n    except Exception as exc:\n        error = error_summary(payload, 'JAVA_FULL_LLM_PARSE_FAILED: %s' % exc)\n        answer = ''\n        status = 'error'\n\n    if status != 'ok':\n        answer = ''\n        status = 'error'\n        if not error:\n            error = 'JAVA_FULL_LLM_ERROR'\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n"
+          },
+          "position": {
+            "x": 5040,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5040,
+            "y": 80
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "if_full",
+          "type": "custom",
+          "data": {
+            "title": "检查分析结果",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "ok",
+                "conditions": [
+                  {
+                    "variable_selector": [
+                      "full_parse",
+                      "full_llm_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok",
+                    "id": "if-full-ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
+          },
+          "position": {
+            "x": 5400,
+            "y": 80
+          },
+          "positionAbsolute": {
+            "x": 5400,
+            "y": 80
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "llmlocal",
+          "type": "custom",
+          "data": {
+            "title": "生成分析结果",
+            "type": "llm",
+            "outputs": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "model": {
+              "provider": "langgenius/ollama/ollama",
+              "name": "qwen3.5:35b",
+              "mode": "chat",
+              "completion_params": {
+                "temperature": 0,
+                "top_p": 1,
+                "think": false,
+                "num_ctx": 32768,
+                "num_predict": 8192
+              }
+            },
+            "prompt_template": [
+              {
+                "role": "system",
+                "text": "{{#llm_input.llm_system_prompt#}}"
+              },
+              {
+                "role": "user",
+                "text": "{{#llm_input.llm_user_prompt#}}"
+              }
+            ],
+            "context": {
+              "enabled": false,
+              "variable_selector": []
+            },
+            "vision": {
+              "enabled": false
+            }
+          },
+          "position": {
+            "x": 5760,
+            "y": 500
+          },
+          "positionAbsolute": {
+            "x": 5760,
+            "y": 500
+          },
+          "width": 340,
+          "height": 170
+        },
