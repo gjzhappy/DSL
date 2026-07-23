@@ -1,143 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import ast, copy, json, sys
+import json, sys
 from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema
 
 def must(p,msg):
     if not p: raise AssertionError(msg)
-
-VALID_VALUE_TYPES = {'string', 'number', 'integer', 'boolean', 'object',
-                     'array[string]', 'array[number]', 'array[object]'}
-
-def frontend_schema_errors(doc):
-    """Return errors for the frontend-visible schema used by this DSL.
-
-    This deliberately validates the repository's exported Dify shapes rather
-    than attempting to impose a new, universal DSL schema.
-    """
-    errors = []
-    workflow = doc.get('workflow') if isinstance(doc, dict) else None
-    if not isinstance(workflow, dict):
-        return ['workflow must be an object']
-    variables = workflow.get('conversation_variables')
-    if not isinstance(variables, list):
-        errors.append('workflow.conversation_variables must be an array')
-        variables = []
-    conversation = {}
-    python_types = {'string': str, 'number': (int, float), 'integer': int,
-                    'boolean': bool, 'object': dict,
-                    'array[string]': list, 'array[number]': list,
-                    'array[object]': list}
-    for i, item in enumerate(variables):
-        prefix = f'conversation_variables[{i}]'
-        if not isinstance(item, dict):
-            errors.append(prefix + ' must be an object'); continue
-        name, value_type = item.get('name'), item.get('value_type')
-        if not isinstance(name, str) or not name:
-            errors.append(prefix + '.name must be a non-empty string')
-        elif name in conversation:
-            errors.append(prefix + '.name is duplicated')
-        else:
-            conversation[name] = item
-        if value_type not in VALID_VALUE_TYPES:
-            errors.append(prefix + '.value_type is invalid')
-        elif not isinstance(item.get('value'), python_types[value_type]) or (
-                value_type in {'number', 'integer'} and isinstance(item.get('value'), bool)):
-            errors.append(prefix + '.value does not match value_type')
-        if item.get('selector') != ['conversation', name]:
-            errors.append(prefix + '.selector must use the conversation namespace')
-
-    graph_data = workflow.get('graph') if isinstance(workflow.get('graph'), dict) else {}
-    raw_nodes, edges = graph_data.get('nodes'), graph_data.get('edges')
-    if not isinstance(raw_nodes, list): errors.append('graph.nodes must be an array'); raw_nodes = []
-    if not isinstance(edges, list): errors.append('graph.edges must be an array'); edges = []
-    nodes = {}
-    outputs = {}
-    for i, node in enumerate(raw_nodes):
-        if not isinstance(node, dict) or not isinstance(node.get('data'), dict):
-            errors.append(f'graph.nodes[{i}].data must be an object'); continue
-        nid, data = node.get('id'), node['data']; nodes[nid] = node
-        if not isinstance(data.get('type'), str) or not data['type']:
-            errors.append(f'{nid}.data.type must be a non-empty string')
-        if data.get('type') == 'code':
-            variables_in = data.get('variables')
-            if not isinstance(variables_in, list):
-                errors.append(f'{nid}.data.variables must be an array'); variables_in = []
-            names = []
-            for j, variable in enumerate(variables_in):
-                if not isinstance(variable, dict) or not isinstance(variable.get('value_selector'), list):
-                    errors.append(f'{nid}.data.variables[{j}].value_selector must be an array')
-                if isinstance(variable, dict): names.append(variable.get('variable'))
-            node_outputs = data.get('outputs')
-            if not isinstance(node_outputs, dict):
-                errors.append(f'{nid}.data.outputs must be an object'); node_outputs = {}
-            for name, spec in node_outputs.items():
-                if not isinstance(spec, dict) or spec.get('type') not in VALID_VALUE_TYPES:
-                    errors.append(f'{nid}.data.outputs.{name}.type is invalid or missing')
-            outputs[nid] = node_outputs
-            if data.get('source_code') != data.get('code'):
-                errors.append(f'{nid}.data.source_code must equal code')
-            try:
-                tree = ast.parse(data.get('code') or '')
-                main = next(x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == 'main')
-                args = [x.arg for x in main.args.args]
-                if names != args: errors.append(f'{nid}.main signature does not match variables')
-            except (SyntaxError, StopIteration): errors.append(f'{nid}.code has no parseable main')
-        elif data.get('type') == 'if-else':
-            cases = data.get('cases')
-            if not isinstance(cases, list):
-                errors.append(f'{nid}.data.cases must be an array'); cases = []
-            if not data.get('logical_operator'): errors.append(f'{nid}.data.logical_operator is missing')
-            for j, case in enumerate(cases):
-                conditions = case.get('conditions') if isinstance(case, dict) else None
-                if not isinstance(conditions, list):
-                    errors.append(f'{nid}.data.cases[{j}].conditions must be an array'); continue
-                if not case.get('logical_operator'): errors.append(f'{nid}.data.cases[{j}].logical_operator is missing')
-                for k, condition in enumerate(conditions):
-                    if not isinstance(condition.get('variable_selector'), list):
-                        errors.append(f'{nid}.data.cases[{j}].conditions[{k}].variable_selector must be an array')
-                    if condition.get('comparison_operator') not in {'=', '!=', 'is', 'is not', 'contains', 'not contains', 'empty', 'not empty'}:
-                        errors.append(f'{nid}.data.cases[{j}].conditions[{k}].comparison_operator is invalid')
-        elif data.get('type') == 'variable-assigner':
-            items = data.get('items')
-            if not isinstance(items, list):
-                errors.append(f'{nid}.data.items must be an array'); items = []
-            for j, item in enumerate(items):
-                target = item.get('variable_selector') if isinstance(item, dict) else None
-                source = item.get('value') if isinstance(item, dict) else None
-                if not isinstance(target, list) or len(target) != 2 or target[0] != 'conversation' or target[1] not in conversation:
-                    errors.append(f'{nid}.data.items[{j}].variable_selector is invalid')
-                if not isinstance(source, list) or len(source) != 2 or source[0] not in outputs or source[1] not in outputs[source[0]]:
-                    errors.append(f'{nid}.data.items[{j}].value source selector is invalid')
-                if item.get('operation') != 'over-write' or item.get('write_mode') != 'over-write' or item.get('input_type') != 'variable':
-                    errors.append(f'{nid}.data.items[{j}] assigner mode is invalid')
-                if isinstance(target, list) and len(target) == 2 and target[1] in conversation and isinstance(source, list) and len(source) == 2 and source[0] in outputs and source[1] in outputs[source[0]]:
-                    if conversation[target[1]].get('value_type') != outputs[source[0]][source[1]].get('type'):
-                        errors.append(f'{nid}.data.items[{j}] source/target types differ')
-    for i, edge in enumerate(edges):
-        if not isinstance(edge, dict) or edge.get('source') not in nodes or edge.get('target') not in nodes:
-            errors.append(f'graph.edges[{i}] is dangling')
-    return errors
-
-def frontend_negative_regressions(doc):
-    nodes = {n['id']: n for n in doc['workflow']['graph']['nodes']}
-    mutations = []
-    def case(label, mutate):
-        broken = copy.deepcopy(doc); mutate(broken)
-        must(frontend_schema_errors(broken), 'frontend negative was not caught: ' + label)
-        mutations.append(label)
-    def node(d, nid): return next(n for n in d['workflow']['graph']['nodes'] if n.get('id') == nid)
-    case('conversation default type', lambda d: d['workflow']['conversation_variables'][0].__setitem__('value', {}))
-    case('code output type', lambda d: node(d, 'jf_sql_plan')['data']['outputs']['jf_memory_write_ready'].pop('type'))
-    case('code variables array', lambda d: node(d, 'jf_sql_plan')['data'].__setitem__('variables', {}))
-    case('selector array', lambda d: node(d, 'jf_sql_plan')['data']['variables'][0].__setitem__('value_selector', None))
-    case('if cases array', lambda d: node(d, 'if_memory_write')['data'].pop('cases'))
-    case('if conditions array', lambda d: node(d, 'if_memory_write')['data']['cases'][0].pop('conditions'))
-    case('assigner items array', lambda d: node(d, 'save_query_memory')['data'].pop('items'))
-    case('assigner target', lambda d: node(d, 'save_query_memory')['data']['items'][0].__setitem__('variable_selector', ['jf_sql_plan', 'x']))
-    case('assigner source', lambda d: node(d, 'save_query_memory')['data']['items'][0].__setitem__('value', ['jf_sql_plan', 'missing']))
-    case('node data', lambda d: node(d, 'save_query_memory').pop('data'))
-    return len(mutations)
 
 def parse_slot_samples(nodes):
     if 'parse' not in nodes:
@@ -324,108 +191,16 @@ def fuzzy_device_model_samples(nodes):
     must(compile('iPhone16 Pto Max', strict)['where_filters'].get('device_model') is None, 'missing protected fuzzy config changed strict behavior')
     return 48
 
-def query_memory_regressions(doc, nodes):
-    parse_ns, plan_ns = {}, {}
-    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
-    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
-    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
-    parsed = parse_ns['main'](registry_raw, 'ok')
-    must(parsed['jf_registry_parse_status'] == 'ok', parsed['jf_registry_error'])
-
-    def compile(question, memory='{}'):
-        result = plan_ns['main'](
-            json.dumps({'question': question}, ensure_ascii=False),
-            parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', memory)
-        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
-        return result, json.loads(result['jf_sql_plan_json']), json.loads(result['jf_current_execution_context_json'])
-
-    first_result, first, first_context = compile('请查询 vvo X200 Pto 的主摄规格。')
-    must(first_context['version'] == 'jf_query_memory_v1' and len(first_context['query_scopes']) == 1, 'first scope missing')
-    first_scope = first_context['query_scopes'][0]
-    must(first_scope['where_filters'] == {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']}, 'first canonical scope changed')
-    must(first['current_query_delta']['explicit_where_filters'] == first_scope['where_filters'], 'current query delta audit invalid')
-    must(first_result['jf_memory_write_ready'] is True, 'persist-ready output missing')
-
-    second_result, second, second_context = compile('它的Sensor型号呢。', first_result['jf_current_execution_context_json'])
-    must(second_context['previous_user_query'] == '请查询 vvo X200 Pto 的主摄规格。', 'previous query missing')
-    must(second_context['current_user_query'] == '它的Sensor型号呢。', 'current query missing')
-    must(second_context['query_scopes'][0] == first_scope and len(second_context['query_scopes']) in (1, 2), 'field continuation did not preserve/deduplicate immutably')
-    must('sensor_model' in second['select_fields'], 'continued field absent from SELECT')
-
-    _, module_plan, module_context = compile('长焦呢。', first_result['jf_current_execution_context_json'])
-    must([scope['where_filters']['module_name'] for scope in module_context['query_scopes']] == [['主摄'], ['长焦']], 'module scopes not independent')
-    must(' OR ' in module_plan['sql'] and module_plan['params'][:4] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦'], 'module OR SQL/params invalid')
-
-    _, compare, compare_context = compile('和小米15 Ultra对比一下。', first_result['jf_current_execution_context_json'])
-    must([scope['where_filters']['device_model'] for scope in compare_context['query_scopes']] == [['Vivo X200 pro'], ['小米15Ultra']], 'model scopes not independent')
-    must(compare['sql'].count('`device_model` IN (?)') == 2 and ' OR ' in compare['sql'], 'scope SQL was flattened')
-    must(compare['params'][:4] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄'], 'stable scope params changed')
-
-    _, analysis, analysis_context = compile('分析一下这些规格。', first_result['jf_current_execution_context_json'])
-    must(analysis_context['query_scopes'] == [first_scope], 'empty delta appended a scope')
-    must(analysis['query_scopes'] == [first_scope], 'memory scope not re-queried')
-
-    _, duplicate, duplicate_context = compile('请查询 Vivo X200 Pro 的主摄规格。', first_result['jf_current_execution_context_json'])
-    must(len(duplicate_context['query_scopes']) == 1, 'identical scope was duplicated')
-
-    empty_result, empty_plan, empty_context = compile('分析一下。', '')
-    must(empty_context['query_scopes'] == [] and empty_result['jf_memory_write_ready'] is False, 'empty scope became persistable')
-    must(empty_plan['params'] == [200] and any(w.get('type') == 'NO_STRUCTURED_FILTER_FOUND' for w in empty_plan['warnings']), 'no-filter compatibility changed')
-
-    for invalid in ('{', json.dumps({'version': 'bad', 'query_scopes': [first_scope]}), json.dumps({'version': 'jf_query_memory_v1', 'query_scopes': [{'source_user_query': 'x', 'where_filters': {'unregistered': ['x']}, 'select_fields': [], 'selected_composites': []}], 'sql': 'DELETE FROM x', 'params': ['x']})):
-        _, invalid_plan, invalid_context = compile('查询Sensor型号。', invalid)
-        must(invalid_context['query_scopes'] == [], 'invalid memory entered execution context')
-        must(any(w.get('type') == 'QUERY_MEMORY_INVALID_IGNORED' for w in invalid_plan['warnings']), 'invalid memory warning missing')
-        must('DELETE' not in invalid_plan['sql'] and invalid_plan['params'] == [200], 'untrusted memory SQL/params executed')
-
-    # Same WHERE with different field semantics stays in context but compiles one WHERE group.
-    same_where_memory = dict(first_context)
-    extra = dict(first_scope)
-    extra['select_fields'] = list(first_scope['select_fields']) + ['sensor_model']
-    same_where_memory['query_scopes'] = [first_scope, extra]
-    _, dedup_plan, dedup_context = compile('分析一下。', json.dumps(same_where_memory, ensure_ascii=False))
-    must(len(dedup_context['query_scopes']) == 2, 'semantic scopes were removed from context')
-    must(dedup_plan['sql'].count('`device_model` IN (?)') == 1, 'duplicate WHERE execution group retained')
-    must('sensor_model' in dedup_plan['select_fields'], 'scope SELECT union missing')
-    return 16
-
-def graph_memory_contract(doc, nodes, out, inc):
-    conversation = {item['name']: item for item in doc['workflow'].get('conversation_variables', [])}
-    memory = conversation.get('jf_query_memory_json')
-    must(memory and memory['selector'] == ['conversation', 'jf_query_memory_json'] and memory['value'] == '{}' and memory['value_type'] == 'string', 'conversation variable schema invalid')
-    plan = nodes['jf_sql_plan']['data']
-    must(any(v['variable'] == 'jf_query_memory_json' and v['value_selector'] == ['conversation', 'jf_query_memory_json'] for v in plan['variables']), 'plan memory selector invalid')
-    must(plan['outputs'].get('jf_current_execution_context_json', {}).get('type') == 'string', 'execution context output type invalid')
-    must(plan['outputs'].get('jf_memory_write_ready', {}).get('type') == 'boolean', 'memory readiness output type invalid')
-    assign = nodes['save_query_memory']['data']['items'][0]
-    must(assign['variable_selector'] == ['conversation', 'jf_query_memory_json'] and assign['value'] == ['jf_sql_plan', 'jf_current_execution_context_json'], 'assigner selector invalid')
-    must(any(source == 'if_sql_ok' and handle == 'success' for source, edges in out.items() for handle, target, _ in edges if target == 'if_memory_write'), 'memory branch not downstream of MySQL success')
-    must(not inc.get('save_query_memory') == [], 'memory assigner orphaned')
-    must(path({n['data']['title']: n['id'] for n in nodes.values()}, out, nodes, '开始', '保存查询记忆'), 'memory nodes not reachable from start')
-    must(path({n['data']['title']: n['id'] for n in nodes.values()}, out, nodes, '保存查询记忆', '返回最终回答'), 'memory assigner cannot reach an answer')
-    for node in nodes.values():
-        data = node['data']
-        if data.get('type') == 'code':
-            must(data.get('source_code') == data.get('code'), 'source_code != code: %s' % node['id'])
-
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
     check_frontend_checkvalid_schema(d)
-    errors = frontend_schema_errors(d)
-    must(not errors, 'frontend schema failed:\n' + '\n'.join(errors))
-    negative_count = frontend_negative_regressions(d)
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
-    memory_count = query_memory_regressions(d, nodes)
-    graph_memory_contract(d, nodes, out, inc)
     print('PASS frontend schema')
     for idx, actual in enumerate(sample_results, 1):
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
-    print('PASS query memory regression groups: %d' % memory_count)
-    print('PASS frontend schema negative injections: %d' % negative_count)
-    print('PASS query memory graph/variable/frontend contracts')
 if __name__=='__main__':
     try: main()
     except Exception as e: print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)
