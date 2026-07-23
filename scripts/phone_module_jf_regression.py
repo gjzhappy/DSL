@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, sys
+import ast, copy, json, sys
+from collections import defaultdict, deque
 from graph_phone_common import load_doc, graph, path, check_frontend_checkvalid_schema
 
 def must(p,msg):
@@ -191,16 +192,318 @@ def fuzzy_device_model_samples(nodes):
     must(compile('iPhone16 Pto Max', strict)['where_filters'].get('device_model') is None, 'missing protected fuzzy config changed strict behavior')
     return 48
 
+def query_memory_regressions(doc, nodes):
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
+    parsed = parse_ns['main'](registry_raw, 'ok')
+    must(parsed['jf_registry_parse_status'] == 'ok', parsed['jf_registry_error'])
+
+    def compile(question, memory='{}'):
+        result = plan_ns['main'](
+            json.dumps({'question': question}, ensure_ascii=False),
+            parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', memory)
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return result, json.loads(result['jf_sql_plan_json']), json.loads(result['jf_current_execution_context_json'])
+
+    first_result, first, first_context = compile('请查询 vvo X200 Pto 的主摄规格。')
+    must(first_context['version'] == 'jf_query_memory_v1' and len(first_context['query_scopes']) == 1, 'first scope missing')
+    first_scope = first_context['query_scopes'][0]
+    must(first_scope['where_filters'] == {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']}, 'first canonical scope changed')
+    must(first['current_query_delta']['explicit_where_filters'] == first_scope['where_filters'], 'current query delta audit invalid')
+    must(first_result['jf_memory_write_ready'] is True, 'persist-ready output missing')
+
+    second_result, second, second_context = compile('它的Sensor型号呢。', first_result['jf_current_execution_context_json'])
+    must(second_context['previous_user_query'] == '请查询 vvo X200 Pto 的主摄规格。', 'previous query missing')
+    must(second_context['current_user_query'] == '它的Sensor型号呢。', 'current query missing')
+    must(second_context['query_scopes'][0] == first_scope and len(second_context['query_scopes']) in (1, 2), 'field continuation did not preserve/deduplicate immutably')
+    must('sensor_model' in second['select_fields'], 'continued field absent from SELECT')
+
+    _, module_plan, module_context = compile('长焦呢。', first_result['jf_current_execution_context_json'])
+    must([scope['where_filters']['module_name'] for scope in module_context['query_scopes']] == [['主摄'], ['长焦']], 'module scopes not independent')
+    must(' OR ' in module_plan['sql'] and module_plan['params'][:4] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦'], 'module OR SQL/params invalid')
+
+    _, compare, compare_context = compile('和小米15 Ultra对比一下。', first_result['jf_current_execution_context_json'])
+    must([scope['where_filters']['device_model'] for scope in compare_context['query_scopes']] == [['Vivo X200 pro'], ['小米15Ultra']], 'model scopes not independent')
+    must(compare['sql'].count('`device_model` IN (?)') == 2 and ' OR ' in compare['sql'], 'scope SQL was flattened')
+    must(compare['params'][:4] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄'], 'stable scope params changed')
+
+    _, analysis, analysis_context = compile('分析一下这些规格。', first_result['jf_current_execution_context_json'])
+    must(analysis_context['query_scopes'] == [first_scope], 'empty delta appended a scope')
+    must(analysis['query_scopes'] == [first_scope], 'memory scope not re-queried')
+
+    _, duplicate, duplicate_context = compile('请查询 Vivo X200 Pro 的主摄规格。', first_result['jf_current_execution_context_json'])
+    must(len(duplicate_context['query_scopes']) == 1, 'identical scope was duplicated')
+
+    empty_result, empty_plan, empty_context = compile('分析一下。', '')
+    must(empty_context['query_scopes'] == [] and empty_result['jf_memory_write_ready'] is False, 'empty scope became persistable')
+    must(empty_plan['params'] == [200] and any(w.get('type') == 'NO_STRUCTURED_FILTER_FOUND' for w in empty_plan['warnings']), 'no-filter compatibility changed')
+
+    for invalid in ('{', json.dumps({'version': 'bad', 'query_scopes': [first_scope]}), json.dumps({'version': 'jf_query_memory_v1', 'query_scopes': [{'source_user_query': 'x', 'where_filters': {'unregistered': ['x']}, 'select_fields': [], 'selected_composites': []}], 'sql': 'DELETE FROM x', 'params': ['x']})):
+        _, invalid_plan, invalid_context = compile('查询Sensor型号。', invalid)
+        must(invalid_context['query_scopes'] == [], 'invalid memory entered execution context')
+        must(any(w.get('type') == 'QUERY_MEMORY_INVALID_IGNORED' for w in invalid_plan['warnings']), 'invalid memory warning missing')
+        must('DELETE' not in invalid_plan['sql'] and invalid_plan['params'] == [200], 'untrusted memory SQL/params executed')
+
+    # Same WHERE with different field semantics stays in context but compiles one WHERE group.
+    same_where_memory = dict(first_context)
+    extra = dict(first_scope)
+    extra['select_fields'] = list(first_scope['select_fields']) + ['sensor_model']
+    same_where_memory['query_scopes'] = [first_scope, extra]
+    _, dedup_plan, dedup_context = compile('分析一下。', json.dumps(same_where_memory, ensure_ascii=False))
+    must(len(dedup_context['query_scopes']) == 2, 'semantic scopes were removed from context')
+    must(dedup_plan['sql'].count('`device_model` IN (?)') == 1, 'duplicate WHERE execution group retained')
+    must('sensor_model' in dedup_plan['select_fields'], 'scope SELECT union missing')
+    return 16
+
+def validate_memory_frontend_schema(doc):
+    errors = []
+    workflow = doc.get('workflow') if isinstance(doc, dict) else None
+    if not isinstance(workflow, dict):
+        return ['workflow must be object']
+    conversation_items = workflow.get('conversation_variables', [])
+    if not isinstance(conversation_items, list):
+        errors.append('conversation_variables must be array')
+        conversation_items = []
+    conversation = {}
+    value_types = {'string': str, 'boolean': bool, 'number': (int, float), 'object': dict, 'array': list}
+    for index, item in enumerate(conversation_items):
+        prefix = 'conversation_variables[%d]' % index
+        if not isinstance(item, dict):
+            errors.append(prefix + ' must be object')
+            continue
+        name = item.get('name')
+        value_type = item.get('value_type')
+        selector = item.get('selector')
+        if not isinstance(name, str) or not name:
+            errors.append(prefix + '.name must be non-empty string')
+        elif name in conversation:
+            errors.append(prefix + '.name duplicate')
+        else:
+            conversation[name] = item
+        if value_type not in value_types:
+            errors.append(prefix + '.value_type invalid')
+        elif not isinstance(item.get('value'), value_types[value_type]):
+            errors.append(prefix + '.value type mismatch')
+        if not isinstance(item.get('description'), str):
+            errors.append(prefix + '.description must be string')
+        if not isinstance(selector, list) or selector != ['conversation', name]:
+            errors.append(prefix + '.selector invalid')
+
+    graph_obj = workflow.get('graph') if isinstance(workflow.get('graph'), dict) else {}
+    node_list = graph_obj.get('nodes')
+    edge_list = graph_obj.get('edges')
+    if not isinstance(node_list, list):
+        return errors + ['workflow.graph.nodes must be array']
+    if not isinstance(edge_list, list):
+        return errors + ['workflow.graph.edges must be array']
+    nodes = {}
+    output_types = {}
+    for index, node in enumerate(node_list):
+        prefix = 'nodes[%d]' % index
+        if not isinstance(node, dict) or not isinstance(node.get('data'), dict):
+            errors.append(prefix + '.data must be object')
+            continue
+        node_id = node.get('id')
+        data = node['data']
+        if not isinstance(node_id, str) or not node_id or not isinstance(data.get('type'), str):
+            errors.append(prefix + ' id/type invalid')
+            continue
+        nodes[node_id] = node
+        if data['type'] == 'code':
+            variables = data.get('variables')
+            outputs = data.get('outputs')
+            if not isinstance(variables, list):
+                errors.append(node_id + '.data.variables must be array')
+                variables = []
+            if not isinstance(outputs, dict):
+                errors.append(node_id + '.data.outputs must be object')
+                outputs = {}
+            for name, output in outputs.items():
+                if not isinstance(output, dict) or output.get('type') not in value_types:
+                    errors.append(node_id + '.data.outputs.' + name + '.type invalid')
+                else:
+                    output_types[(node_id, name)] = output['type']
+            if data.get('source_code') != data.get('code'):
+                errors.append(node_id + '.source_code != code')
+            try:
+                tree = ast.parse(data.get('code') or '')
+                main_node = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == 'main')
+                arguments = {arg.arg for arg in main_node.args.args}
+            except Exception:
+                arguments = set()
+                errors.append(node_id + '.code main signature invalid')
+            names = []
+            for variable in variables:
+                if not isinstance(variable, dict) or not isinstance(variable.get('variable'), str):
+                    errors.append(node_id + '.data.variables item invalid')
+                    continue
+                names.append(variable['variable'])
+                selector = variable.get('value_selector')
+                if not isinstance(selector, list) or len(selector) != 2 or not all(isinstance(part, str) and part for part in selector):
+                    errors.append(node_id + '.data.variables.' + variable['variable'] + '.value_selector invalid')
+            if len(names) != len(set(names)) or any(name not in arguments for name in names):
+                errors.append(node_id + '.variables/main signature mismatch')
+        elif data['type'] == 'if-else':
+            cases = data.get('cases')
+            if not isinstance(cases, list):
+                errors.append(node_id + '.data.cases must be array')
+                cases = []
+            if data.get('logical_operator') not in ('and', 'or'):
+                errors.append(node_id + '.data.logical_operator invalid')
+            for case_index, case in enumerate(cases):
+                conditions = case.get('conditions') if isinstance(case, dict) else None
+                if not isinstance(conditions, list):
+                    errors.append(node_id + '.data.cases[%d].conditions must be array' % case_index)
+                    continue
+                if not isinstance(case.get('case_id'), str) or case.get('logical_operator') not in ('and', 'or'):
+                    errors.append(node_id + '.data.cases[%d] metadata invalid' % case_index)
+                for condition in conditions:
+                    selector = condition.get('variable_selector') if isinstance(condition, dict) else None
+                    if (not isinstance(condition, dict) or not isinstance(condition.get('id'), str)
+                            or not isinstance(selector, list) or len(selector) != 2
+                            or condition.get('comparison_operator') not in ('is', 'is not', 'contains', 'not contains', 'start with', 'end with', 'empty', 'not empty', 'null', 'not null', 'in', 'not in', '=', '≠', '>', '<', '≥', '≤')):
+                        errors.append(node_id + '.condition schema invalid')
+        elif data['type'] == 'variable-assigner':
+            # Dify 1.13.2 v2 assigner renderer reads desc/items before normalization.
+            if not isinstance(data.get('desc'), str):
+                errors.append(node_id + '.data.desc must be string')
+            if not isinstance(data.get('selected'), bool):
+                errors.append(node_id + '.data.selected must be boolean')
+            items = data.get('items')
+            if not isinstance(items, list):
+                errors.append(node_id + '.data.items must be array')
+                items = []
+            if data.get('version') != '2':
+                errors.append(node_id + '.data.version invalid')
+            for item in items:
+                target = item.get('variable_selector') if isinstance(item, dict) else None
+                source = item.get('value') if isinstance(item, dict) else None
+                if not isinstance(target, list) or len(target) != 2 or target[0] != 'conversation' or target[1] not in conversation:
+                    errors.append(node_id + '.item target selector invalid')
+                if not isinstance(source, list) or len(source) != 2 or tuple(source) not in output_types:
+                    errors.append(node_id + '.item source selector invalid')
+                elif isinstance(target, list) and len(target) == 2 and target[1] in conversation:
+                    if output_types[tuple(source)] != conversation[target[1]].get('value_type'):
+                        errors.append(node_id + '.item source/target type mismatch')
+                if not isinstance(item, dict) or item.get('input_type') != 'variable' or item.get('operation') != 'over-write' or item.get('write_mode') != 'over-write':
+                    errors.append(node_id + '.item operation schema invalid')
+
+    for node_id, node in nodes.items():
+        if node['data'].get('type') != 'code' or not isinstance(node['data'].get('variables'), list):
+            continue
+        for variable in node['data']['variables']:
+            selector = variable.get('value_selector') if isinstance(variable, dict) else None
+            if not isinstance(selector, list) or len(selector) != 2:
+                continue
+            namespace, name = selector
+            if namespace == 'conversation' and name not in conversation:
+                errors.append(node_id + '.input conversation selector source missing')
+            elif namespace not in ('conversation', 'env', 'sys') and namespace not in nodes:
+                errors.append(node_id + '.input selector node missing')
+            elif namespace in nodes and isinstance(nodes[namespace]['data'].get('outputs'), dict) and name not in nodes[namespace]['data']['outputs']:
+                errors.append(node_id + '.input selector output missing')
+
+    adjacency = defaultdict(list)
+    reverse = defaultdict(list)
+    edge_ids = set()
+    for edge in edge_list:
+        if not isinstance(edge, dict):
+            errors.append('edge must be object')
+            continue
+        edge_id = edge.get('id')
+        source, target = edge.get('source'), edge.get('target')
+        if not isinstance(edge_id, str) or edge_id in edge_ids or source not in nodes or target not in nodes:
+            errors.append('edge id/endpoints invalid')
+            continue
+        edge_ids.add(edge_id)
+        if not isinstance(edge.get('sourceHandle'), str) or not isinstance(edge.get('targetHandle'), str) or not isinstance(edge.get('data'), dict):
+            errors.append(edge_id + ' handles/data invalid')
+        source_data = nodes[source]['data']
+        if source_data.get('type') == 'if-else':
+            handles = {case.get('case_id') for case in source_data.get('cases', []) if isinstance(case, dict)} | {'false'}
+            if edge.get('sourceHandle') not in handles:
+                errors.append(edge_id + ' sourceHandle invalid')
+        adjacency[source].append(target)
+        reverse[target].append(source)
+    def reachable(start, links):
+        seen, queue = set(), deque([start])
+        while queue:
+            current = queue.popleft()
+            if current in seen:
+                continue
+            seen.add(current)
+            queue.extend(links[current])
+        return seen
+    from_start = reachable('start', adjacency)
+    answers = [node_id for node_id, node in nodes.items() if node['data'].get('type') == 'answer']
+    to_answer = set().union(*(reachable(answer, reverse) for answer in answers)) if answers else set()
+    for node_id in nodes:
+        if node_id not in from_start:
+            errors.append(node_id + ' unreachable from start')
+        if node_id not in to_answer:
+            errors.append(node_id + ' cannot reach answer')
+    return errors
+
+def frontend_schema_negative_regressions(doc):
+    cases = []
+    def broken(label, mutate):
+        candidate = copy.deepcopy(doc)
+        mutate(candidate)
+        must(validate_memory_frontend_schema(candidate), 'frontend negative not detected: ' + label)
+        cases.append(label)
+    def node(candidate, node_id):
+        return next(item for item in candidate['workflow']['graph']['nodes'] if item.get('id') == node_id)
+    broken('conversation default type', lambda d: d['workflow']['conversation_variables'][0].__setitem__('value', {}))
+    broken('code output type missing', lambda d: node(d, 'jf_sql_plan')['data']['outputs']['jf_memory_write_ready'].pop('type'))
+    broken('code variables not array', lambda d: node(d, 'jf_sql_plan')['data'].__setitem__('variables', {}))
+    broken('selector not array', lambda d: node(d, 'jf_sql_plan')['data']['variables'][-1].__setitem__('value_selector', 'conversation.jf_query_memory_json'))
+    broken('if cases missing', lambda d: node(d, 'if_memory_write')['data'].pop('cases'))
+    broken('if conditions not array', lambda d: node(d, 'if_memory_write')['data']['cases'][0].__setitem__('conditions', {}))
+    broken('assigner items missing', lambda d: node(d, 'save_query_memory')['data'].pop('items'))
+    broken('assigner target invalid', lambda d: node(d, 'save_query_memory')['data']['items'][0].__setitem__('variable_selector', ['conversation', 'missing']))
+    broken('assigner source invalid', lambda d: node(d, 'save_query_memory')['data']['items'][0].__setitem__('value', ['jf_sql_plan', 'missing']))
+    broken('node data missing', lambda d: node(d, 'save_query_memory').pop('data'))
+    return len(cases)
+
+def graph_memory_contract(doc, nodes, out, inc):
+    conversation = {item['name']: item for item in doc['workflow'].get('conversation_variables', [])}
+    memory = conversation.get('jf_query_memory_json')
+    must(memory and memory['selector'] == ['conversation', 'jf_query_memory_json'] and memory['value'] == '{}' and memory['value_type'] == 'string', 'conversation variable schema invalid')
+    plan = nodes['jf_sql_plan']['data']
+    must(any(v['variable'] == 'jf_query_memory_json' and v['value_selector'] == ['conversation', 'jf_query_memory_json'] for v in plan['variables']), 'plan memory selector invalid')
+    must({'jf_current_execution_context_json', 'jf_memory_write_ready'} <= set(plan['outputs']), 'plan memory outputs missing')
+    must(plan['outputs']['jf_current_execution_context_json']['type'] == 'string' and plan['outputs']['jf_memory_write_ready']['type'] == 'boolean', 'plan memory output types invalid')
+    assign_data = nodes['save_query_memory']['data']
+    must(assign_data.get('desc') == '' and assign_data.get('selected') is False, 'assigner frontend metadata invalid')
+    assign = assign_data['items'][0]
+    must(assign['variable_selector'] == ['conversation', 'jf_query_memory_json'] and assign['value'] == ['jf_sql_plan', 'jf_current_execution_context_json'], 'assigner selector invalid')
+    must(any(source == 'if_sql_ok' and handle == 'success' for source, edges in out.items() for handle, target, _ in edges if target == 'if_memory_write'), 'memory branch not downstream of MySQL success')
+    must(not inc.get('save_query_memory') == [], 'memory assigner orphaned')
+    for node in nodes.values():
+        data = node['data']
+        if data.get('type') == 'code':
+            must(data.get('source_code') == data.get('code'), 'source_code != code: %s' % node['id'])
+
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
     check_frontend_checkvalid_schema(d)
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
+    memory_count = query_memory_regressions(d, nodes)
+    graph_memory_contract(d, nodes, out, inc)
+    frontend_errors = validate_memory_frontend_schema(d)
+    must(not frontend_errors, 'frontend schema errors: ' + '; '.join(frontend_errors))
+    frontend_negative_count = frontend_schema_negative_regressions(d)
     print('PASS frontend schema')
     for idx, actual in enumerate(sample_results, 1):
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
+    print('PASS query memory regression groups: %d' % memory_count)
+    print('PASS query memory graph/variable/frontend contracts')
+    print('PASS frontend schema negative regressions: %d' % frontend_negative_count)
 if __name__=='__main__':
     try: main()
     except Exception as e: print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)
