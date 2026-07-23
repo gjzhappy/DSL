@@ -584,7 +584,7 @@
         ,{
           "id": "if_memory_write", "type": "custom",
           "data": {"title": "检查查询记忆写回", "type": "if-else",
-            "cases": [{"case_id": "success", "conditions": [{"id": "if-memory-write-ready", "variable_selector": ["jf_sql_plan", "jf_memory_write_ready"], "comparison_operator": "=", "value": "true"}], "logical_operator": "and"}], "logical_operator": "and"},
+            "cases": [{"case_id": "success", "conditions": [{"id": "if-memory-write-ready", "variable_selector": ["jf_sql_plan", "jf_memory_write_ready"], "comparison_operator": "=", "value": true}], "logical_operator": "and"}], "logical_operator": "and"},
           "position": {"x": 3400, "y": 1000}, "positionAbsolute": {"x": 3400, "y": 1000}, "width": 300, "height": 154
         },
         {
