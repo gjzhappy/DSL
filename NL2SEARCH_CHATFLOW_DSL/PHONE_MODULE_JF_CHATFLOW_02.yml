@@ -1,0 +1,528 @@
+        {
+          "id": "local_wrap",
+          "type": "custom",
+          "data": {
+            "title": "汇总分析结果",
+            "type": "code",
+            "outputs": {
+              "llm_handler_result_json": {
+                "type": "string"
+              },
+              "local_llm_result_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(local_text='', full_llm_result_json='', llm_handler_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    llm_input = load_json(llm_handler_input_json)\n    full_result = load_json(full_llm_result_json)\n    query_plan = llm_input.get('query_plan') if isinstance(llm_input.get('query_plan'), dict) else {}\n    query_result = llm_input.get('query_result') if isinstance(llm_input.get('query_result'), dict) else {}\n    output_kind = str(llm_input.get('output_kind') or 'text')\n    artifact_type = str(llm_input.get('artifact_type') or 'markdown_text')\n    task_type = str(llm_input.get('llm_task_type') or output_kind)\n\n    if llm_input.get('status') == 'error':\n        error = str(llm_input.get('error') or 'LLM_INPUT_ERROR')\n        text = str(llm_input.get('user_prompt') or error)\n        result = {\n            'handler_status': 'error',\n            'output_kind': output_kind,\n            'answer': text,\n            'artifact_type': artifact_type,\n            'artifact_payload_json': json.dumps({'source': 'llm_input_guard', 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n            'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n            'query_result_json': json.dumps(query_result, ensure_ascii=False),\n            'error': text\n        }\n        encoded = json.dumps(result, ensure_ascii=False)\n        return {\n            'llm_handler_result_json': encoded,\n            'local_llm_result_json': encoded\n        }\n\n    source = 'local_llm'\n    text = str(local_text or '').strip()\n    error = ''\n    if full_result.get('llm_status') == 'ok' and str(full_result.get('llm_text') or '').strip():\n        source = 'full_llm'\n        text = str(full_result.get('llm_text') or '').strip()\n    elif text:\n        source = 'local_llm'\n    else:\n        error = full_result.get('error') or 'LLM 未返回有效文本'\n        text = 'LLM 输出生成完成，但模型未返回有效文本。'\n\n    result = {\n        'handler_status': 'ok' if not error else 'error',\n        'output_kind': output_kind,\n        'answer': text,\n        'artifact_type': artifact_type,\n        'artifact_payload_json': json.dumps({'source': source, 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': error\n    }\n    encoded = json.dumps(result, ensure_ascii=False)\n    return {\n        'llm_handler_result_json': encoded,\n        'local_llm_result_json': encoded\n    }\n",
+            "variables": [
+              {
+                "variable": "local_text",
+                "value_selector": [
+                  "llmlocal",
+                  "text"
+                ]
+              },
+              {
+                "variable": "full_llm_result_json",
+                "value_selector": [
+                  "full_parse",
+                  "full_llm_result_json"
+                ]
+              },
+              {
+                "variable": "llm_handler_input_json",
+                "value_selector": [
+                  "llm_input",
+                  "llm_handler_input_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(local_text='', full_llm_result_json='', llm_handler_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    llm_input = load_json(llm_handler_input_json)\n    full_result = load_json(full_llm_result_json)\n    query_plan = llm_input.get('query_plan') if isinstance(llm_input.get('query_plan'), dict) else {}\n    query_result = llm_input.get('query_result') if isinstance(llm_input.get('query_result'), dict) else {}\n    output_kind = str(llm_input.get('output_kind') or 'text')\n    artifact_type = str(llm_input.get('artifact_type') or 'markdown_text')\n    task_type = str(llm_input.get('llm_task_type') or output_kind)\n\n    if llm_input.get('status') == 'error':\n        error = str(llm_input.get('error') or 'LLM_INPUT_ERROR')\n        text = str(llm_input.get('user_prompt') or error)\n        result = {\n            'handler_status': 'error',\n            'output_kind': output_kind,\n            'answer': text,\n            'artifact_type': artifact_type,\n            'artifact_payload_json': json.dumps({'source': 'llm_input_guard', 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n            'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n            'query_result_json': json.dumps(query_result, ensure_ascii=False),\n            'error': text\n        }\n        encoded = json.dumps(result, ensure_ascii=False)\n        return {\n            'llm_handler_result_json': encoded,\n            'local_llm_result_json': encoded\n        }\n\n    source = 'local_llm'\n    text = str(local_text or '').strip()\n    error = ''\n    if full_result.get('llm_status') == 'ok' and str(full_result.get('llm_text') or '').strip():\n        source = 'full_llm'\n        text = str(full_result.get('llm_text') or '').strip()\n    elif text:\n        source = 'local_llm'\n    else:\n        error = full_result.get('error') or 'LLM 未返回有效文本'\n        text = 'LLM 输出生成完成，但模型未返回有效文本。'\n\n    result = {\n        'handler_status': 'ok' if not error else 'error',\n        'output_kind': output_kind,\n        'answer': text,\n        'artifact_type': artifact_type,\n        'artifact_payload_json': json.dumps({'source': source, 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': error\n    }\n    encoded = json.dumps(result, ensure_ascii=False)\n    return {\n        'llm_handler_result_json': encoded,\n        'local_llm_result_json': encoded\n    }\n"
+          },
+          "position": {
+            "x": 7200,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 7200,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "final",
+          "type": "custom",
+          "data": {
+            "title": "生成最终回答",
+            "type": "code",
+            "outputs": {
+              "final_answer": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(llm_handler_result_json=''):\n    import json\n\n    try:\n        obj = json.loads(llm_handler_result_json or '{}')\n    except Exception:\n        obj = {}\n\n    if obj:\n        if obj.get('handler_status') == 'error':\n            return {'final_answer': obj.get('error') or 'PHONE 输出处理失败'}\n        return {'final_answer': obj.get('answer') or json.dumps(obj, ensure_ascii=False)}\n\n    return {'final_answer': 'PHONE 查询完成，但未生成有效回答。'}\n",
+            "variables": [
+              {
+                "variable": "llm_handler_result_json",
+                "value_selector": [
+                  "local_wrap",
+                  "llm_handler_result_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(llm_handler_result_json=''):\n    import json\n\n    try:\n        obj = json.loads(llm_handler_result_json or '{}')\n    except Exception:\n        obj = {}\n\n    if obj:\n        if obj.get('handler_status') == 'error':\n            return {'final_answer': obj.get('error') or 'PHONE 输出处理失败'}\n        return {'final_answer': obj.get('answer') or json.dumps(obj, ensure_ascii=False)}\n\n    return {'final_answer': 'PHONE 查询完成，但未生成有效回答。'}\n"
+          },
+          "position": {
+            "x": 7560,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 7560,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "ans",
+          "type": "custom",
+          "data": {
+            "title": "返回最终回答",
+            "type": "answer",
+            "answer": "{{#final.final_answer#}}",
+            "outputs": [],
+            "variables": []
+          },
+          "position": {
+            "x": 7920,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 7920,
+            "y": 300
+          },
+          "width": 280,
+          "height": 110
+        },
+        {
+          "id": "if_mysql_request_ok",
+          "type": "custom",
+          "data": {
+            "title": "检查查询方案",
+            "type": "if-else",
+            "logical_operator": "and",
+            "cases": [
+              {
+                "case_id": "success",
+                "logical_operator": "and",
+                "conditions": [
+                  {
+                    "id": "if-mysql-request-ok",
+                    "variable_selector": [
+                      "mysql_request",
+                      "mysql_request_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
+                  }
+                ]
+              }
+            ]
+          },
+          "position": {
+            "x": 2160,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 2160,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "http_mysql_query",
+          "type": "custom",
+          "data": {
+            "title": "查询业务数据",
+            "type": "http-request",
+            "method": "POST",
+            "url": "{{#env.SN_MYSQL_QUERY_URLS#}}",
+            "body": {
+              "type": "json",
+              "data": "{{#mysql_request.mysql_request_body_json#}}"
+            },
+            "headers": "Content-Type: application/json\nAccept: application/json",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 10000,
+              "max_read_timeout": 120000,
+              "max_write_timeout": 10000
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 2,
+              "retry_interval": 1000
+            }
+          },
+          "position": {
+            "x": 2520,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 2520,
+            "y": 300
+          },
+          "width": 320,
+          "height": 140
+        },
+        {
+          "id": "mysql_normalize",
+          "type": "custom",
+          "data": {
+            "title": "整理查询结果",
+            "type": "code",
+            "code_language": "python3",
+            "outputs": {
+              "mysql_query_result_json": {
+                "type": "string"
+              },
+              "mysql_query_status": {
+                "type": "string"
+              },
+              "mysql_query_error_answer": {
+                "type": "string"
+              }
+            },
+            "variables": [
+              {
+                "variable": "body",
+                "value_selector": [
+                  "http_mysql_query",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http_mysql_query",
+                  "status_code"
+                ]
+              },
+              {
+                "variable": "jf_sql_plan_json",
+                "value_selector": [
+                  "jf_sql_plan",
+                  "jf_sql_plan_json"
+                ]
+              }
+            ],
+            "source_code": "def main(body='', status_code=0, jf_sql_plan_json=''):\n    import json\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def fail(message, plan):\n        result = {'status':'error','source':'mysql_http','rows':[],'row_count':0,'sql_plan':plan,'error':message}\n        return {\n            'mysql_query_result_json': dump(result),\n            'mysql_query_status': 'error',\n            'mysql_query_error_answer': 'MySQL 查询失败，原因：%s' % message,\n        }\n\n    plan = load_json(jf_sql_plan_json, {})\n    try:\n        http_status = int(status_code or 0)\n    except Exception:\n        http_status = 0\n\n    if http_status < 200 or http_status >= 300:\n        return fail('后端接口 HTTP 状态异常: %s' % http_status, plan)\n\n    try:\n        payload = json.loads(body or '{}')\n    except Exception as exc:\n        return fail('后端接口响应不是合法 JSON: %s' % exc, plan)\n\n    if not isinstance(payload, dict):\n        return fail('后端接口响应顶层不是 JSON 对象。', plan)\n\n    response_code = payload.get('code')\n    if response_code not in (None, 0, 200, '0', '200'):\n        message = payload.get('msg') or payload.get('message') or '后端接口返回失败状态'\n        return fail('%s，code=%s' % (message, response_code), plan)\n\n    data = payload.get('data')\n    if not isinstance(data, dict):\n        return fail('后端接口响应缺少 data 对象。', plan)\n\n    rows = data.get('rows')\n    if rows is None:\n        rows = []\n    if not isinstance(rows, list):\n        return fail('后端接口 data.rows 不是数组。', plan)\n\n    row_count = data.get('rowCount')\n    if row_count is None:\n        row_count = data.get('row_count')\n    try:\n        row_count = int(row_count)\n    except Exception:\n        row_count = len(rows)\n\n    result = {'status':'ok','source':'mysql_http','rows':rows,'row_count':row_count,'sql_plan':plan,'error':''}\n    return {\n        'mysql_query_result_json': dump(result),\n        'mysql_query_status': 'ok',\n        'mysql_query_error_answer': '',\n    }\n",
+            "code": "def main(body='', status_code=0, jf_sql_plan_json=''):\n    import json\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def fail(message, plan):\n        result = {'status':'error','source':'mysql_http','rows':[],'row_count':0,'sql_plan':plan,'error':message}\n        return {\n            'mysql_query_result_json': dump(result),\n            'mysql_query_status': 'error',\n            'mysql_query_error_answer': 'MySQL 查询失败，原因：%s' % message,\n        }\n\n    plan = load_json(jf_sql_plan_json, {})\n    try:\n        http_status = int(status_code or 0)\n    except Exception:\n        http_status = 0\n\n    if http_status < 200 or http_status >= 300:\n        return fail('后端接口 HTTP 状态异常: %s' % http_status, plan)\n\n    try:\n        payload = json.loads(body or '{}')\n    except Exception as exc:\n        return fail('后端接口响应不是合法 JSON: %s' % exc, plan)\n\n    if not isinstance(payload, dict):\n        return fail('后端接口响应顶层不是 JSON 对象。', plan)\n\n    response_code = payload.get('code')\n    if response_code not in (None, 0, 200, '0', '200'):\n        message = payload.get('msg') or payload.get('message') or '后端接口返回失败状态'\n        return fail('%s，code=%s' % (message, response_code), plan)\n\n    data = payload.get('data')\n    if not isinstance(data, dict):\n        return fail('后端接口响应缺少 data 对象。', plan)\n\n    rows = data.get('rows')\n    if rows is None:\n        rows = []\n    if not isinstance(rows, list):\n        return fail('后端接口 data.rows 不是数组。', plan)\n\n    row_count = data.get('rowCount')\n    if row_count is None:\n        row_count = data.get('row_count')\n    try:\n        row_count = int(row_count)\n    except Exception:\n        row_count = len(rows)\n\n    result = {'status':'ok','source':'mysql_http','rows':rows,'row_count':row_count,'sql_plan':plan,'error':''}\n    return {\n        'mysql_query_result_json': dump(result),\n        'mysql_query_status': 'ok',\n        'mysql_query_error_answer': '',\n    }\n"
+          },
+          "position": {
+            "x": 2880,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 2880,
+            "y": 300
+          },
+          "width": 320,
+          "height": 160
+        }
+      ],
+      "edges": [
+        {
+          "id": "e01_start_source_ctx",
+          "type": "custom",
+          "source": "start",
+          "target": "ctx",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e02_ctx_source_jf_registry_load",
+          "type": "custom",
+          "source": "ctx",
+          "target": "jf_registry_load",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e03_jf_registry_load_source_parse",
+          "type": "custom",
+          "source": "jf_registry_load",
+          "target": "jf_registry_parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e04_jf_registry_parse_source_sql_plan",
+          "type": "custom",
+          "source": "jf_registry_parse",
+          "target": "jf_sql_plan",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e09_llm_input_source_ifllm",
+          "type": "custom",
+          "source": "llm_input",
+          "target": "ifllm",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e10_ifllm_enabled_full_req",
+          "type": "custom",
+          "source": "ifllm",
+          "target": "full_req",
+          "sourceHandle": "enabled",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e15_full_req_source_http_full",
+          "type": "custom",
+          "source": "full_req",
+          "target": "http_full",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e16_http_full_source_full_parse",
+          "type": "custom",
+          "source": "http_full",
+          "target": "full_parse",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e17_full_parse_source_if_full",
+          "type": "custom",
+          "source": "full_parse",
+          "target": "if_full",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e18_if_full_ok_local_wrap",
+          "type": "custom",
+          "source": "if_full",
+          "target": "local_wrap",
+          "sourceHandle": "ok",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e19_if_full_false_llmlocal",
+          "type": "custom",
+          "source": "if_full",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e21_ifllm_false_llmlocal",
+          "type": "custom",
+          "source": "ifllm",
+          "target": "llmlocal",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e22_llmlocal_source_local_wrap",
+          "type": "custom",
+          "source": "llmlocal",
+          "target": "local_wrap",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e23_local_wrap_source_final",
+          "type": "custom",
+          "source": "local_wrap",
+          "target": "final",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "e24_final_source_ans",
+          "type": "custom",
+          "source": "final",
+          "target": "ans",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e01_plan_request",
+          "type": "custom",
+          "source": "jf_sql_plan",
+          "target": "mysql_request",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e02_request_if",
+          "type": "custom",
+          "source": "mysql_request",
+          "target": "if_mysql_request_ok",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e03_if_http",
+          "type": "custom",
+          "source": "if_mysql_request_ok",
+          "target": "http_mysql_query",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e04_if_error",
+          "type": "custom",
+          "source": "if_mysql_request_ok",
+          "target": "ans_sql_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e05_http_norm",
+          "type": "custom",
+          "source": "http_mysql_query",
+          "target": "mysql_normalize",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e06_norm_if",
+          "type": "custom",
+          "source": "mysql_normalize",
+          "target": "if_sql_ok",
+          "sourceHandle": "source",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e07_if_llm",
+          "type": "custom",
+          "source": "if_sql_ok",
+          "target": "llm_input",
+          "sourceHandle": "success",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        },
+        {
+          "id": "mysql_e08_if_error",
+          "type": "custom",
+          "source": "if_sql_ok",
+          "target": "ans_sql_error",
+          "sourceHandle": "false",
+          "targetHandle": "target",
+          "data": {
+            "isInIteration": false
+          },
+          "zIndex": 0
+        }
+      ],
+      "viewport": {
+        "x": -300,
+        "y": 200,
+        "zoom": 0.6
+      }
+    }
+  }
+}
