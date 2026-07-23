@@ -1,30 +1,4 @@
-        {
-          "id": "llm_input",
-          "type": "custom",
-          "data": {
-            "title": "准备分析内容",
-            "type": "code",
-            "outputs": {
-              "llm_handler_input_json": {
-                "type": "string"
-              },
-              "llm_task_type": {
-                "type": "string"
-              },
-              "llm_output_kind": {
-                "type": "string"
-              },
-              "llm_artifact_type": {
-                "type": "string"
-              },
-              "llm_system_prompt": {
-                "type": "string"
-              },
-              "llm_user_prompt": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(context_json='', mysql_query_result_json='', jf_selected_field_meta_json='', jf_alias_index_json='', jf_current_execution_context_json='{}', analysis_system_prompt='', analysis_user_prompt=''):\n    import json\n\n    LOCAL_CONTEXT_TOKENS = 32768\n    LOCAL_MAX_PREDICT_TOKENS = 8192\n    PROMPT_TOKEN_SAFETY_MARGIN = 1024\n    MAX_ESTIMATED_PROMPT_TOKENS = (\n        LOCAL_CONTEXT_TOKENS\n        - LOCAL_MAX_PREDICT_TOKENS\n        - PROMPT_TOKEN_SAFETY_MARGIN\n    )\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump_compact(obj):\n        return json.dumps(\n            obj,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n\n    def estimate_tokens(text):\n        # 保守估算：中日韩字符按 1 token，其余字符约 4 字符/token。\n        cjk_count = 0\n        other_count = 0\n        for char in str(text or ''):\n            code = ord(char)\n            is_cjk = (\n                0x3400 <= code <= 0x4DBF\n                or 0x4E00 <= code <= 0x9FFF\n                or 0xF900 <= code <= 0xFAFF\n                or 0x3040 <= code <= 0x30FF\n                or 0xAC00 <= code <= 0xD7AF\n            )\n            if is_cjk:\n                cjk_count += 1\n            else:\n                other_count += 1\n        return cjk_count + ((other_count + 3) // 4)\n\n    def compact_composite_meta(alias_index, selected_composites, warnings):\n        composite_meta = (\n            alias_index.get('composite_meta')\n            if isinstance(alias_index.get('composite_meta'), dict)\n            else {}\n        )\n        result = {}\n        for composite_id in selected_composites:\n            meta = (\n                composite_meta.get(composite_id)\n                if isinstance(composite_meta.get(composite_id), dict)\n                else {}\n            )\n            if not meta:\n                warnings.append(\n                    'selected composite metadata missing: %s' % composite_id\n                )\n                continue\n            result[composite_id] = {\n                'label': str(meta.get('label') or composite_id),\n                'description': str(meta.get('description') or ''),\n                'expand_to': (\n                    meta.get('expand_to')\n                    if isinstance(meta.get('expand_to'), list)\n                    else []\n                ),\n            }\n        return result\n\n    def compact_sql_plan(plan, alias_index):\n        selected_composites = (\n            plan.get('selected_composites')\n            if isinstance(plan.get('selected_composites'), list)\n            else []\n        )\n        warnings = list(plan.get('warnings')) if isinstance(plan.get('warnings'), list) else []\n        selected_composite_meta = compact_composite_meta(\n            alias_index,\n            selected_composites,\n            warnings\n        )\n        return {\n            'table': plan.get('table'),\n            'select_fields': (\n                plan.get('select_fields')\n                if isinstance(plan.get('select_fields'), list)\n                else []\n            ),\n            'where_filters': (\n                plan.get('where_filters')\n                if isinstance(plan.get('where_filters'), dict)\n                else {}\n            ),\n            'selected_composites': selected_composites,\n            'selected_composite_meta': selected_composite_meta,\n            'warnings': warnings,\n        }\n\n    def compact_field_meta(field_meta, select_fields):\n        result = {}\n        for field in select_fields:\n            meta = (\n                field_meta.get(field)\n                if isinstance(field_meta.get(field), dict)\n                else {}\n            )\n            result[field] = {\n                'label': str(meta.get('label') or field),\n                'description': str(meta.get('description') or ''),\n            }\n        return result\n\n    context = load_json(context_json, {})\n    query_result = load_json(mysql_query_result_json, {})\n    raw_field_meta = load_json(jf_selected_field_meta_json, {})\n    alias_index = load_json(jf_alias_index_json, {})\n    execution_context = load_json(jf_current_execution_context_json, {})\n\n    user_question = str(context.get('question') or '')\n    rows = (\n        query_result.get('rows')\n        if isinstance(query_result.get('rows'), list)\n        else []\n    )\n    raw_sql_plan = (\n        query_result.get('sql_plan')\n        if isinstance(query_result.get('sql_plan'), dict)\n        else {}\n    )\n\n    sql_plan = compact_sql_plan(raw_sql_plan, alias_index)\n    field_meta = compact_field_meta(\n        raw_field_meta,\n        sql_plan.get('select_fields') or []\n    )\n\n    package = {\n        'previous_user_query': str(execution_context.get('previous_user_query') or ''),\n        'current_user_query': user_question,\n        'current_execution_context': execution_context,\n        'current_query_result': {'rows': rows},\n        'sql_plan': sql_plan,\n        'field_meta': field_meta,\n    }\n\n    system_prompt = str(analysis_system_prompt or '').strip()\n    user_prompt_rules = str(analysis_user_prompt or '').strip()\n\n    if not system_prompt or not user_prompt_rules:\n        missing_prompt_envs = []\n        if not system_prompt:\n            missing_prompt_envs.append('JF_ANALYSIS_SYSTEM_PROMPT')\n        if not user_prompt_rules:\n            missing_prompt_envs.append('JF_ANALYSIS_USER_PROMPT')\n        message = 'LLM_PROMPT_CONFIG_MISSING: ' + ','.join(missing_prompt_envs)\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows_omitted': True,\n            },\n            'error': message,\n        }\n        return {\n            'llm_handler_input_json': dump_compact(payload),\n            'llm_task_type': str(payload.get('llm_task_type') or ''),\n            'llm_output_kind': str(payload.get('output_kind') or ''),\n            'llm_artifact_type': str(payload.get('artifact_type') or ''),\n            'llm_system_prompt': '',\n            'llm_user_prompt': message,\n        }\n\n    user_prompt = (\n        user_prompt_rules\n        + '查询结果可能包含当前问题未要求直接展示的历史候选数据。请结合上一轮问题、当前问题、当前执行上下文和当前数据库结果判断回答范围；当前问题优先，历史数据仅作候选。只使用数据库结果中真实存在的数据，不得生成 SQL、修改 canonical 范围或捏造缺失值。\\n'\n        + '【输入数据包】\\n'\n        + dump_compact(package)\n    )\n\n    estimated_prompt_tokens = estimate_tokens(\n        system_prompt + '\\n' + user_prompt\n    )\n\n    if estimated_prompt_tokens > MAX_ESTIMATED_PROMPT_TOKENS:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'system_prompt': system_prompt,\n            'user_prompt': (\n                'LLM_INPUT_TOO_LARGE: SQL 查询结果超过本地模型安全上下文预算，'\n                '请缩小查询范围后重试。'\n            ),\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows_omitted': True,\n            },\n            'error': 'LLM_INPUT_TOO_LARGE',\n        }\n    else:\n        payload = {\n            'status': 'ok',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows': rows,\n            },\n            'handler_context': {\n                'source_node': 'llm_input',\n                'input_fields': [\n                    'previous_user_query',\n                    'current_user_query',\n                    'current_execution_context',\n                    'current_query_result',\n                    'sql_plan',\n                    'field_meta',\n                ],\n                'estimated_prompt_tokens': estimated_prompt_tokens,\n                'local_context_tokens': LOCAL_CONTEXT_TOKENS,\n                'local_max_predict_tokens': LOCAL_MAX_PREDICT_TOKENS,\n            },\n        }\n\n    return {\n        'llm_handler_input_json': dump_compact(payload),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(system_prompt),\n        'llm_user_prompt': str(user_prompt),\n    }\n",
+            "source_code": "def main(context_json='', jf_registry_json='', jf_alias_index_json='', jf_registry_parse_status='', jf_registry_error=''):\n    import json\n    import re\n    import unicodedata\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    def as_int(value, default):\n        try:\n            n = int(value)\n            return n if n > 0 else default\n        except Exception:\n            return default\n\n    def fail(status, message):\n        payload = {\n            'status': status,\n            'backend': 'mysql_http',\n            'readonly': True,\n            'error': message,\n        }\n        return {\n            'jf_sql_plan_json': dump(payload),\n            'jf_sql_compile_status': status,\n            'jf_sql_compile_error_answer': 'JF SQL 查询计划生成失败，原因：%s' % message,\n            'jf_selected_field_meta_json': '{}',\n            'jf_select_field_summary': '',\n        }\n\n    if str(jf_registry_parse_status or '') != 'ok':\n        return fail(str(jf_registry_parse_status or 'error'), jf_registry_error or 'JF registry 未成功解析。')\n\n    ctx = load_json(context_json, {})\n    registry = load_json(jf_registry_json, {})\n    alias_index = load_json(jf_alias_index_json, {})\n\n    question = str(ctx.get('question') or '')\n    table = str(registry.get('table') or '').strip()\n    fields = registry.get('fields') if isinstance(registry.get('fields'), dict) else {}\n    query_roles = registry.get('query_roles') if isinstance(registry.get('query_roles'), dict) else {}\n    sql_filter_fields = query_roles.get('sql_filter_fields') if isinstance(query_roles.get('sql_filter_fields'), list) else []\n    sql_select_mode = query_roles.get('sql_select_fields') or 'all_fields'\n    limit = 200\n\n    if not question.strip():\n        return fail('error', '用户问题为空。')\n    if not table or not valid_identifier(table):\n        return fail('error', 'registry.table 缺失或非法。')\n    if not fields:\n        return fail('error', 'registry.fields 为空。')\n\n    allowed_fields = set(fields.keys())\n    filter_fields = [f for f in sql_filter_fields if f in allowed_fields]\n    if not filter_fields:\n        return fail('error', 'query_roles.sql_filter_fields 为空或均无效。')\n\n    field_alias_to_field = alias_index.get('field_alias_to_field') if isinstance(alias_index.get('field_alias_to_field'), dict) else {}\n    composite_alias_to_name = alias_index.get('composite_alias_to_name') if isinstance(alias_index.get('composite_alias_to_name'), dict) else {}\n    value_alias_to_filter = alias_index.get('value_alias_to_filter') if isinstance(alias_index.get('value_alias_to_filter'), dict) else {}\n    field_meta_all = alias_index.get('field_meta') if isinstance(alias_index.get('field_meta'), dict) else {}\n    composite_meta = alias_index.get('composite_meta') if isinstance(alias_index.get('composite_meta'), dict) else {}\n    match_policies = registry.get('match_policies') if isinstance(registry.get('match_policies'), dict) else {}\n\n    q_norm = normalize(question)\n\n    def find_alias_hit_items(alias_map, text_norm):\n        candidates = []\n        for alias, target in alias_map.items():\n            alias_text = normalize(alias)\n            if not alias_text:\n                continue\n            start = 0\n            while True:\n                idx = text_norm.find(alias_text, start)\n                if idx < 0:\n                    break\n                candidates.append({\n                    'alias': alias_text,\n                    'target': target,\n                    'start': idx,\n                    'end': idx + len(alias_text),\n                    'length': len(alias_text),\n                })\n                start = idx + 1\n        candidates.sort(key=lambda x: (-x['length'], x['start'], str(x['target'])))\n        selected = []\n        occupied = []\n        for item in candidates:\n            span = (item['start'], item['end'])\n            if any(span[0] < used[1] and used[0] < span[1] for used in occupied):\n                continue\n            selected.append(item)\n            occupied.append(span)\n        selected.sort(key=lambda x: (x['start'], -x['length'], str(x['target'])))\n        return selected\n\n    def unique_targets(items):\n        values = []\n        for item in items:\n            if item['target'] not in values:\n                values.append(item['target'])\n        return values\n\n    def overlaps(span, occupied):\n        return any(span[0] < used[1] and used[0] < span[1] for used in occupied)\n\n    def damerau_levenshtein(left, right, cutoff):\n        if abs(len(left) - len(right)) > cutoff:\n            return cutoff + 1\n        previous_previous = None\n        previous = list(range(len(right) + 1))\n        for i, left_char in enumerate(left, 1):\n            current = [i]\n            for j, right_char in enumerate(right, 1):\n                value = min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + (left_char != right_char))\n                if previous_previous is not None and i > 1 and j > 1 and left_char == right[j - 2] and left[i - 2] == right_char:\n                    value = min(value, previous_previous[j - 2] + 1)\n                current.append(value)\n            previous_previous, previous = previous, current\n        return previous[-1]\n\n    def protected_occurrences(text, protected_tokens):\n        occupied = []\n        found = []\n        for token in sorted(set(protected_tokens), key=lambda item: (-len(item), item)):\n            start = 0\n            while True:\n                index = text.find(token, start)\n                if index < 0:\n                    break\n                span = (index, index + len(token))\n                if not overlaps(span, occupied):\n                    found.append({'token': token, 'start': span[0], 'end': span[1]})\n                    occupied.append(span)\n                start = index + 1\n        return sorted(found, key=lambda item: (item['start'], item['end'], item['token']))\n\n    def protected_signature(text, protected_tokens):\n        return tuple(item['token'] for item in protected_occurrences(text, protected_tokens))\n\n    def fuzzy_alias_matches(alias_map, text_norm, exact_spans, policy):\n        rules = sorted(policy.get('distance_rules') or [], key=lambda rule: rule['max_length'])\n        protected_tokens = [normalize(token) for token in policy.get('protected_tokens') or []]\n        token_fuzzy = policy.get('protected_token_fuzzy') if isinstance(policy.get('protected_token_fuzzy'), dict) else {}\n        token_fuzzy_enabled = token_fuzzy.get('enabled') is True\n        configured_token_distance = token_fuzzy.get('max_distance', 0)\n        min_length = policy['min_alias_length']\n        gap = float(policy['min_score_gap'])\n        require_digits = policy.get('require_same_digits') is True\n        require_tokens = policy.get('require_protected_tokens_equal') is True\n        prepared = []\n        for alias, target in alias_map.items():\n            alias_text = normalize(alias)\n            if len(alias_text) < min_length:\n                continue\n            rule = next((item for item in rules if len(alias_text) <= item['max_length']), None)\n            if rule is None:\n                continue\n            alias_digits = re.findall(r'\\d+', alias_text)\n            if require_digits and not alias_digits:\n                continue\n            occurrences = protected_occurrences(alias_text, protected_tokens)\n            prepared.append((alias_text, target, rule['max_distance'], alias_digits, occurrences))\n\n        distance_cache = {}\n        signature_cache = {}\n        mapping_cache = {}\n        core_cache = {}\n\n        def distance(left, right, cutoff):\n            key = (left, right, cutoff)\n            if key not in distance_cache:\n                distance_cache[key] = damerau_levenshtein(left, right, cutoff)\n            return distance_cache[key]\n\n        def map_protected(fragment, alias_text, alias_occurrences, max_distance):\n            key = (fragment, alias_text, tuple((x['token'], x['start'], x['end']) for x in alias_occurrences), max_distance, configured_token_distance)\n            if key in mapping_cache:\n                return mapping_cache[key]\n            choices = []\n            for occurrence in alias_occurrences:\n                token = occurrence['token']\n                token_limit = 0 if len(token) < 3 else configured_token_distance\n                expected = occurrence['start']\n                candidates = []\n                for start in range(max(0, expected - max_distance), min(len(fragment), expected + max_distance) + 1):\n                    for length in range(max(1, len(token) - token_limit), len(token) + token_limit + 1):\n                        end = start + length\n                        if end > len(fragment):\n                            continue\n                        local_distance = distance(fragment[start:end], token, token_limit)\n                        if local_distance <= token_limit:\n                            candidates.append((local_distance, abs(start - expected), abs(length - len(token)), start, end))\n                candidates.sort()\n                choices.append(candidates)\n            best = None\n            def visit(index, previous_end, mapped):\n                nonlocal best\n                if index == len(choices):\n                    rank = tuple(value for item in mapped for value in item[:4])\n                    if best is None or rank < best[0]:\n                        best = (rank, list(mapped))\n                    return\n                for candidate in choices[index]:\n                    if candidate[3] < previous_end:\n                        continue\n                    visit(index + 1, candidate[4], mapped + [candidate])\n            visit(0, 0, [])\n            mapping_cache[key] = best[1] if best else None\n            return mapping_cache[key]\n\n        by_span = {}\n        for alias_text, target, max_distance, alias_digits, alias_occurrences in prepared:\n            alias_tokens = tuple(item['token'] for item in alias_occurrences)\n            for window_length in range(max(1, len(alias_text) - max_distance), len(alias_text) + max_distance + 1):\n                for start in range(0, len(text_norm) - window_length + 1):\n                    span = (start, start + window_length)\n                    if overlaps(span, exact_spans):\n                        continue\n                    fragment = text_norm[start:span[1]]\n                    overall_distance = distance(fragment, alias_text, max_distance)\n                    if overall_distance > max_distance:\n                        continue\n                    signatures = signature_cache.setdefault(span, (re.findall(r'\\d+', fragment), protected_signature(fragment, protected_tokens)))\n                    if require_digits and signatures[0] != alias_digits:\n                        continue\n                    score = 1.0 - float(overall_distance) / max(len(fragment), len(alias_text))\n                    mode = None\n                    primary_score = score\n                    if not require_tokens or signatures[1] == alias_tokens:\n                        mode = 'overall'\n                    elif token_fuzzy_enabled and require_tokens and alias_occurrences:\n                        mapped = map_protected(fragment, alias_text, alias_occurrences, max_distance)\n                        if mapped is not None:\n                            alias_spans = [(item['start'], item['end']) for item in alias_occurrences]\n                            fragment_spans = [(item[3], item[4]) for item in mapped]\n                            alias_core = ''.join(char for index, char in enumerate(alias_text) if not any(left <= index < right for left, right in alias_spans))\n                            fragment_core = ''.join(char for index, char in enumerate(fragment) if not any(left <= index < right for left, right in fragment_spans))\n                            core_key = (fragment_core, alias_core, max_distance)\n                            if core_key not in core_cache:\n                                core_cache[core_key] = distance(fragment_core, alias_core, max_distance)\n                            core_distance = core_cache[core_key]\n                            token_distance_sum = sum(item[0] for item in mapped)\n                            if core_distance + token_distance_sum <= max_distance:\n                                mode = 'segmented'\n                    if mode is None:\n                        continue\n                    candidate = {'input': fragment, 'alias': alias_text, 'target': target, 'distance': overall_distance, 'score': score, 'primary_score': primary_score, 'mode': mode, 'start': start, 'end': span[1], 'length': window_length}\n                    current = by_span.setdefault(span, {}).get(target)\n                    rank = (-primary_score, overall_distance, -window_length, start, str(target), alias_text)\n                    current_rank = (-current['primary_score'], current['distance'], -current['length'], current['start'], str(current['target']), current['alias']) if current else None\n                    if current is None or rank < current_rank:\n                        by_span[span][target] = candidate\n        groups = []\n        for span, canonical_map in by_span.items():\n            ranked = sorted(canonical_map.values(), key=lambda item: (-item['primary_score'], item['distance'], -item['length'], item['start'], str(item['target']), item['alias']))\n            chosen = [ranked[0]]\n            if len(ranked) > 1 and ranked[0]['primary_score'] - ranked[1]['primary_score'] < gap:\n                chosen = [item for item in ranked if ranked[0]['primary_score'] - item['primary_score'] < gap]\n            groups.append({'start': span[0], 'end': span[1], 'length': span[1] - span[0], 'score': ranked[0]['primary_score'], 'matches': chosen})\n        groups.sort(key=lambda item: (-item['score'], -item['length'], item['start'], str(item['matches'][0]['target'])))\n        selected = []\n        occupied = list(exact_spans)\n        for group in groups:\n            span = (group['start'], group['end'])\n            if overlaps(span, occupied):\n                continue\n            selected.append(group)\n            occupied.append(span)\n        selected.sort(key=lambda item: (item['start'], -item['score'], -item['length'], str(item['matches'][0]['target'])))\n        return selected\n\n    def display_hit_text(hit, meta, name):\n        alias = str(hit.get('alias') or '').strip() if isinstance(hit, dict) else ''\n        label = str(meta.get('label') or '').strip() if isinstance(meta, dict) else ''\n        return alias or label or str(name or '')\n\n    def build_select_field_summary(field_hits, composite_hits, context_fields, fallback_used, fallback_message, select_fields):\n        lines = ['字段选择摘要', '', '直接字段命中']\n        if field_hits:\n            for item in field_hits:\n                lines.append('- %s → %s' % (item.get('text') or item.get('field') or '', item.get('field') or ''))\n        else:\n            lines.append('- 无')\n        lines.extend(['', '复合维度命中'])\n        if composite_hits:\n            for item in composite_hits:\n                lines.append('- %s → %s' % (item.get('text') or item.get('composite') or '', item.get('composite') or ''))\n                expand_to = item.get('expand_to') if isinstance(item.get('expand_to'), list) else []\n                lines.append('  → %s' % (', '.join(expand_to) if expand_to else '无'))\n        else:\n            lines.append('- 无')\n        lines.extend(['', '固定补充字段'])\n        lines.append('- %s' % (', '.join(context_fields) if context_fields else '无'))\n        lines.extend(['', '字段兜底'])\n        lines.append('- %s' % (fallback_message if fallback_used else '未触发'))\n        lines.extend(['', '最终SELECT字段'])\n        lines.append('- %s' % (', '.join(select_fields) if select_fields else '无'))\n        return '\\n'.join(lines)\n\n    warnings = []\n\n    where_filters = {}\n    value_alias_hits = {}\n    fuzzy_alias_hits = {}\n    for field in filter_fields:\n        alias_map = value_alias_to_filter.get(field) if isinstance(value_alias_to_filter.get(field), dict) else {}\n        if not alias_map:\n            continue\n        exact_items = find_alias_hit_items(alias_map, q_norm)\n        exact_spans = [(item['start'], item['end']) for item in exact_items]\n        ordered_hits = [(item['start'], 0, item['target']) for item in exact_items]\n        exact_values = unique_targets(exact_items)\n        if exact_values:\n            value_alias_hits[field] = exact_values\n        policy_cfg = match_policies.get(field) if isinstance(match_policies.get(field), dict) else {}\n        fuzzy_policy = policy_cfg.get('fuzzy') if isinstance(policy_cfg.get('fuzzy'), dict) else {}\n        audit_items = []\n        if fuzzy_policy.get('enabled') is True:\n            for group in fuzzy_alias_matches(alias_map, q_norm, exact_spans, fuzzy_policy):\n                matches = group['matches']\n                for rank, match in enumerate(matches):\n                    ordered_hits.append((group['start'], rank + 1, match['target']))\n                if len(matches) == 1:\n                    match = matches[0]\n                    audit_items.append({'input': match['input'], 'alias': match['alias'], 'target': match['target'], 'distance': match['distance'], 'score': round(match['score'], 6), 'mode': match['mode']})\n                else:\n                    audit_items.append({'input': matches[0]['input'], 'matches': [{'alias': match['alias'], 'target': match['target'], 'distance': match['distance'], 'score': round(match['score'], 6), 'mode': match['mode']} for match in matches]})\n                warnings.append({'type': 'fuzzy_alias_correction', 'field': field, 'input': matches[0]['input'], 'targets': [match['target'] for match in matches]})\n        if audit_items:\n            fuzzy_alias_hits[field] = audit_items\n        values = []\n        for _, _, target in sorted(ordered_hits, key=lambda item: (item[0], item[1], str(item[2]))):\n            if target not in values:\n                values.append(target)\n        if values:\n            where_filters[field] = values\n\n    if not where_filters:\n        warnings.append({\n            'type': 'NO_STRUCTURED_FILTER_FOUND',\n            'message': '未命中结构化过滤值，将仅按 SELECT 字段查询；如数据量较大，请补充机型/模组/厂商/平台/设备类型。'\n        })\n\n    combined_aliases = {}\n    for alias, field in field_alias_to_field.items():\n        combined_aliases[alias] = {'kind': 'field', 'name': field}\n    for alias, composite in composite_alias_to_name.items():\n        combined_aliases.setdefault(alias, {'kind': 'composite', 'name': composite})\n\n    alias_hit_items = find_alias_hit_items(combined_aliases, q_norm)\n    alias_targets = unique_targets(alias_hit_items)\n    selected_fields = []\n    selected_composites = []\n    direct_field_hits = []\n    composite_hits = []\n    for item in alias_hit_items:\n        target = item.get('target')\n        if not isinstance(target, dict):\n            continue\n        if target.get('kind') == 'field':\n            field = target.get('name')\n            if field in allowed_fields and field not in selected_fields:\n                selected_fields.append(field)\n                direct_field_hits.append({\n                    'text': display_hit_text(item, field_meta_all.get(field) if isinstance(field_meta_all.get(field), dict) else {}, field),\n                    'field': field,\n                })\n        elif target.get('kind') == 'composite':\n            name = target.get('name')\n            comp = composite_meta.get(name) if isinstance(composite_meta.get(name), dict) else {}\n            if name and name not in selected_composites:\n                selected_composites.append(name)\n                composite_hits.append({\n                    'text': display_hit_text(item, comp, name),\n                    'composite': name,\n                    'expand_to': list(comp.get('expand_to') or []),\n                })\n            for field in comp.get('expand_to') or []:\n                if field in allowed_fields and field not in selected_fields:\n                    selected_fields.append(field)\n\n    context_fields = [f for f in filter_fields if f in allowed_fields]\n    select_fields = []\n    for field in context_fields + selected_fields:\n        if field not in select_fields:\n            select_fields.append(field)\n\n    fallback_used = False\n    fallback_message = '未触发'\n    if not selected_fields:\n        # 无明确指标时给 LLM 更多上下文，但仍限定在 registry 白名单内。\n        fallback_used = True\n        identity = composite_meta.get('identity', {}).get('expand_to') or context_fields\n        for field in identity:\n            if field in allowed_fields and field not in select_fields:\n                select_fields.append(field)\n        warnings.append({'type': 'SELECT_FIELDS_FALLBACK_USED', 'fields': select_fields})\n        fallback_message = '已触发：未命中明确字段，补充 %s' % (', '.join(identity) if identity else '无')\n\n    for field in select_fields + list(where_filters.keys()):\n        if field not in allowed_fields or not valid_identifier(field):\n            return fail('error', 'SQL 字段未通过白名单校验: %s' % field)\n\n    placeholders = []\n    params = []\n    for field in filter_fields:\n        values = where_filters.get(field)\n        if not values:\n            continue\n        part = ','.join(['?'] * len(values))\n        placeholders.append('`%s` IN (%s)' % (field, part))\n        params.extend(values)\n\n    select_sql = ', '.join('`%s`' % field for field in select_fields)\n    sql = 'SELECT %s FROM `%s`' % (select_sql, table)\n    if placeholders:\n        sql += ' WHERE ' + ' AND '.join(placeholders)\n    sql += ' LIMIT ?'\n    params.append(limit)\n\n    selected_field_meta = {}\n    for field in select_fields:\n        selected_field_meta[field] = field_meta_all.get(field) or {'label': field, 'description': ''}\n\n    try:\n        select_field_summary = build_select_field_summary(\n            direct_field_hits,\n            composite_hits,\n            context_fields,\n            fallback_used,\n            fallback_message,\n            select_fields,\n        )\n    except Exception as exc:\n        select_field_summary = '字段选择摘要生成失败：%s' % str(exc)[:120]\n\n    sql_plan = {\n        'status': 'ok',\n        'backend': 'mysql_http',\n        'readonly': True,\n        'table': table,\n        'select_fields': select_fields,\n        'where_filters': where_filters,\n        'where_allowed_fields': filter_fields,\n        'sql': sql,\n        'params': params,\n        'limit': limit,\n        'sql_select_mode': sql_select_mode,\n        'selected_composites': selected_composites,\n        'selected_field_meta': selected_field_meta,\n        'value_alias_hits': value_alias_hits,\n        'fuzzy_alias_hits': fuzzy_alias_hits,\n        'warnings': warnings,\n    }\n\n    return {\n        'jf_sql_plan_json': dump(sql_plan),\n        'jf_sql_compile_status': 'ok',\n        'jf_sql_compile_error_answer': '',\n        'jf_selected_field_meta_json': dump(selected_field_meta),\n        'jf_select_field_summary': select_field_summary,\n    }\n",
             "variables": [
               {
                 "variable": "context_json",
@@ -34,17 +8,10 @@
                 ]
               },
               {
-                "variable": "mysql_query_result_json",
+                "variable": "jf_registry_json",
                 "value_selector": [
-                  "mysql_normalize",
-                  "mysql_query_result_json"
-                ]
-              },
-              {
-                "variable": "jf_selected_field_meta_json",
-                "value_selector": [
-                  "jf_sql_plan",
-                  "jf_selected_field_meta_json"
+                  "jf_registry_parse",
+                  "jf_registry_json"
                 ]
               },
               {
@@ -55,831 +22,136 @@
                 ]
               },
               {
-                "variable": "jf_current_execution_context_json",
-                "value_selector": ["jf_sql_plan", "jf_current_execution_context_json"]
-              },
-              {
-                "variable": "analysis_system_prompt",
+                "variable": "jf_registry_parse_status",
                 "value_selector": [
-                  "env",
-                  "JF_ANALYSIS_SYSTEM_PROMPT"
+                  "jf_registry_parse",
+                  "jf_registry_parse_status"
                 ]
               },
               {
-                "variable": "analysis_user_prompt",
+                "variable": "jf_registry_error",
                 "value_selector": [
-                  "env",
-                  "JF_ANALYSIS_USER_PROMPT"
+                  "jf_registry_parse",
+                  "jf_registry_error"
                 ]
               }
             ],
             "code_language": "python3",
-            "code": "def main(context_json='', mysql_query_result_json='', jf_selected_field_meta_json='', jf_alias_index_json='', jf_current_execution_context_json='{}', analysis_system_prompt='', analysis_user_prompt=''):\n    import json\n\n    LOCAL_CONTEXT_TOKENS = 32768\n    LOCAL_MAX_PREDICT_TOKENS = 8192\n    PROMPT_TOKEN_SAFETY_MARGIN = 1024\n    MAX_ESTIMATED_PROMPT_TOKENS = (\n        LOCAL_CONTEXT_TOKENS\n        - LOCAL_MAX_PREDICT_TOKENS\n        - PROMPT_TOKEN_SAFETY_MARGIN\n    )\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump_compact(obj):\n        return json.dumps(\n            obj,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n\n    def estimate_tokens(text):\n        # 保守估算：中日韩字符按 1 token，其余字符约 4 字符/token。\n        cjk_count = 0\n        other_count = 0\n        for char in str(text or ''):\n            code = ord(char)\n            is_cjk = (\n                0x3400 <= code <= 0x4DBF\n                or 0x4E00 <= code <= 0x9FFF\n                or 0xF900 <= code <= 0xFAFF\n                or 0x3040 <= code <= 0x30FF\n                or 0xAC00 <= code <= 0xD7AF\n            )\n            if is_cjk:\n                cjk_count += 1\n            else:\n                other_count += 1\n        return cjk_count + ((other_count + 3) // 4)\n\n    def compact_composite_meta(alias_index, selected_composites, warnings):\n        composite_meta = (\n            alias_index.get('composite_meta')\n            if isinstance(alias_index.get('composite_meta'), dict)\n            else {}\n        )\n        result = {}\n        for composite_id in selected_composites:\n            meta = (\n                composite_meta.get(composite_id)\n                if isinstance(composite_meta.get(composite_id), dict)\n                else {}\n            )\n            if not meta:\n                warnings.append(\n                    'selected composite metadata missing: %s' % composite_id\n                )\n                continue\n            result[composite_id] = {\n                'label': str(meta.get('label') or composite_id),\n                'description': str(meta.get('description') or ''),\n                'expand_to': (\n                    meta.get('expand_to')\n                    if isinstance(meta.get('expand_to'), list)\n                    else []\n                ),\n            }\n        return result\n\n    def compact_sql_plan(plan, alias_index):\n        selected_composites = (\n            plan.get('selected_composites')\n            if isinstance(plan.get('selected_composites'), list)\n            else []\n        )\n        warnings = list(plan.get('warnings')) if isinstance(plan.get('warnings'), list) else []\n        selected_composite_meta = compact_composite_meta(\n            alias_index,\n            selected_composites,\n            warnings\n        )\n        return {\n            'table': plan.get('table'),\n            'select_fields': (\n                plan.get('select_fields')\n                if isinstance(plan.get('select_fields'), list)\n                else []\n            ),\n            'where_filters': (\n                plan.get('where_filters')\n                if isinstance(plan.get('where_filters'), dict)\n                else {}\n            ),\n            'selected_composites': selected_composites,\n            'selected_composite_meta': selected_composite_meta,\n            'warnings': warnings,\n        }\n\n    def compact_field_meta(field_meta, select_fields):\n        result = {}\n        for field in select_fields:\n            meta = (\n                field_meta.get(field)\n                if isinstance(field_meta.get(field), dict)\n                else {}\n            )\n            result[field] = {\n                'label': str(meta.get('label') or field),\n                'description': str(meta.get('description') or ''),\n            }\n        return result\n\n    context = load_json(context_json, {})\n    query_result = load_json(mysql_query_result_json, {})\n    raw_field_meta = load_json(jf_selected_field_meta_json, {})\n    alias_index = load_json(jf_alias_index_json, {})\n    execution_context = load_json(jf_current_execution_context_json, {})\n\n    user_question = str(context.get('question') or '')\n    rows = (\n        query_result.get('rows')\n        if isinstance(query_result.get('rows'), list)\n        else []\n    )\n    raw_sql_plan = (\n        query_result.get('sql_plan')\n        if isinstance(query_result.get('sql_plan'), dict)\n        else {}\n    )\n\n    sql_plan = compact_sql_plan(raw_sql_plan, alias_index)\n    field_meta = compact_field_meta(\n        raw_field_meta,\n        sql_plan.get('select_fields') or []\n    )\n\n    package = {\n        'previous_user_query': str(execution_context.get('previous_user_query') or ''),\n        'current_user_query': user_question,\n        'current_execution_context': execution_context,\n        'current_query_result': {'rows': rows},\n        'sql_plan': sql_plan,\n        'field_meta': field_meta,\n    }\n\n    system_prompt = str(analysis_system_prompt or '').strip()\n    user_prompt_rules = str(analysis_user_prompt or '').strip()\n\n    if not system_prompt or not user_prompt_rules:\n        missing_prompt_envs = []\n        if not system_prompt:\n            missing_prompt_envs.append('JF_ANALYSIS_SYSTEM_PROMPT')\n        if not user_prompt_rules:\n            missing_prompt_envs.append('JF_ANALYSIS_USER_PROMPT')\n        message = 'LLM_PROMPT_CONFIG_MISSING: ' + ','.join(missing_prompt_envs)\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows_omitted': True,\n            },\n            'error': message,\n        }\n        return {\n            'llm_handler_input_json': dump_compact(payload),\n            'llm_task_type': str(payload.get('llm_task_type') or ''),\n            'llm_output_kind': str(payload.get('output_kind') or ''),\n            'llm_artifact_type': str(payload.get('artifact_type') or ''),\n            'llm_system_prompt': '',\n            'llm_user_prompt': message,\n        }\n\n    user_prompt = (\n        user_prompt_rules\n        + '查询结果可能包含当前问题未要求直接展示的历史候选数据。请结合上一轮问题、当前问题、当前执行上下文和当前数据库结果判断回答范围；当前问题优先，历史数据仅作候选。只使用数据库结果中真实存在的数据，不得生成 SQL、修改 canonical 范围或捏造缺失值。\\n'\n        + '【输入数据包】\\n'\n        + dump_compact(package)\n    )\n\n    estimated_prompt_tokens = estimate_tokens(\n        system_prompt + '\\n' + user_prompt\n    )\n\n    if estimated_prompt_tokens > MAX_ESTIMATED_PROMPT_TOKENS:\n        payload = {\n            'status': 'error',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'system_prompt': system_prompt,\n            'user_prompt': (\n                'LLM_INPUT_TOO_LARGE: SQL 查询结果超过本地模型安全上下文预算，'\n                '请缩小查询范围后重试。'\n            ),\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows_omitted': True,\n            },\n            'error': 'LLM_INPUT_TOO_LARGE',\n        }\n    else:\n        payload = {\n            'status': 'ok',\n            'llm_task_type': 'mysql_sql_answer',\n            'output_kind': 'text',\n            'artifact_type': 'markdown_text',\n            'query_plan': sql_plan,\n            'query_result': {\n                'row_count': len(rows),\n                'rows': rows,\n            },\n            'handler_context': {\n                'source_node': 'llm_input',\n                'input_fields': [\n                    'previous_user_query',\n                    'current_user_query',\n                    'current_execution_context',\n                    'current_query_result',\n                    'sql_plan',\n                    'field_meta',\n                ],\n                'estimated_prompt_tokens': estimated_prompt_tokens,\n                'local_context_tokens': LOCAL_CONTEXT_TOKENS,\n                'local_max_predict_tokens': LOCAL_MAX_PREDICT_TOKENS,\n            },\n        }\n\n    return {\n        'llm_handler_input_json': dump_compact(payload),\n        'llm_task_type': str(payload.get('llm_task_type') or ''),\n        'llm_output_kind': str(payload.get('output_kind') or ''),\n        'llm_artifact_type': str(payload.get('artifact_type') or ''),\n        'llm_system_prompt': str(system_prompt),\n        'llm_user_prompt': str(user_prompt),\n    }\n"
+            "code": "def main(context_json='', jf_registry_json='', jf_alias_index_json='', jf_registry_parse_status='', jf_registry_error=''):\n    import json\n    import re\n    import unicodedata\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    def as_int(value, default):\n        try:\n            n = int(value)\n            return n if n > 0 else default\n        except Exception:\n            return default\n\n    def fail(status, message):\n        payload = {\n            'status': status,\n            'backend': 'mysql_http',\n            'readonly': True,\n            'error': message,\n        }\n        return {\n            'jf_sql_plan_json': dump(payload),\n            'jf_sql_compile_status': status,\n            'jf_sql_compile_error_answer': 'JF SQL 查询计划生成失败，原因：%s' % message,\n            'jf_selected_field_meta_json': '{}',\n            'jf_select_field_summary': '',\n        }\n\n    if str(jf_registry_parse_status or '') != 'ok':\n        return fail(str(jf_registry_parse_status or 'error'), jf_registry_error or 'JF registry 未成功解析。')\n\n    ctx = load_json(context_json, {})\n    registry = load_json(jf_registry_json, {})\n    alias_index = load_json(jf_alias_index_json, {})\n\n    question = str(ctx.get('question') or '')\n    table = str(registry.get('table') or '').strip()\n    fields = registry.get('fields') if isinstance(registry.get('fields'), dict) else {}\n    query_roles = registry.get('query_roles') if isinstance(registry.get('query_roles'), dict) else {}\n    sql_filter_fields = query_roles.get('sql_filter_fields') if isinstance(query_roles.get('sql_filter_fields'), list) else []\n    sql_select_mode = query_roles.get('sql_select_fields') or 'all_fields'\n    limit = 200\n\n    if not question.strip():\n        return fail('error', '用户问题为空。')\n    if not table or not valid_identifier(table):\n        return fail('error', 'registry.table 缺失或非法。')\n    if not fields:\n        return fail('error', 'registry.fields 为空。')\n\n    allowed_fields = set(fields.keys())\n    filter_fields = [f for f in sql_filter_fields if f in allowed_fields]\n    if not filter_fields:\n        return fail('error', 'query_roles.sql_filter_fields 为空或均无效。')\n\n    field_alias_to_field = alias_index.get('field_alias_to_field') if isinstance(alias_index.get('field_alias_to_field'), dict) else {}\n    composite_alias_to_name = alias_index.get('composite_alias_to_name') if isinstance(alias_index.get('composite_alias_to_name'), dict) else {}\n    value_alias_to_filter = alias_index.get('value_alias_to_filter') if isinstance(alias_index.get('value_alias_to_filter'), dict) else {}\n    field_meta_all = alias_index.get('field_meta') if isinstance(alias_index.get('field_meta'), dict) else {}\n    composite_meta = alias_index.get('composite_meta') if isinstance(alias_index.get('composite_meta'), dict) else {}\n    match_policies = registry.get('match_policies') if isinstance(registry.get('match_policies'), dict) else {}\n\n    q_norm = normalize(question)\n\n    def find_alias_hit_items(alias_map, text_norm):\n        candidates = []\n        for alias, target in alias_map.items():\n            alias_text = normalize(alias)\n            if not alias_text:\n                continue\n            start = 0\n            while True:\n                idx = text_norm.find(alias_text, start)\n                if idx < 0:\n                    break\n                candidates.append({\n                    'alias': alias_text,\n                    'target': target,\n                    'start': idx,\n                    'end': idx + len(alias_text),\n                    'length': len(alias_text),\n                })\n                start = idx + 1\n        candidates.sort(key=lambda x: (-x['length'], x['start'], str(x['target'])))\n        selected = []\n        occupied = []\n        for item in candidates:\n            span = (item['start'], item['end'])\n            if any(span[0] < used[1] and used[0] < span[1] for used in occupied):\n                continue\n            selected.append(item)\n            occupied.append(span)\n        selected.sort(key=lambda x: (x['start'], -x['length'], str(x['target'])))\n        return selected\n\n    def unique_targets(items):\n        values = []\n        for item in items:\n            if item['target'] not in values:\n                values.append(item['target'])\n        return values\n\n    def overlaps(span, occupied):\n        return any(span[0] < used[1] and used[0] < span[1] for used in occupied)\n\n    def damerau_levenshtein(left, right, cutoff):\n        if abs(len(left) - len(right)) > cutoff:\n            return cutoff + 1\n        previous_previous = None\n        previous = list(range(len(right) + 1))\n        for i, left_char in enumerate(left, 1):\n            current = [i]\n            for j, right_char in enumerate(right, 1):\n                value = min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + (left_char != right_char))\n                if previous_previous is not None and i > 1 and j > 1 and left_char == right[j - 2] and left[i - 2] == right_char:\n                    value = min(value, previous_previous[j - 2] + 1)\n                current.append(value)\n            previous_previous, previous = previous, current\n        return previous[-1]\n\n    def protected_occurrences(text, protected_tokens):\n        occupied = []\n        found = []\n        for token in sorted(set(protected_tokens), key=lambda item: (-len(item), item)):\n            start = 0\n            while True:\n                index = text.find(token, start)\n                if index < 0:\n                    break\n                span = (index, index + len(token))\n                if not overlaps(span, occupied):\n                    found.append({'token': token, 'start': span[0], 'end': span[1]})\n                    occupied.append(span)\n                start = index + 1\n        return sorted(found, key=lambda item: (item['start'], item['end'], item['token']))\n\n    def protected_signature(text, protected_tokens):\n        return tuple(item['token'] for item in protected_occurrences(text, protected_tokens))\n\n    def fuzzy_alias_matches(alias_map, text_norm, exact_spans, policy):\n        rules = sorted(policy.get('distance_rules') or [], key=lambda rule: rule['max_length'])\n        protected_tokens = [normalize(token) for token in policy.get('protected_tokens') or []]\n        token_fuzzy = policy.get('protected_token_fuzzy') if isinstance(policy.get('protected_token_fuzzy'), dict) else {}\n        token_fuzzy_enabled = token_fuzzy.get('enabled') is True\n        configured_token_distance = token_fuzzy.get('max_distance', 0)\n        min_length = policy['min_alias_length']\n        gap = float(policy['min_score_gap'])\n        require_digits = policy.get('require_same_digits') is True\n        require_tokens = policy.get('require_protected_tokens_equal') is True\n        prepared = []\n        for alias, target in alias_map.items():\n            alias_text = normalize(alias)\n            if len(alias_text) < min_length:\n                continue\n            rule = next((item for item in rules if len(alias_text) <= item['max_length']), None)\n            if rule is None:\n                continue\n            alias_digits = re.findall(r'\\d+', alias_text)\n            if require_digits and not alias_digits:\n                continue\n            occurrences = protected_occurrences(alias_text, protected_tokens)\n            prepared.append((alias_text, target, rule['max_distance'], alias_digits, occurrences))\n\n        distance_cache = {}\n        signature_cache = {}\n        mapping_cache = {}\n        core_cache = {}\n\n        def distance(left, right, cutoff):\n            key = (left, right, cutoff)\n            if key not in distance_cache:\n                distance_cache[key] = damerau_levenshtein(left, right, cutoff)\n            return distance_cache[key]\n\n        def map_protected(fragment, alias_text, alias_occurrences, max_distance):\n            key = (fragment, alias_text, tuple((x['token'], x['start'], x['end']) for x in alias_occurrences), max_distance, configured_token_distance)\n            if key in mapping_cache:\n                return mapping_cache[key]\n            choices = []\n            for occurrence in alias_occurrences:\n                token = occurrence['token']\n                token_limit = 0 if len(token) < 3 else configured_token_distance\n                expected = occurrence['start']\n                candidates = []\n                for start in range(max(0, expected - max_distance), min(len(fragment), expected + max_distance) + 1):\n                    for length in range(max(1, len(token) - token_limit), len(token) + token_limit + 1):\n                        end = start + length\n                        if end > len(fragment):\n                            continue\n                        local_distance = distance(fragment[start:end], token, token_limit)\n                        if local_distance <= token_limit:\n                            candidates.append((local_distance, abs(start - expected), abs(length - len(token)), start, end))\n                candidates.sort()\n                choices.append(candidates)\n            best = None\n            def visit(index, previous_end, mapped):\n                nonlocal best\n                if index == len(choices):\n                    rank = tuple(value for item in mapped for value in item[:4])\n                    if best is None or rank < best[0]:\n                        best = (rank, list(mapped))\n                    return\n                for candidate in choices[index]:\n                    if candidate[3] < previous_end:\n                        continue\n                    visit(index + 1, candidate[4], mapped + [candidate])\n            visit(0, 0, [])\n            mapping_cache[key] = best[1] if best else None\n            return mapping_cache[key]\n\n        by_span = {}\n        for alias_text, target, max_distance, alias_digits, alias_occurrences in prepared:\n            alias_tokens = tuple(item['token'] for item in alias_occurrences)\n            for window_length in range(max(1, len(alias_text) - max_distance), len(alias_text) + max_distance + 1):\n                for start in range(0, len(text_norm) - window_length + 1):\n                    span = (start, start + window_length)\n                    if overlaps(span, exact_spans):\n                        continue\n                    fragment = text_norm[start:span[1]]\n                    overall_distance = distance(fragment, alias_text, max_distance)\n                    if overall_distance > max_distance:\n                        continue\n                    signatures = signature_cache.setdefault(span, (re.findall(r'\\d+', fragment), protected_signature(fragment, protected_tokens)))\n                    if require_digits and signatures[0] != alias_digits:\n                        continue\n                    score = 1.0 - float(overall_distance) / max(len(fragment), len(alias_text))\n                    mode = None\n                    primary_score = score\n                    if not require_tokens or signatures[1] == alias_tokens:\n                        mode = 'overall'\n                    elif token_fuzzy_enabled and require_tokens and alias_occurrences:\n                        mapped = map_protected(fragment, alias_text, alias_occurrences, max_distance)\n                        if mapped is not None:\n                            alias_spans = [(item['start'], item['end']) for item in alias_occurrences]\n                            fragment_spans = [(item[3], item[4]) for item in mapped]\n                            alias_core = ''.join(char for index, char in enumerate(alias_text) if not any(left <= index < right for left, right in alias_spans))\n                            fragment_core = ''.join(char for index, char in enumerate(fragment) if not any(left <= index < right for left, right in fragment_spans))\n                            core_key = (fragment_core, alias_core, max_distance)\n                            if core_key not in core_cache:\n                                core_cache[core_key] = distance(fragment_core, alias_core, max_distance)\n                            core_distance = core_cache[core_key]\n                            token_distance_sum = sum(item[0] for item in mapped)\n                            if core_distance + token_distance_sum <= max_distance:\n                                mode = 'segmented'\n                    if mode is None:\n                        continue\n                    candidate = {'input': fragment, 'alias': alias_text, 'target': target, 'distance': overall_distance, 'score': score, 'primary_score': primary_score, 'mode': mode, 'start': start, 'end': span[1], 'length': window_length}\n                    current = by_span.setdefault(span, {}).get(target)\n                    rank = (-primary_score, overall_distance, -window_length, start, str(target), alias_text)\n                    current_rank = (-current['primary_score'], current['distance'], -current['length'], current['start'], str(current['target']), current['alias']) if current else None\n                    if current is None or rank < current_rank:\n                        by_span[span][target] = candidate\n        groups = []\n        for span, canonical_map in by_span.items():\n            ranked = sorted(canonical_map.values(), key=lambda item: (-item['primary_score'], item['distance'], -item['length'], item['start'], str(item['target']), item['alias']))\n            chosen = [ranked[0]]\n            if len(ranked) > 1 and ranked[0]['primary_score'] - ranked[1]['primary_score'] < gap:\n                chosen = [item for item in ranked if ranked[0]['primary_score'] - item['primary_score'] < gap]\n            groups.append({'start': span[0], 'end': span[1], 'length': span[1] - span[0], 'score': ranked[0]['primary_score'], 'matches': chosen})\n        groups.sort(key=lambda item: (-item['score'], -item['length'], item['start'], str(item['matches'][0]['target'])))\n        selected = []\n        occupied = list(exact_spans)\n        for group in groups:\n            span = (group['start'], group['end'])\n            if overlaps(span, occupied):\n                continue\n            selected.append(group)\n            occupied.append(span)\n        selected.sort(key=lambda item: (item['start'], -item['score'], -item['length'], str(item['matches'][0]['target'])))\n        return selected\n\n    def display_hit_text(hit, meta, name):\n        alias = str(hit.get('alias') or '').strip() if isinstance(hit, dict) else ''\n        label = str(meta.get('label') or '').strip() if isinstance(meta, dict) else ''\n        return alias or label or str(name or '')\n\n    def build_select_field_summary(field_hits, composite_hits, context_fields, fallback_used, fallback_message, select_fields):\n        lines = ['字段选择摘要', '', '直接字段命中']\n        if field_hits:\n            for item in field_hits:\n                lines.append('- %s → %s' % (item.get('text') or item.get('field') or '', item.get('field') or ''))\n        else:\n            lines.append('- 无')\n        lines.extend(['', '复合维度命中'])\n        if composite_hits:\n            for item in composite_hits:\n                lines.append('- %s → %s' % (item.get('text') or item.get('composite') or '', item.get('composite') or ''))\n                expand_to = item.get('expand_to') if isinstance(item.get('expand_to'), list) else []\n                lines.append('  → %s' % (', '.join(expand_to) if expand_to else '无'))\n        else:\n            lines.append('- 无')\n        lines.extend(['', '固定补充字段'])\n        lines.append('- %s' % (', '.join(context_fields) if context_fields else '无'))\n        lines.extend(['', '字段兜底'])\n        lines.append('- %s' % (fallback_message if fallback_used else '未触发'))\n        lines.extend(['', '最终SELECT字段'])\n        lines.append('- %s' % (', '.join(select_fields) if select_fields else '无'))\n        return '\\n'.join(lines)\n\n    warnings = []\n\n    where_filters = {}\n    value_alias_hits = {}\n    fuzzy_alias_hits = {}\n    for field in filter_fields:\n        alias_map = value_alias_to_filter.get(field) if isinstance(value_alias_to_filter.get(field), dict) else {}\n        if not alias_map:\n            continue\n        exact_items = find_alias_hit_items(alias_map, q_norm)\n        exact_spans = [(item['start'], item['end']) for item in exact_items]\n        ordered_hits = [(item['start'], 0, item['target']) for item in exact_items]\n        exact_values = unique_targets(exact_items)\n        if exact_values:\n            value_alias_hits[field] = exact_values\n        policy_cfg = match_policies.get(field) if isinstance(match_policies.get(field), dict) else {}\n        fuzzy_policy = policy_cfg.get('fuzzy') if isinstance(policy_cfg.get('fuzzy'), dict) else {}\n        audit_items = []\n        if fuzzy_policy.get('enabled') is True:\n            for group in fuzzy_alias_matches(alias_map, q_norm, exact_spans, fuzzy_policy):\n                matches = group['matches']\n                for rank, match in enumerate(matches):\n                    ordered_hits.append((group['start'], rank + 1, match['target']))\n                if len(matches) == 1:\n                    match = matches[0]\n                    audit_items.append({'input': match['input'], 'alias': match['alias'], 'target': match['target'], 'distance': match['distance'], 'score': round(match['score'], 6), 'mode': match['mode']})\n                else:\n                    audit_items.append({'input': matches[0]['input'], 'matches': [{'alias': match['alias'], 'target': match['target'], 'distance': match['distance'], 'score': round(match['score'], 6), 'mode': match['mode']} for match in matches]})\n                warnings.append({'type': 'fuzzy_alias_correction', 'field': field, 'input': matches[0]['input'], 'targets': [match['target'] for match in matches]})\n        if audit_items:\n            fuzzy_alias_hits[field] = audit_items\n        values = []\n        for _, _, target in sorted(ordered_hits, key=lambda item: (item[0], item[1], str(item[2]))):\n            if target not in values:\n                values.append(target)\n        if values:\n            where_filters[field] = values\n\n    if not where_filters:\n        warnings.append({\n            'type': 'NO_STRUCTURED_FILTER_FOUND',\n            'message': '未命中结构化过滤值，将仅按 SELECT 字段查询；如数据量较大，请补充机型/模组/厂商/平台/设备类型。'\n        })\n\n    combined_aliases = {}\n    for alias, field in field_alias_to_field.items():\n        combined_aliases[alias] = {'kind': 'field', 'name': field}\n    for alias, composite in composite_alias_to_name.items():\n        combined_aliases.setdefault(alias, {'kind': 'composite', 'name': composite})\n\n    alias_hit_items = find_alias_hit_items(combined_aliases, q_norm)\n    alias_targets = unique_targets(alias_hit_items)\n    selected_fields = []\n    selected_composites = []\n    direct_field_hits = []\n    composite_hits = []\n    for item in alias_hit_items:\n        target = item.get('target')\n        if not isinstance(target, dict):\n            continue\n        if target.get('kind') == 'field':\n            field = target.get('name')\n            if field in allowed_fields and field not in selected_fields:\n                selected_fields.append(field)\n                direct_field_hits.append({\n                    'text': display_hit_text(item, field_meta_all.get(field) if isinstance(field_meta_all.get(field), dict) else {}, field),\n                    'field': field,\n                })\n        elif target.get('kind') == 'composite':\n            name = target.get('name')\n            comp = composite_meta.get(name) if isinstance(composite_meta.get(name), dict) else {}\n            if name and name not in selected_composites:\n                selected_composites.append(name)\n                composite_hits.append({\n                    'text': display_hit_text(item, comp, name),\n                    'composite': name,\n                    'expand_to': list(comp.get('expand_to') or []),\n                })\n            for field in comp.get('expand_to') or []:\n                if field in allowed_fields and field not in selected_fields:\n                    selected_fields.append(field)\n\n    context_fields = [f for f in filter_fields if f in allowed_fields]\n    select_fields = []\n    for field in context_fields + selected_fields:\n        if field not in select_fields:\n            select_fields.append(field)\n\n    fallback_used = False\n    fallback_message = '未触发'\n    if not selected_fields:\n        # 无明确指标时给 LLM 更多上下文，但仍限定在 registry 白名单内。\n        fallback_used = True\n        identity = composite_meta.get('identity', {}).get('expand_to') or context_fields\n        for field in identity:\n            if field in allowed_fields and field not in select_fields:\n                select_fields.append(field)\n        warnings.append({'type': 'SELECT_FIELDS_FALLBACK_USED', 'fields': select_fields})\n        fallback_message = '已触发：未命中明确字段，补充 %s' % (', '.join(identity) if identity else '无')\n\n    for field in select_fields + list(where_filters.keys()):\n        if field not in allowed_fields or not valid_identifier(field):\n            return fail('error', 'SQL 字段未通过白名单校验: %s' % field)\n\n    placeholders = []\n    params = []\n    for field in filter_fields:\n        values = where_filters.get(field)\n        if not values:\n            continue\n        part = ','.join(['?'] * len(values))\n        placeholders.append('`%s` IN (%s)' % (field, part))\n        params.extend(values)\n\n    select_sql = ', '.join('`%s`' % field for field in select_fields)\n    sql = 'SELECT %s FROM `%s`' % (select_sql, table)\n    if placeholders:\n        sql += ' WHERE ' + ' AND '.join(placeholders)\n    sql += ' LIMIT ?'\n    params.append(limit)\n\n    selected_field_meta = {}\n    for field in select_fields:\n        selected_field_meta[field] = field_meta_all.get(field) or {'label': field, 'description': ''}\n\n    try:\n        select_field_summary = build_select_field_summary(\n            direct_field_hits,\n            composite_hits,\n            context_fields,\n            fallback_used,\n            fallback_message,\n            select_fields,\n        )\n    except Exception as exc:\n        select_field_summary = '字段选择摘要生成失败：%s' % str(exc)[:120]\n\n    sql_plan = {\n        'status': 'ok',\n        'backend': 'mysql_http',\n        'readonly': True,\n        'table': table,\n        'select_fields': select_fields,\n        'where_filters': where_filters,\n        'where_allowed_fields': filter_fields,\n        'sql': sql,\n        'params': params,\n        'limit': limit,\n        'sql_select_mode': sql_select_mode,\n        'selected_composites': selected_composites,\n        'selected_field_meta': selected_field_meta,\n        'value_alias_hits': value_alias_hits,\n        'fuzzy_alias_hits': fuzzy_alias_hits,\n        'warnings': warnings,\n    }\n\n    return {\n        'jf_sql_plan_json': dump(sql_plan),\n        'jf_sql_compile_status': 'ok',\n        'jf_sql_compile_error_answer': '',\n        'jf_selected_field_meta_json': dump(selected_field_meta),\n        'jf_select_field_summary': select_field_summary,\n    }\n"
           },
           "position": {
-            "x": 3600,
+            "x": 1440,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 3600,
-            "y": 300
-          },
-          "width": 320,
-          "height": 170
-        },
-        {
-          "id": "ifllm",
-          "type": "custom",
-          "data": {
-            "title": "选择分析方式",
-            "type": "if-else",
-            "cases": [
-              {
-                "case_id": "enabled",
-                "conditions": [
-                  {
-                    "id": "if-full-llm-enabled",
-                    "variable_selector": [
-                      "env",
-                      "ENABLE_FULL_LLM"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "true"
-                  }
-                ],
-                "logical_operator": "and"
-              }
-            ],
-            "logical_operator": "and"
-          },
-          "position": {
-            "x": 3960,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 3960,
-            "y": 300
-          },
-          "width": 300,
-          "height": 154
-        },
-        {
-          "id": "full_req",
-          "type": "custom",
-          "data": {
-            "title": "准备深度分析",
-            "type": "code",
-            "outputs": {
-              "full_llm_request_body_json": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n",
-            "variables": [
-              {
-                "variable": "llm_system_prompt",
-                "value_selector": [
-                  "llm_input",
-                  "llm_system_prompt"
-                ]
-              },
-              {
-                "variable": "llm_user_prompt",
-                "value_selector": [
-                  "llm_input",
-                  "llm_user_prompt"
-                ]
-              }
-            ],
-            "code_language": "python3",
-            "code": "def main(llm_system_prompt='', llm_user_prompt=''):\n    import json\n\n    payload = {\n        'systemPrompt': str(llm_system_prompt or ''),\n        'userPrompt': str(llm_user_prompt or ''),\n    }\n\n    return {\n        'full_llm_request_body_json': json.dumps(\n            payload,\n            ensure_ascii=False,\n            separators=(',', ':')\n        )\n    }\n"
-          },
-          "position": {
-            "x": 4320,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 4320,
-            "y": 80
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "http_full",
-          "type": "custom",
-          "data": {
-            "title": "执行深度分析",
-            "type": "http-request",
-            "method": "POST",
-            "url": "{{#env.SN_FULL_LLM_CHAT_URLS#}}",
-            "body": {
-              "type": "raw-text",
-              "data": "{{#full_req.full_llm_request_body_json#}}"
-            },
-            "headers": "Content-Type: application/json\nAccept: application/json",
-            "params": "",
-            "variables": [],
-            "authorization": {
-              "type": "no-auth",
-              "config": null
-            },
-            "timeout": {
-              "max_connect_timeout": 10000,
-              "max_read_timeout": 600000,
-              "max_write_timeout": 10000
-            },
-            "ssl_verify": true,
-            "retry_config": {
-              "retry_enabled": true,
-              "max_retries": 3,
-              "retry_interval": 100
-            }
-          },
-          "position": {
-            "x": 4680,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 4680,
-            "y": 80
-          },
-          "width": 320,
-          "height": 130
-        },
-        {
-          "id": "full_parse",
-          "type": "custom",
-          "data": {
-            "title": "整理分析结果",
-            "type": "code",
-            "outputs": {
-              "full_llm_result_json": {
-                "type": "string"
-              },
-              "full_llm_status": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def load_payload(raw):\n        if isinstance(raw, dict):\n            return raw, ''\n        if raw is None:\n            return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n        if isinstance(raw, str):\n            if not raw.strip():\n                return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n            try:\n                return json.loads(raw), ''\n            except Exception as exc:\n                return None, 'JAVA_FULL_LLM_BODY_JSON_INVALID: %s' % truncate(exc)\n        return None, 'JAVA_FULL_LLM_BODY_TYPE_INVALID'\n\n    def error_summary(payload, fallback):\n        parts = []\n        if fallback:\n            parts.append(str(fallback))\n        if isinstance(payload, dict):\n            for key in ('msg', 'errorCode', 'retryable', 'requestId'):\n                if key in payload and payload.get(key) not in (None, ''):\n                    parts.append('%s=%s' % (key, payload.get(key)))\n        return truncate('; '.join(parts))\n\n    def parse_http_code(value):\n        try:\n            return int(value)\n        except Exception:\n            return 0\n\n    status = 'error'\n    answer = ''\n    error = ''\n\n    payload, load_error = load_payload(body)\n    http_code = parse_http_code(status_code)\n\n    try:\n        if load_error:\n            error = error_summary(payload, load_error)\n        elif not isinstance(payload, dict):\n            error = error_summary(payload, 'JAVA_FULL_LLM_JSON_NOT_OBJECT')\n        elif http_code < 200 or http_code >= 300:\n            error = error_summary(\n                payload,\n                'JAVA_FULL_LLM_HTTP_ERROR status=%s' % http_code\n            )\n        elif payload.get('code') != 200:\n            error = error_summary(payload, 'JAVA_FULL_LLM_CODE_NOT_200')\n        else:\n            data = payload.get('data')\n            if not isinstance(data, dict):\n                error = error_summary(payload, 'JAVA_FULL_LLM_DATA_MISSING')\n            else:\n                choices = data.get('choices')\n                if not isinstance(choices, list) or not choices:\n                    error = error_summary(payload, 'JAVA_FULL_LLM_CHOICES_EMPTY')\n                else:\n                    first = choices[0] if isinstance(choices[0], dict) else {}\n                    message = (\n                        first.get('message')\n                        if isinstance(first.get('message'), dict)\n                        else {}\n                    )\n                    content = message.get('content')\n                    if not isinstance(content, str) or not content.strip():\n                        error = error_summary(\n                            payload,\n                            'JAVA_FULL_LLM_CONTENT_EMPTY'\n                        )\n                    else:\n                        answer = content.strip()\n                        status = 'ok'\n    except Exception as exc:\n        error = error_summary(payload, 'JAVA_FULL_LLM_PARSE_FAILED: %s' % exc)\n        answer = ''\n        status = 'error'\n\n    if status != 'ok':\n        answer = ''\n        status = 'error'\n        if not error:\n            error = 'JAVA_FULL_LLM_ERROR'\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n",
-            "variables": [
-              {
-                "variable": "body",
-                "value_selector": [
-                  "http_full",
-                  "body"
-                ]
-              },
-              {
-                "variable": "status_code",
-                "value_selector": [
-                  "http_full",
-                  "status_code"
-                ]
-              }
-            ],
-            "code_language": "python3",
-            "code": "def main(body='', status_code=200):\n    import json\n\n    def truncate(text, limit=1200):\n        text = '' if text is None else str(text)\n        return text if len(text) <= limit else text[:limit] + '...'\n\n    def load_payload(raw):\n        if isinstance(raw, dict):\n            return raw, ''\n        if raw is None:\n            return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n        if isinstance(raw, str):\n            if not raw.strip():\n                return None, 'JAVA_FULL_LLM_BODY_EMPTY'\n            try:\n                return json.loads(raw), ''\n            except Exception as exc:\n                return None, 'JAVA_FULL_LLM_BODY_JSON_INVALID: %s' % truncate(exc)\n        return None, 'JAVA_FULL_LLM_BODY_TYPE_INVALID'\n\n    def error_summary(payload, fallback):\n        parts = []\n        if fallback:\n            parts.append(str(fallback))\n        if isinstance(payload, dict):\n            for key in ('msg', 'errorCode', 'retryable', 'requestId'):\n                if key in payload and payload.get(key) not in (None, ''):\n                    parts.append('%s=%s' % (key, payload.get(key)))\n        return truncate('; '.join(parts))\n\n    def parse_http_code(value):\n        try:\n            return int(value)\n        except Exception:\n            return 0\n\n    status = 'error'\n    answer = ''\n    error = ''\n\n    payload, load_error = load_payload(body)\n    http_code = parse_http_code(status_code)\n\n    try:\n        if load_error:\n            error = error_summary(payload, load_error)\n        elif not isinstance(payload, dict):\n            error = error_summary(payload, 'JAVA_FULL_LLM_JSON_NOT_OBJECT')\n        elif http_code < 200 or http_code >= 300:\n            error = error_summary(\n                payload,\n                'JAVA_FULL_LLM_HTTP_ERROR status=%s' % http_code\n            )\n        elif payload.get('code') != 200:\n            error = error_summary(payload, 'JAVA_FULL_LLM_CODE_NOT_200')\n        else:\n            data = payload.get('data')\n            if not isinstance(data, dict):\n                error = error_summary(payload, 'JAVA_FULL_LLM_DATA_MISSING')\n            else:\n                choices = data.get('choices')\n                if not isinstance(choices, list) or not choices:\n                    error = error_summary(payload, 'JAVA_FULL_LLM_CHOICES_EMPTY')\n                else:\n                    first = choices[0] if isinstance(choices[0], dict) else {}\n                    message = (\n                        first.get('message')\n                        if isinstance(first.get('message'), dict)\n                        else {}\n                    )\n                    content = message.get('content')\n                    if not isinstance(content, str) or not content.strip():\n                        error = error_summary(\n                            payload,\n                            'JAVA_FULL_LLM_CONTENT_EMPTY'\n                        )\n                    else:\n                        answer = content.strip()\n                        status = 'ok'\n    except Exception as exc:\n        error = error_summary(payload, 'JAVA_FULL_LLM_PARSE_FAILED: %s' % exc)\n        answer = ''\n        status = 'error'\n\n    if status != 'ok':\n        answer = ''\n        status = 'error'\n        if not error:\n            error = 'JAVA_FULL_LLM_ERROR'\n\n    result = {\n        'llm_status': status,\n        'llm_text': answer,\n        'llm_source': 'full_llm',\n        'error': error\n    }\n    return {\n        'full_llm_result_json': json.dumps(result, ensure_ascii=False),\n        'full_llm_status': status\n    }\n"
-          },
-          "position": {
-            "x": 5040,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 5040,
-            "y": 80
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "if_full",
-          "type": "custom",
-          "data": {
-            "title": "检查分析结果",
-            "type": "if-else",
-            "cases": [
-              {
-                "case_id": "ok",
-                "conditions": [
-                  {
-                    "variable_selector": [
-                      "full_parse",
-                      "full_llm_status"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "ok",
-                    "id": "if-full-ok"
-                  }
-                ],
-                "logical_operator": "and"
-              }
-            ],
-            "logical_operator": "and"
-          },
-          "position": {
-            "x": 5400,
-            "y": 80
-          },
-          "positionAbsolute": {
-            "x": 5400,
-            "y": 80
-          },
-          "width": 300,
-          "height": 154
-        },
-        {
-          "id": "llmlocal",
-          "type": "custom",
-          "data": {
-            "title": "生成分析结果",
-            "type": "llm",
-            "outputs": {
-              "text": {
-                "type": "string"
-              }
-            },
-            "model": {
-              "provider": "langgenius/ollama/ollama",
-              "name": "qwen3.5:35b",
-              "mode": "chat",
-              "completion_params": {
-                "temperature": 0,
-                "top_p": 1,
-                "think": false,
-                "num_ctx": 32768,
-                "num_predict": 8192
-              }
-            },
-            "prompt_template": [
-              {
-                "role": "system",
-                "text": "{{#llm_input.llm_system_prompt#}}"
-              },
-              {
-                "role": "user",
-                "text": "{{#llm_input.llm_user_prompt#}}"
-              }
-            ],
-            "context": {
-              "enabled": false,
-              "variable_selector": []
-            },
-            "vision": {
-              "enabled": false
-            }
-          },
-          "position": {
-            "x": 5760,
-            "y": 500
-          },
-          "positionAbsolute": {
-            "x": 5760,
-            "y": 500
-          },
-          "width": 340,
-          "height": 170
-        },
-        {
-          "id": "local_wrap",
-          "type": "custom",
-          "data": {
-            "title": "汇总分析结果",
-            "type": "code",
-            "outputs": {
-              "llm_handler_result_json": {
-                "type": "string"
-              },
-              "local_llm_result_json": {
-                "type": "string"
-              }
-            },
-            "source_code": "def main(local_text='', full_llm_result_json='', llm_handler_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    llm_input = load_json(llm_handler_input_json)\n    full_result = load_json(full_llm_result_json)\n    query_plan = llm_input.get('query_plan') if isinstance(llm_input.get('query_plan'), dict) else {}\n    query_result = llm_input.get('query_result') if isinstance(llm_input.get('query_result'), dict) else {}\n    output_kind = str(llm_input.get('output_kind') or 'text')\n    artifact_type = str(llm_input.get('artifact_type') or 'markdown_text')\n    task_type = str(llm_input.get('llm_task_type') or output_kind)\n\n    if llm_input.get('status') == 'error':\n        error = str(llm_input.get('error') or 'LLM_INPUT_ERROR')\n        text = str(llm_input.get('user_prompt') or error)\n        result = {\n            'handler_status': 'error',\n            'output_kind': output_kind,\n            'answer': text,\n            'artifact_type': artifact_type,\n            'artifact_payload_json': json.dumps({'source': 'llm_input_guard', 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n            'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n            'query_result_json': json.dumps(query_result, ensure_ascii=False),\n            'error': text\n        }\n        encoded = json.dumps(result, ensure_ascii=False)\n        return {\n            'llm_handler_result_json': encoded,\n            'local_llm_result_json': encoded\n        }\n\n    source = 'local_llm'\n    text = str(local_text or '').strip()\n    error = ''\n    if full_result.get('llm_status') == 'ok' and str(full_result.get('llm_text') or '').strip():\n        source = 'full_llm'\n        text = str(full_result.get('llm_text') or '').strip()\n    elif text:\n        source = 'local_llm'\n    else:\n        error = full_result.get('error') or 'LLM 未返回有效文本'\n        text = 'LLM 输出生成完成，但模型未返回有效文本。'\n\n    result = {\n        'handler_status': 'ok' if not error else 'error',\n        'output_kind': output_kind,\n        'answer': text,\n        'artifact_type': artifact_type,\n        'artifact_payload_json': json.dumps({'source': source, 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': error\n    }\n    encoded = json.dumps(result, ensure_ascii=False)\n    return {\n        'llm_handler_result_json': encoded,\n        'local_llm_result_json': encoded\n    }\n",
-            "variables": [
-              {
-                "variable": "local_text",
-                "value_selector": [
-                  "llmlocal",
-                  "text"
-                ]
-              },
-              {
-                "variable": "full_llm_result_json",
-                "value_selector": [
-                  "full_parse",
-                  "full_llm_result_json"
-                ]
-              },
-              {
-                "variable": "llm_handler_input_json",
-                "value_selector": [
-                  "llm_input",
-                  "llm_handler_input_json"
-                ]
-              }
-            ],
-            "code_language": "python3",
-            "code": "def main(local_text='', full_llm_result_json='', llm_handler_input_json=''):\n    import json\n\n    def load_json(raw):\n        try:\n            obj = json.loads(raw or '{}')\n            return obj if isinstance(obj, dict) else {}\n        except Exception:\n            return {}\n\n    llm_input = load_json(llm_handler_input_json)\n    full_result = load_json(full_llm_result_json)\n    query_plan = llm_input.get('query_plan') if isinstance(llm_input.get('query_plan'), dict) else {}\n    query_result = llm_input.get('query_result') if isinstance(llm_input.get('query_result'), dict) else {}\n    output_kind = str(llm_input.get('output_kind') or 'text')\n    artifact_type = str(llm_input.get('artifact_type') or 'markdown_text')\n    task_type = str(llm_input.get('llm_task_type') or output_kind)\n\n    if llm_input.get('status') == 'error':\n        error = str(llm_input.get('error') or 'LLM_INPUT_ERROR')\n        text = str(llm_input.get('user_prompt') or error)\n        result = {\n            'handler_status': 'error',\n            'output_kind': output_kind,\n            'answer': text,\n            'artifact_type': artifact_type,\n            'artifact_payload_json': json.dumps({'source': 'llm_input_guard', 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n            'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n            'query_result_json': json.dumps(query_result, ensure_ascii=False),\n            'error': text\n        }\n        encoded = json.dumps(result, ensure_ascii=False)\n        return {\n            'llm_handler_result_json': encoded,\n            'local_llm_result_json': encoded\n        }\n\n    source = 'local_llm'\n    text = str(local_text or '').strip()\n    error = ''\n    if full_result.get('llm_status') == 'ok' and str(full_result.get('llm_text') or '').strip():\n        source = 'full_llm'\n        text = str(full_result.get('llm_text') or '').strip()\n    elif text:\n        source = 'local_llm'\n    else:\n        error = full_result.get('error') or 'LLM 未返回有效文本'\n        text = 'LLM 输出生成完成，但模型未返回有效文本。'\n\n    result = {\n        'handler_status': 'ok' if not error else 'error',\n        'output_kind': output_kind,\n        'answer': text,\n        'artifact_type': artifact_type,\n        'artifact_payload_json': json.dumps({'source': source, 'llm_task_type': task_type, 'content': text}, ensure_ascii=False),\n        'query_plan_json': json.dumps(query_plan, ensure_ascii=False),\n        'query_result_json': json.dumps(query_result, ensure_ascii=False),\n        'error': error\n    }\n    encoded = json.dumps(result, ensure_ascii=False)\n    return {\n        'llm_handler_result_json': encoded,\n        'local_llm_result_json': encoded\n    }\n"
-          },
-          "position": {
-            "x": 7200,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 7200,
+            "x": 1440,
             "y": 300
           },
           "width": 320,
           "height": 150
         },
         {
-          "id": "final",
+          "id": "mysql_request",
           "type": "custom",
           "data": {
-            "title": "生成最终回答",
+            "title": "准备数据查询",
             "type": "code",
             "outputs": {
-              "final_answer": {
+              "mysql_request_body_json": {
+                "type": "string"
+              },
+              "mysql_request_status": {
+                "type": "string"
+              },
+              "mysql_request_error_answer": {
                 "type": "string"
               }
             },
-            "source_code": "def main(llm_handler_result_json=''):\n    import json\n\n    try:\n        obj = json.loads(llm_handler_result_json or '{}')\n    except Exception:\n        obj = {}\n\n    if obj:\n        if obj.get('handler_status') == 'error':\n            return {'final_answer': obj.get('error') or 'PHONE 输出处理失败'}\n        return {'final_answer': obj.get('answer') or json.dumps(obj, ensure_ascii=False)}\n\n    return {'final_answer': 'PHONE 查询完成，但未生成有效回答。'}\n",
+            "source_code": "def main(jf_sql_plan_json='', context_json=''):\n    import json\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    plan = load_json(jf_sql_plan_json, {})\n    context = load_json(context_json, {})\n\n    if plan.get('status') != 'ok':\n        message = plan.get('error') or 'SQL 查询计划无效。'\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败，原因：%s' % message,\n        }\n\n    sql = str(plan.get('sql') or '').strip()\n    params = plan.get('params') if isinstance(plan.get('params'), list) else []\n    user = str(context.get('user') or '').strip()\n\n    if not sql.lower().startswith('select '):\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败：只允许 SELECT 查询。',\n        }\n\n    return {\n        'mysql_request_body_json': dump({'sql': sql, 'params': params, 'user': user}),\n        'mysql_request_status': 'ok',\n        'mysql_request_error_answer': '',\n    }\n",
             "variables": [
-              {
-                "variable": "llm_handler_result_json",
-                "value_selector": [
-                  "local_wrap",
-                  "llm_handler_result_json"
-                ]
-              }
-            ],
-            "code_language": "python3",
-            "code": "def main(llm_handler_result_json=''):\n    import json\n\n    try:\n        obj = json.loads(llm_handler_result_json or '{}')\n    except Exception:\n        obj = {}\n\n    if obj:\n        if obj.get('handler_status') == 'error':\n            return {'final_answer': obj.get('error') or 'PHONE 输出处理失败'}\n        return {'final_answer': obj.get('answer') or json.dumps(obj, ensure_ascii=False)}\n\n    return {'final_answer': 'PHONE 查询完成，但未生成有效回答。'}\n"
-          },
-          "position": {
-            "x": 7560,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 7560,
-            "y": 300
-          },
-          "width": 320,
-          "height": 150
-        },
-        {
-          "id": "ans",
-          "type": "custom",
-          "data": {
-            "title": "返回最终回答",
-            "type": "answer",
-            "answer": "{{#final.final_answer#}}",
-            "outputs": [],
-            "variables": []
-          },
-          "position": {
-            "x": 7920,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 7920,
-            "y": 300
-          },
-          "width": 280,
-          "height": 110
-        },
-        {
-          "id": "if_mysql_request_ok",
-          "type": "custom",
-          "data": {
-            "title": "检查查询方案",
-            "type": "if-else",
-            "logical_operator": "and",
-            "cases": [
-              {
-                "case_id": "success",
-                "logical_operator": "and",
-                "conditions": [
-                  {
-                    "id": "if-mysql-request-ok",
-                    "variable_selector": [
-                      "mysql_request",
-                      "mysql_request_status"
-                    ],
-                    "comparison_operator": "is",
-                    "value": "ok"
-                  }
-                ]
-              }
-            ]
-          },
-          "position": {
-            "x": 2160,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 2160,
-            "y": 300
-          },
-          "width": 300,
-          "height": 154
-        },
-        {
-          "id": "http_mysql_query",
-          "type": "custom",
-          "data": {
-            "title": "查询业务数据",
-            "type": "http-request",
-            "method": "POST",
-            "url": "{{#env.SN_MYSQL_QUERY_URLS#}}",
-            "body": {
-              "type": "json",
-              "data": "{{#mysql_request.mysql_request_body_json#}}"
-            },
-            "headers": "Content-Type: application/json\nAccept: application/json",
-            "params": "",
-            "variables": [],
-            "authorization": {
-              "type": "no-auth",
-              "config": null
-            },
-            "timeout": {
-              "max_connect_timeout": 10000,
-              "max_read_timeout": 120000,
-              "max_write_timeout": 10000
-            },
-            "ssl_verify": true,
-            "retry_config": {
-              "retry_enabled": true,
-              "max_retries": 2,
-              "retry_interval": 1000
-            }
-          },
-          "position": {
-            "x": 2520,
-            "y": 300
-          },
-          "positionAbsolute": {
-            "x": 2520,
-            "y": 300
-          },
-          "width": 320,
-          "height": 140
-        },
-        {
-          "id": "mysql_normalize",
-          "type": "custom",
-          "data": {
-            "title": "整理查询结果",
-            "type": "code",
-            "code_language": "python3",
-            "outputs": {
-              "mysql_query_result_json": {
-                "type": "string"
-              },
-              "mysql_query_status": {
-                "type": "string"
-              },
-              "mysql_query_error_answer": {
-                "type": "string"
-              }
-            },
-            "variables": [
-              {
-                "variable": "body",
-                "value_selector": [
-                  "http_mysql_query",
-                  "body"
-                ]
-              },
-              {
-                "variable": "status_code",
-                "value_selector": [
-                  "http_mysql_query",
-                  "status_code"
-                ]
-              },
               {
                 "variable": "jf_sql_plan_json",
                 "value_selector": [
                   "jf_sql_plan",
                   "jf_sql_plan_json"
                 ]
+              },
+              {
+                "variable": "context_json",
+                "value_selector": [
+                  "ctx",
+                  "context_json"
+                ]
               }
             ],
-            "source_code": "def main(body='', status_code=0, jf_sql_plan_json=''):\n    import json\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def fail(message, plan):\n        result = {'status':'error','source':'mysql_http','rows':[],'row_count':0,'sql_plan':plan,'error':message}\n        return {\n            'mysql_query_result_json': dump(result),\n            'mysql_query_status': 'error',\n            'mysql_query_error_answer': 'MySQL 查询失败，原因：%s' % message,\n        }\n\n    plan = load_json(jf_sql_plan_json, {})\n    try:\n        http_status = int(status_code or 0)\n    except Exception:\n        http_status = 0\n\n    if http_status < 200 or http_status >= 300:\n        return fail('后端接口 HTTP 状态异常: %s' % http_status, plan)\n\n    try:\n        payload = json.loads(body or '{}')\n    except Exception as exc:\n        return fail('后端接口响应不是合法 JSON: %s' % exc, plan)\n\n    if not isinstance(payload, dict):\n        return fail('后端接口响应顶层不是 JSON 对象。', plan)\n\n    response_code = payload.get('code')\n    if response_code not in (None, 0, 200, '0', '200'):\n        message = payload.get('msg') or payload.get('message') or '后端接口返回失败状态'\n        return fail('%s，code=%s' % (message, response_code), plan)\n\n    data = payload.get('data')\n    if not isinstance(data, dict):\n        return fail('后端接口响应缺少 data 对象。', plan)\n\n    rows = data.get('rows')\n    if rows is None:\n        rows = []\n    if not isinstance(rows, list):\n        return fail('后端接口 data.rows 不是数组。', plan)\n\n    row_count = data.get('rowCount')\n    if row_count is None:\n        row_count = data.get('row_count')\n    try:\n        row_count = int(row_count)\n    except Exception:\n        row_count = len(rows)\n\n    result = {'status':'ok','source':'mysql_http','rows':rows,'row_count':row_count,'sql_plan':plan,'error':''}\n    return {\n        'mysql_query_result_json': dump(result),\n        'mysql_query_status': 'ok',\n        'mysql_query_error_answer': '',\n    }\n",
-            "code": "def main(body='', status_code=0, jf_sql_plan_json=''):\n    import json\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def fail(message, plan):\n        result = {'status':'error','source':'mysql_http','rows':[],'row_count':0,'sql_plan':plan,'error':message}\n        return {\n            'mysql_query_result_json': dump(result),\n            'mysql_query_status': 'error',\n            'mysql_query_error_answer': 'MySQL 查询失败，原因：%s' % message,\n        }\n\n    plan = load_json(jf_sql_plan_json, {})\n    try:\n        http_status = int(status_code or 0)\n    except Exception:\n        http_status = 0\n\n    if http_status < 200 or http_status >= 300:\n        return fail('后端接口 HTTP 状态异常: %s' % http_status, plan)\n\n    try:\n        payload = json.loads(body or '{}')\n    except Exception as exc:\n        return fail('后端接口响应不是合法 JSON: %s' % exc, plan)\n\n    if not isinstance(payload, dict):\n        return fail('后端接口响应顶层不是 JSON 对象。', plan)\n\n    response_code = payload.get('code')\n    if response_code not in (None, 0, 200, '0', '200'):\n        message = payload.get('msg') or payload.get('message') or '后端接口返回失败状态'\n        return fail('%s，code=%s' % (message, response_code), plan)\n\n    data = payload.get('data')\n    if not isinstance(data, dict):\n        return fail('后端接口响应缺少 data 对象。', plan)\n\n    rows = data.get('rows')\n    if rows is None:\n        rows = []\n    if not isinstance(rows, list):\n        return fail('后端接口 data.rows 不是数组。', plan)\n\n    row_count = data.get('rowCount')\n    if row_count is None:\n        row_count = data.get('row_count')\n    try:\n        row_count = int(row_count)\n    except Exception:\n        row_count = len(rows)\n\n    result = {'status':'ok','source':'mysql_http','rows':rows,'row_count':row_count,'sql_plan':plan,'error':''}\n    return {\n        'mysql_query_result_json': dump(result),\n        'mysql_query_status': 'ok',\n        'mysql_query_error_answer': '',\n    }\n"
+            "code_language": "python3",
+            "code": "def main(jf_sql_plan_json='', context_json=''):\n    import json\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    plan = load_json(jf_sql_plan_json, {})\n    context = load_json(context_json, {})\n\n    if plan.get('status') != 'ok':\n        message = plan.get('error') or 'SQL 查询计划无效。'\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败，原因：%s' % message,\n        }\n\n    sql = str(plan.get('sql') or '').strip()\n    params = plan.get('params') if isinstance(plan.get('params'), list) else []\n    user = str(context.get('user') or '').strip()\n\n    if not sql.lower().startswith('select '):\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败：只允许 SELECT 查询。',\n        }\n\n    return {\n        'mysql_request_body_json': dump({'sql': sql, 'params': params, 'user': user}),\n        'mysql_request_status': 'ok',\n        'mysql_request_error_answer': '',\n    }\n"
           },
           "position": {
-            "x": 2880,
+            "x": 1800,
             "y": 300
           },
           "positionAbsolute": {
-            "x": 2880,
+            "x": 1800,
             "y": 300
           },
           "width": 320,
-          "height": 160
-        }
-        ,{
-          "id": "if_memory_write", "type": "custom",
-          "data": {"title": "检查查询记忆写回", "type": "if-else",
-            "cases": [{"case_id": "success", "conditions": [{"id": "if-memory-write-ready", "variable_selector": ["jf_sql_plan", "jf_memory_write_ready"], "comparison_operator": "=", "value": true}], "logical_operator": "and"}], "logical_operator": "and"},
-          "position": {"x": 3400, "y": 1000}, "positionAbsolute": {"x": 3400, "y": 1000}, "width": 300, "height": 154
+          "height": 150
         },
         {
-          "id": "save_query_memory", "type": "custom",
-          "data": {"title": "保存查询记忆", "type": "variable-assigner", "version": "2",
-            "items": [{"input_type": "variable", "operation": "over-write", "value": ["jf_sql_plan", "jf_current_execution_context_json"], "variable_selector": ["conversation", "jf_query_memory_json"], "write_mode": "over-write"}]},
-          "position": {"x": 3760, "y": 1000}, "positionAbsolute": {"x": 3760, "y": 1000}, "width": 300, "height": 120
-        }
-      ],
-      "edges": [
-        {
-          "id": "e01_start_source_ctx",
+          "id": "if_sql_ok",
           "type": "custom",
-          "source": "start",
-          "target": "ctx",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "检查查询结果",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "success",
+                "conditions": [
+                  {
+                    "id": "if-sql-ok-success",
+                    "variable_selector": [
+                      "mysql_normalize",
+                      "mysql_query_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
           },
-          "zIndex": 0
+          "position": {
+            "x": 3240,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 3240,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
         },
         {
-          "id": "e02_ctx_source_jf_registry_load",
+          "id": "ans_sql_error",
           "type": "custom",
-          "source": "ctx",
-          "target": "jf_registry_load",
-          "sourceHandle": "source",
-          "targetHandle": "target",
           "data": {
-            "isInIteration": false
+            "title": "返回查询提示",
+            "type": "answer",
+            "answer": "{{#mysql_request.mysql_request_error_answer#}}{{#mysql_normalize.mysql_query_error_answer#}}",
+            "outputs": [],
+            "variables": []
           },
-          "zIndex": 0
+          "position": {
+            "x": 3600,
+            "y": 600
+          },
+          "positionAbsolute": {
+            "x": 3600,
+            "y": 600
+          },
+          "width": 280,
+          "height": 110
         },
-        {
-          "id": "e03_jf_registry_load_source_parse",
-          "type": "custom",
-          "source": "jf_registry_load",
-          "target": "jf_registry_parse",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e04_jf_registry_parse_source_sql_plan",
-          "type": "custom",
-          "source": "jf_registry_parse",
-          "target": "jf_sql_plan",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e09_llm_input_source_ifllm",
-          "type": "custom",
-          "source": "llm_input",
-          "target": "ifllm",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e10_ifllm_enabled_full_req",
-          "type": "custom",
-          "source": "ifllm",
-          "target": "full_req",
-          "sourceHandle": "enabled",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e15_full_req_source_http_full",
-          "type": "custom",
-          "source": "full_req",
-          "target": "http_full",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e16_http_full_source_full_parse",
-          "type": "custom",
-          "source": "http_full",
-          "target": "full_parse",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e17_full_parse_source_if_full",
-          "type": "custom",
-          "source": "full_parse",
-          "target": "if_full",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e18_if_full_ok_local_wrap",
-          "type": "custom",
-          "source": "if_full",
-          "target": "local_wrap",
-          "sourceHandle": "ok",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e19_if_full_false_llmlocal",
-          "type": "custom",
-          "source": "if_full",
-          "target": "llmlocal",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e21_ifllm_false_llmlocal",
-          "type": "custom",
-          "source": "ifllm",
-          "target": "llmlocal",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e22_llmlocal_source_local_wrap",
-          "type": "custom",
-          "source": "llmlocal",
-          "target": "local_wrap",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e23_local_wrap_source_final",
-          "type": "custom",
-          "source": "local_wrap",
-          "target": "final",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "e24_final_source_ans",
-          "type": "custom",
-          "source": "final",
-          "target": "ans",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e01_plan_request",
-          "type": "custom",
-          "source": "jf_sql_plan",
-          "target": "mysql_request",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e02_request_if",
-          "type": "custom",
-          "source": "mysql_request",
-          "target": "if_mysql_request_ok",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e03_if_http",
-          "type": "custom",
-          "source": "if_mysql_request_ok",
-          "target": "http_mysql_query",
-          "sourceHandle": "success",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e04_if_error",
-          "type": "custom",
-          "source": "if_mysql_request_ok",
-          "target": "ans_sql_error",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e05_http_norm",
-          "type": "custom",
-          "source": "http_mysql_query",
-          "target": "mysql_normalize",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e06_norm_if",
-          "type": "custom",
-          "source": "mysql_normalize",
-          "target": "if_sql_ok",
-          "sourceHandle": "source",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e07_if_llm",
-          "type": "custom",
-          "source": "if_sql_ok",
-          "target": "if_memory_write",
-          "sourceHandle": "success",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        },
-        {
-          "id": "mysql_e08_if_error",
-          "type": "custom",
-          "source": "if_sql_ok",
-          "target": "ans_sql_error",
-          "sourceHandle": "false",
-          "targetHandle": "target",
-          "data": {
-            "isInIteration": false
-          },
-          "zIndex": 0
-        }
-        ,{"id": "memory_e01_if_assign", "type": "custom", "source": "if_memory_write", "target": "save_query_memory", "sourceHandle": "success", "targetHandle": "target", "data": {"isInIteration": false}, "zIndex": 0},
-        {"id": "memory_e02_if_llm", "type": "custom", "source": "if_memory_write", "target": "llm_input", "sourceHandle": "false", "targetHandle": "target", "data": {"isInIteration": false}, "zIndex": 0},
-        {"id": "memory_e03_assign_llm", "type": "custom", "source": "save_query_memory", "target": "llm_input", "sourceHandle": "source", "targetHandle": "target", "data": {"isInIteration": false}, "zIndex": 0}
-      ],
-      "viewport": {
-        "x": -300,
-        "y": 200,
-        "zoom": 0.6
-      }
-    }
-  }
-}
