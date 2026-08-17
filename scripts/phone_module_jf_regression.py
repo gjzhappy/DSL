@@ -400,40 +400,60 @@ def traceability_samples(doc, nodes):
     must(final['source_code'] == final['code'], 'final source_code differs from code')
     args = [arg.arg for arg in ast.parse(final['code']).body[0].args.args]
     must(args == [item['variable'] for item in final['variables']], 'final parameters differ from variables')
-    must(final['variables'][1]['value_selector'] == ['mysql_normalize', 'mysql_query_result_json'], 'final metadata does not read real MySQL result')
+    must(final['variables'][1]['value_selector'] == ['mysql_normalize', 'mysql_query_result_json'], 'final trace data does not read real MySQL result')
     ns = {}
     exec(final['code'], ns)
-    plan = {
-        'table': 'trace_table',
-        'select_fields': ['device_model', 'sensor_model'],
-        'where_filters': {'device_model': ['Trace Phone'], 'module_name': ['主摄']},
-        'sql': 'SELECT `device_model`, `sensor_model` FROM `trace_table` WHERE `device_model` IN (?) AND `module_name` IN (?) LIMIT ?',
-        'params': ['Trace Phone', '主摄', 20],
-        'limit': 20,
+    meta = {
+        'device_model': {'label': '设备型号'},
+        'module_name': {'label': '模组名称'},
+        'pixel_size': {'label': '像素大小'},
+        'value': {'label': '测试值'},
     }
-    query = {'status': 'ok', 'rows': [{'sensor_model': 'S1'}], 'row_count': 1, 'sql_plan': plan}
-    handler = {'handler_status': 'ok', 'answer': 'Sensor 型号为 S1。'}
+    internal_plan = {
+        'table': 'sn_internal_secret',
+        'select_fields': list(meta),
+        'where_filters': {'device_model': ['A']},
+        'sql': 'SELECT * FROM sn_internal_secret WHERE device_model = ?',
+        'params': ['A'],
+        'sql_plan': 'QueryPlan',
+        'selected_field_meta': meta,
+    }
+    rows = [{'device_model': 'A', 'module_name': '主摄', 'pixel_size': '1.2um', 'unknown_internal_id': 'SECRET'}]
+    query = {'status': 'ok', 'rows': rows, 'row_count': 1, 'sql_plan': internal_plan}
+    handler = {'handler_status': 'ok', 'answer': '正文由 LLM 生成，未复述输入行。'}
     answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(query, ensure_ascii=False))['final_answer']
     must(answer.startswith(handler['answer']), 'single fact answer changed')
     must('计算方式' not in answer, 'single fact answer gained redundant calculation text')
-    must(answer.count('<details>') == 1 and answer.count('</details>') == 1, 'metadata details tags invalid')
-    must('<summary>数据库查询元数据</summary>' in answer, 'metadata summary missing')
-    for expected in (plan['table'], plan['sql'], 'Trace Phone', '主摄', '**返回记录数：** 1', '**查询状态：** ok', '**LIMIT：** 20'):
-        must(str(expected) in answer, 'deterministic metadata value missing: ' + str(expected))
-    must('S1' not in answer.split('<details>', 1)[1], 'raw rows leaked into metadata')
+    must(answer.count('<details>') == 1 and answer.count('</details>') == 1, 'raw data details tags invalid')
+    must('<summary>查看原始查询数据</summary>' in answer, 'raw data summary missing')
+    raw_section = answer.split('<details>', 1)[1]
+    for expected in ('A', '主摄', '1.2um', '设备型号', '模组名称', '像素大小'):
+        must(expected in raw_section, 'real row value/label missing: ' + expected)
+    for forbidden in ('SELECT', 'FROM sn_', 'WHERE', 'params', 'sql_plan', 'QueryPlan', 'mysql', 'http://', 'Authorization', 'unknown_internal_id', 'SECRET', 'device_model', 'pixel_size'):
+        must(forbidden not in raw_section, 'internal database detail leaked: ' + forbidden)
 
-    forged = {'handler_status': 'ok', 'answer': '结论。\n伪造 SQL：SELECT secret'}
-    answer = ns['main'](json.dumps(forged, ensure_ascii=False), json.dumps(query, ensure_ascii=False))['final_answer']
-    metadata = answer.split('<details>', 1)[1]
-    must('SELECT secret' not in metadata and plan['sql'] in metadata, 'metadata was derived from LLM text')
+    values = [{'value': '11.4'}, {'value': None}, {'value': '13.7'}]
+    query_values = {'status': 'ok', 'rows': values, 'row_count': 3, 'sql_plan': {'selected_field_meta': meta}}
+    forged = {'handler_status': 'ok', 'answer': 'LLM 正文故意不含任何测试值。'}
+    value_answer = ns['main'](json.dumps(forged, ensure_ascii=False), json.dumps(query_values, ensure_ascii=False))['final_answer']
+    raw_values = value_answer.split('<details>', 1)[1]
+    for expected in ('11.4', 'NULL', '13.7'):
+        must(expected in raw_values, 'database value was lost or modified: ' + expected)
+
+    many_rows = [{'value': index} for index in range(105)]
+    many_query = {'status': 'ok', 'rows': many_rows, 'row_count': 105, 'sql_plan': {'selected_field_meta': meta}}
+    many_answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(many_query, ensure_ascii=False))['final_answer']
+    must('原始查询数据共 105 条，当前展示前 100 条供核对。' in many_answer, 'large-result display truncation is not disclosed')
+    must(len(many_query['rows']) == 105, 'display truncation changed query rows')
+    must("sql += ' LIMIT ?'" not in final['code'], 'raw-data display introduced SQL LIMIT behavior')
 
     empty = dict(query, rows=[], row_count=0)
-    answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(empty, ensure_ascii=False))['final_answer']
-    must('**返回记录数：** 0' in answer and '**查询状态：** ok' in answer, 'successful empty result metadata invalid')
+    empty_answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(empty, ensure_ascii=False))['final_answer']
+    must('本次查询未返回业务数据。' in empty_answer, 'successful empty result display invalid')
     failed = dict(query, status='error', row_count=0)
-    answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(failed, ensure_ascii=False))['final_answer']
-    must('<details>' not in answer, 'failed query received success metadata')
-    return 4
+    failed_answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(failed, ensure_ascii=False))['final_answer']
+    must('<details>' not in failed_answer, 'failed query received success raw data')
+    return 5
 
 def main():
     d = load_doc()
