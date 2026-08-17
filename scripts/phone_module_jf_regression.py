@@ -349,30 +349,43 @@ def explicit_limit_samples(doc, nodes):
         must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
         return json.loads(result['jf_sql_plan_json'])
 
-    for question in (
+    unlimited_questions = (
         '查询 iPhone16 Pro Max 主摄像素大小',
         '对比 iPhone16 Pro Max 和 vivo X200 Pro 主摄规格',
         '分析不同机型的功耗趋势并生成报告',
-    ):
+        '查询功耗最高的前10个机型',
+        '查询 Top 10 功耗机型',
+        '查询像素尺寸最大的前5个Sensor',
+        '查询模组面积最小的10个机型',
+        '查询功耗排名前20的机型',
+        '功耗最高的10个机型',
+        '前10名',
+        '最低的10个',
+    )
+    for question in unlimited_questions:
         plan = compile(question)
-        must('LIMIT' not in plan['sql'], 'implicit LIMIT generated for: ' + question)
-        must(plan['limit'] is None and 200 not in plan['params'], 'default limit remained for: ' + question)
+        must('LIMIT' not in plan['sql'], 'ranking/default LIMIT generated for: ' + question)
+        must(plan['limit'] is None and 200 not in plan['params'], 'ranking/default limit remained for: ' + question)
 
-    for question, expected in (
-        ('查询功耗最高的前10个机型', 10),
+    limited_questions = (
         ('只看20条', 20),
-        ('Top 50', 50),
-        ('给我前100个结果', 100),
-    ):
+        ('最多返回50条结果', 50),
+        ('给我前100条数据', 100),
+        ('最多返回10条功耗数据', 10),
+        ('只看前20条数据', 20),
+        ('限制20条', 20),
+        ('仅显示30条结果', 30),
+    )
+    for question, expected in limited_questions:
         plan = compile(question)
-        must(plan['sql'].endswith(' LIMIT ?'), 'explicit LIMIT missing for: ' + question)
-        must(plan['limit'] == expected and plan['params'][-1] == expected, 'explicit LIMIT value mismatch for: ' + question)
+        must(plan['sql'].endswith(' LIMIT ?'), 'explicit result LIMIT missing for: ' + question)
+        must(plan['limit'] == expected and plan['params'][-1] == expected, 'explicit result LIMIT value mismatch for: ' + question)
         must(plan['sql'].count('?') == len(plan['params']), 'SQL placeholder/params mismatch for: ' + question)
 
     for question in ('Top 0', '只看0条', '只看-20条'):
         plan = compile(question)
         must('LIMIT' not in plan['sql'] and plan['limit'] is None, 'unsafe LIMIT accepted for: ' + question)
-    return 10
+    return len(unlimited_questions) + len(limited_questions) + 3
 
 def main():
     d = load_doc()
