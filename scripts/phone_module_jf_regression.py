@@ -400,7 +400,7 @@ def traceability_samples(doc, nodes):
     must(final['source_code'] == final['code'], 'final source_code differs from code')
     args = [arg.arg for arg in ast.parse(final['code']).body[0].args.args]
     must(args == [item['variable'] for item in final['variables']], 'final parameters differ from variables')
-    must(final['variables'][1]['value_selector'] == ['mysql_parse', 'mysql_query_result_json'], 'final metadata does not read real MySQL result')
+    must(final['variables'][1]['value_selector'] == ['mysql_normalize', 'mysql_query_result_json'], 'final metadata does not read real MySQL result')
     ns = {}
     exec(final['code'], ns)
     plan = {
