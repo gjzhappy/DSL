@@ -276,7 +276,7 @@ def fuzzy_device_model_samples(nodes):
     follow = compile('厂商', memory_registry, memory)
     must(follow['query_scopes'][0]['where_filters'] == {'device_model': ['Vivo X200 pro']}, 'memory filter inheritance failed')
     must('manufacturer' in follow['select_fields'], 'memory field follow-up failed')
-    must(follow['params'] == ['Vivo X200 pro', 200], 'memory params are unstable or untrusted fields leaked')
+    must(follow['params'] == ['Vivo X200 pro'], 'memory params are unstable or untrusted fields leaked')
     must(follow['sql'].count('`device_model` IN (?)') == 1, 'scoped WHERE compilation/duplicate removal failed')
     invalid = compile('Magic6', memory_registry, '{bad json')
     must(any(w.get('type') == 'QUERY_MEMORY_INVALID_IGNORED' for w in invalid['warnings']), 'invalid memory warning missing')
@@ -318,14 +318,14 @@ def query_memory_warning_samples(doc, nodes):
 
     switched = scenarios['module_switch']
     must(switched['warnings'] == [], 'module switch warnings changed')
-    must(switched['params'] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦', 200], 'module switch params changed')
+    must(switched['params'] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦'], 'module switch params changed')
     must([scope['where_filters'] for scope in switched['query_scopes']] == [
         {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']},
         {'device_model': ['Vivo X200 pro'], 'module_name': ['长焦']},
     ], 'module switch scopes changed')
 
     compared = scenarios['comparison']
-    must(compared['params'] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄', 200], 'comparison params changed')
+    must(compared['params'] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄'], 'comparison params changed')
     must(compared['query_scopes'][1]['select_fields'] == expected_scope['select_fields'], 'comparison did not inherit specification fields')
     must('device_pic_url' not in compared['query_scopes'][1]['select_fields'] and '`device_pic_url`' not in compared['sql'], 'comparison fallback added device_pic_url')
     must('SELECT_FIELDS_FALLBACK_USED' not in [item.get('type') for item in compared['warnings']], 'comparison emitted field fallback warning')
@@ -337,6 +337,52 @@ def query_memory_warning_samples(doc, nodes):
     must(fallback and fallback['fields'] == ['manufacturer', 'platform', 'device_type', 'device_model', 'module_name', 'device_pic_url'], 'field fallback or order changed')
     return scenarios
 
+def result_limit_samples(doc, nodes):
+    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    parsed = parse_ns['main'](registry_raw, 'ok')
+
+    def compile(question):
+        result = plan_ns['main'](json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', '')
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return json.loads(result['jf_sql_plan_json'])
+
+    for question in (
+        '查询 iPhone16 Pro Max 主摄像素大小',
+        '对比 iPhone16 Pro Max 和 vivo X200 Pro 主摄规格',
+        '分析不同机型的功耗趋势并生成报告',
+        '查询所有旗舰机主摄功耗',
+        '查询功耗最高的前10个机型',
+        '查询 Top 10 功耗机型',
+        '查询像素尺寸最大的前5个Sensor',
+        '查询模组面积最小的10个机型',
+        '查询功耗排名前20的机型',
+        '功耗最高的10个机型',
+    ):
+        plan = compile(question)
+        must('LIMIT' not in plan['sql'], 'implicit LIMIT generated for: ' + question)
+        must(plan['limit'] is None and 200 not in plan['params'], 'default limit remained for: ' + question)
+
+    for question, expected in (
+        ('只看20条', 20),
+        ('最多返回50条结果', 50),
+        ('给我前100条数据', 100),
+        ('最多返回10条功耗数据', 10),
+        ('只看前20条数据', 20),
+        ('限制30条', 30),
+    ):
+        plan = compile(question)
+        must(plan['sql'].endswith(' LIMIT ?'), 'explicit LIMIT missing for: ' + question)
+        must(plan['limit'] == expected and plan['params'][-1] == expected, 'explicit LIMIT value mismatch for: ' + question)
+        must(plan['sql'].count('?') == len(plan['params']), 'SQL placeholder/params mismatch for: ' + question)
+
+    for question in ('Top 0', '只看0条', '只看-20条'):
+        plan = compile(question)
+        must('LIMIT' not in plan['sql'] and plan['limit'] is None, 'unsafe LIMIT accepted for: ' + question)
+    return 19
+
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
@@ -346,12 +392,14 @@ def main():
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
     memory_scenarios = query_memory_warning_samples(d, nodes)
+    limit_count = result_limit_samples(d, nodes)
     print('PASS frontend schema')
     print('PASS query-memory schema/graph/contract and negative injections: %d' % negative_count)
     for idx, actual in enumerate(sample_results, 1):
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
     print('PASS query-memory warning/fallback scenarios: %d' % len(memory_scenarios))
+    print('PASS result-count/ranking limit scenarios: %d' % limit_count)
 if __name__=='__main__':
     try: main()
     except Exception as e: print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)
