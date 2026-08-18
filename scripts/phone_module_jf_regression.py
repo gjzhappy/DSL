@@ -392,9 +392,17 @@ def traceability_samples(doc, nodes):
         item['value'] for item in doc['workflow']['environment_variables']
         if item['name'] == 'JF_ANALYSIS_USER_PROMPT'
     )
-    for required in ('单个事实值', '求和', '平均值', '差值', '比例', '排名', '排序', '实际数据', 'NULL', '不得按 0', '不得估算'):
+    for required in (
+        '单个事实值', '求和', '平均值', '差值', '比例', '排名', '排序',
+        '实际数据', '## 分析结论', '## 分析依据', '有效数据数量',
+        '分析顺序', '关键数据点', 'where_filters', '粗粒度过滤',
+        '细粒度筛选', '分类=sensor', '分类=motor', 'NULL', '空字符串',
+        '不得当作 0', '不得估算', '不要生成、重写或总结“原始查询数据”',
+    ):
         must(required in prompt, 'analysis traceability prompt rule missing: ' + required)
     must('冗长内部推理过程' in prompt, 'prompt does not prohibit verbose internal reasoning')
+    for forbidden_thought in ('我首先思考', '然后我认为', '经过分析', '我的推理过程'):
+        must(forbidden_thought in prompt, 'prompt does not prohibit internal thought wording: ' + forbidden_thought)
 
     final = nodes['final']['data']
     must(final['source_code'] == final['code'], 'final source_code differs from code')
@@ -429,7 +437,10 @@ def traceability_samples(doc, nodes):
     raw_section = answer.split('<details>', 1)[1]
     for expected in ('A', '主摄', '1.2um', '设备型号', '模组名称', '像素大小'):
         must(expected in raw_section, 'real row value/label missing: ' + expected)
-    for forbidden in ('SELECT', 'FROM sn_', 'WHERE', 'params', 'sql_plan', 'QueryPlan', 'mysql', 'http://', 'Authorization', 'unknown_internal_id', 'SECRET', 'device_model', 'pixel_size'):
+    must('## 原始查询数据' in answer, 'raw data heading missing')
+    for expected in ('unknown_internal_id', 'SECRET'):
+        must(expected in raw_section, 'unregistered returned field was silently discarded: ' + expected)
+    for forbidden in ('SELECT', 'FROM sn_', 'WHERE', 'params', 'sql_plan', 'QueryPlan', 'mysql', 'http://', 'Authorization'):
         must(forbidden not in raw_section, 'internal database detail leaked: ' + forbidden)
 
     values = [{'value': '11.4'}, {'value': None}, {'value': '13.7'}]
@@ -443,7 +454,9 @@ def traceability_samples(doc, nodes):
     many_rows = [{'value': index} for index in range(105)]
     many_query = {'status': 'ok', 'rows': many_rows, 'row_count': 105, 'sql_plan': {'selected_field_meta': meta}}
     many_answer = ns['main'](json.dumps(handler, ensure_ascii=False), json.dumps(many_query, ensure_ascii=False))['final_answer']
-    must('原始查询数据共 105 条，当前展示前 100 条供核对。' in many_answer, 'large-result display truncation is not disclosed')
+    must('**第 105 条**' in many_answer, 'large-result final row is missing')
+    must('- **测试值：** 104' in many_answer, 'large-result final value is missing')
+    must('当前展示前' not in many_answer, 'large-result display is still truncated')
     must(len(many_query['rows']) == 105, 'display truncation changed query rows')
     must("sql += ' LIMIT ?'" not in final['code'], 'raw-data display introduced SQL LIMIT behavior')
 
