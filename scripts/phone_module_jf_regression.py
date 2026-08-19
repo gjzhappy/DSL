@@ -318,14 +318,14 @@ def query_memory_warning_samples(doc, nodes):
 
     switched = scenarios['module_switch']
     must(switched['warnings'] == [], 'module switch warnings changed')
-    must(switched['params'] == ['Vivo X200 pro', '主摄', 'Vivo X200 pro', '长焦'], 'module switch params changed')
+    must(switched['params'] == ['Vivo X200 pro', '主摄', '长焦'], 'module switch params changed')
     must([scope['where_filters'] for scope in switched['query_scopes']] == [
         {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']},
-        {'device_model': ['Vivo X200 pro'], 'module_name': ['长焦']},
+        {'module_name': ['长焦']},
     ], 'module switch scopes changed')
 
     compared = scenarios['comparison']
-    must(compared['params'] == ['Vivo X200 pro', '主摄', '小米15Ultra', '主摄'], 'comparison params changed')
+    must(compared['params'] == ['Vivo X200 pro', '主摄', '小米15Ultra'], 'comparison params changed')
     must(compared['query_scopes'][1]['select_fields'] == expected_scope['select_fields'], 'comparison did not inherit specification fields')
     must('device_pic_url' not in compared['query_scopes'][1]['select_fields'] and '`device_pic_url`' not in compared['sql'], 'comparison fallback added device_pic_url')
     must('SELECT_FIELDS_FALLBACK_USED' not in [item.get('type') for item in compared['warnings']], 'comparison emitted field fallback warning')
@@ -336,6 +336,71 @@ def query_memory_warning_samples(doc, nodes):
     fallback = next((item for item in no_fields['warnings'] if item.get('type') == 'SELECT_FIELDS_FALLBACK_USED'), None)
     must(fallback and fallback['fields'] == ['manufacturer', 'platform', 'device_type', 'device_model', 'module_name', 'device_pic_url'], 'field fallback or order changed')
     return scenarios
+
+def filter_scope_independence_samples(nodes):
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    registry = {
+        'version': 'filter-scope-regression', 'table': 'phone_sensor_test',
+        'query_roles': {
+            'sql_filter_fields': ['device_manufacturer', 'device_model', 'module_name'],
+            'sql_select_fields': 'all_fields',
+        },
+        'fields': {
+            'device_manufacturer': {'label': '厂商', 'aliases': ['厂商', '品牌']},
+            'device_model': {'label': '机型', 'aliases': ['机型']},
+            'module_name': {'label': '模组', 'aliases': ['模组']},
+            'sensor_model': {'label': 'Sensor 型号', 'aliases': ['sensor', 'Sensor 型号']},
+            'pixel_size_um': {'label': '像素尺寸', 'aliases': ['像素尺寸']},
+        },
+        'composite_fields': {},
+        'value_aliases': {
+            'device_manufacturer': {
+                'OPPO': {'aliases': ['oppo']}, '小米': {'aliases': ['小米']}, 'VIVO': {'aliases': ['vivo']},
+            },
+            'device_model': {'OPPO Find X8 Ultra': {'aliases': ['oppo find x8 ultra']}},
+            'module_name': {'主摄': {'aliases': ['主摄']}},
+        },
+    }
+    parsed = parse_ns['main'](json.dumps(registry, ensure_ascii=False), 'ok')
+    must(parsed['jf_registry_parse_status'] == 'ok', parsed['jf_registry_error'])
+
+    def compile(question, memory=''):
+        result = plan_ns['main'](
+            json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'],
+            parsed['jf_alias_index_json'], 'ok', '', memory,
+        )
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return json.loads(result['jf_sql_plan_json']), result['jf_current_execution_context_json']
+
+    first, memory = compile('查询 OPPO Find X8 Ultra 主摄 Sensor')
+    first_filters = {
+        'device_manufacturer': ['OPPO'],
+        'device_model': ['OPPO Find X8 Ultra'],
+        'module_name': ['主摄'],
+    }
+    must(first['where_filters'] == first_filters, 'case 5 single-turn explicit filters changed')
+
+    independent, _ = compile('查询小米和 vivo Sensor', memory)
+    current = {'device_manufacturer': ['小米', 'VIVO']}
+    must(independent['current_query_delta']['explicit_where_filters'] == current, 'case 1 explicit filter parsing changed')
+    must(independent['where_filters'] == current and independent['query_scopes'][-1]['where_filters'] == current, 'case 1 current/top-level filters inherited history')
+    must(len(independent['query_scopes']) == 2 and ' OR ' in independent['sql'], 'case 4 historical scope OR compilation changed')
+    must(independent['params'] == ['OPPO', 'OPPO Find X8 Ultra', '主摄', '小米', 'VIVO'], 'case 4 scoped SQL params changed')
+
+    inherited, _ = compile('它的像素尺寸呢？', memory)
+    must(inherited['current_query_delta']['explicit_where_filters'] == {}, 'case 2 follow-up unexpectedly parsed filters')
+    must(inherited['where_filters'] == first_filters and inherited['query_scopes'][-1]['where_filters'] == first_filters, 'case 2 empty explicit filters did not inherit')
+
+    partial, _ = compile('那 vivo 呢？', memory)
+    vivo_only = {'device_manufacturer': ['VIVO']}
+    must(partial['where_filters'] == vivo_only and partial['query_scopes'][-1]['where_filters'] == vivo_only, 'case 3 partial explicit filter was supplemented from history')
+
+    must(set(first['select_fields']) <= set(independent['select_fields']), 'case 6 inherited SELECT fields regressed')
+    must(set(independent['select_fields']) == set(independent['selected_field_meta']), 'case 6 selected field metadata contract regressed')
+    must(independent['selected_composites'] == first['selected_composites'], 'case 6 selected composite contract regressed')
+    return independent
 
 def explicit_limit_samples(doc, nodes):
     registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
@@ -477,6 +542,7 @@ def main():
     sample_results = parse_slot_samples(nodes)
     fuzzy_count = fuzzy_device_model_samples(nodes)
     memory_scenarios = query_memory_warning_samples(d, nodes)
+    scope_plan = filter_scope_independence_samples(nodes)
     limit_count = explicit_limit_samples(d, nodes)
     traceability_count = traceability_samples(d, nodes)
     print('PASS frontend schema')
@@ -485,6 +551,7 @@ def main():
         print('PASS slot sample %d target_objects: %s' % (idx, json.dumps(actual, ensure_ascii=False)))
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
     print('PASS query-memory warning/fallback scenarios: %d' % len(memory_scenarios))
+    print('PASS filter scope independence cases 1-6: %s' % json.dumps(scope_plan['where_filters'], ensure_ascii=False))
     print('PASS explicit/default limit scenarios: %d' % limit_count)
     print('PASS query traceability/analysis basis scenarios: %d' % traceability_count)
 if __name__=='__main__':
