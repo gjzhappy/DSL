@@ -17,7 +17,7 @@ def check_query_memory_schema(doc):
         must(item.get('value_type') == 'string' and isinstance(item.get('value'), str), 'conversation variable string schema invalid')
         must(item.get('selector') == ['conversation', item['name']], 'conversation variable selector invalid')
         names.append(item['name'])
-    must(len(names) == len(set(names)) and 'jf_query_memory_json' in names, 'conversation variable missing/duplicate')
+    must(len(names) == len(set(names)) and {'jf_query_memory_json', 'jf_previous_query_result_json'} <= set(names), 'conversation variable missing/duplicate')
     nodes = workflow.get('graph', {}).get('nodes')
     edges = workflow.get('graph', {}).get('edges')
     must(isinstance(nodes, list) and all(isinstance(n.get('data'), dict) for n in nodes), 'node data missing')
@@ -44,11 +44,20 @@ def check_query_memory_schema(doc):
     must(item.get('input_type') == 'variable' and item.get('operation') == 'over-write', 'assigner operation invalid')
     must(item.get('variable_selector') == ['conversation','jf_query_memory_json'], 'assigner target invalid')
     must(item.get('value') == ['jf_sql_plan','jf_current_execution_context_json'], 'assigner source invalid')
+    result_assign = by_id['save_query_result_memory']['data']
+    must(result_assign.get('type') == 'assigner' and result_assign.get('version') == '2', 'result memory assigner schema invalid')
+    result_item = result_assign.get('items', [None])[0]
+    must(result_item and result_item.get('operation') == 'over-write', 'result memory operation invalid')
+    must(result_item.get('variable_selector') == ['conversation','jf_previous_query_result_json'], 'result memory target invalid')
+    must(result_item.get('value') == ['mysql_normalize','mysql_query_result_json'], 'result memory source invalid')
+    llm_variables = {item.get('variable'): item.get('value_selector') for item in by_id['llm_input']['data'].get('variables', [])}
+    must(llm_variables.get('jf_previous_query_result_json') == ['conversation','jf_previous_query_result_json'], 'llm previous result selector invalid')
     ids = [e.get('id') for e in edges]
     must(len(ids) == len(set(ids)), 'duplicate edge id')
     must(all(e.get('source') in by_id and e.get('target') in by_id for e in edges), 'dangling edge')
     triples = {(e['source'],e.get('sourceHandle'),e['target']) for e in edges}
-    must({('if_sql_ok','success','if_memory_write'),('if_memory_write','memory_write_true','save_query_memory'),('if_memory_write','false','llm_input'),('save_query_memory','source','llm_input')} <= triples, 'memory graph wiring invalid')
+    must({('if_sql_ok','success','if_memory_write'),('if_memory_write','memory_write_true','save_query_memory'),('if_memory_write','false','llm_input'),('save_query_memory','source','llm_input'),('llm_input','source','save_query_result_memory'),('save_query_result_memory','source','ifllm')} <= triples, 'memory graph wiring invalid')
+    must(('llm_input','source','ifllm') not in triples, 'result memory write does not follow llm_input')
 
 def negative_schema_injections(doc):
     cases = []
@@ -313,8 +322,10 @@ def query_memory_warning_samples(doc, nodes):
         warning_types = [item.get('type') for item in plan['warnings']]
         must('NO_STRUCTURED_FILTER_FOUND' not in warning_types, name + ' emitted misleading filter warning')
         must('将仅按 SELECT 字段查询' not in json.dumps(plan['warnings'], ensure_ascii=False), name + ' emitted misleading warning text')
-        must(plan['sql'] == expected_sql and plan['params'] == expected_params, name + ' changed SQL or params')
-        must(plan['query_scopes'] == [expected_scope], name + ' changed or duplicated query scope')
+        must(plan['params'] == expected_params, name + ' changed params')
+    must(scenarios['continued_analysis']['sql'] == expected_sql, 'continued analysis changed inherited SQL')
+    must(scenarios['continued_analysis']['query_scopes'] == [expected_scope], 'continued analysis changed or duplicated query scope')
+    must(scenarios['field_follow_up']['select_fields'] != expected_scope['select_fields'], 'explicit field follow-up retained all historical SELECT fields')
 
     switched = scenarios['module_switch']
     must(switched['warnings'] == [], 'module switch warnings changed')
@@ -401,6 +412,69 @@ def filter_scope_independence_samples(nodes):
     must(set(independent['select_fields']) == set(independent['selected_field_meta']), 'case 6 selected field metadata contract regressed')
     must(independent['selected_composites'] == first['selected_composites'], 'case 6 selected composite contract regressed')
     return independent
+
+def select_scope_and_result_memory_samples(nodes):
+    parse_ns, plan_ns, llm_ns = {}, {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    exec(nodes['llm_input']['data']['code'], llm_ns)
+    context_fields = ['manufacturer', 'device_model', 'module_name']
+    business_fields = ['metric_%02d' % index for index in range(1, 36)]
+    fields = {name: {'label': name, 'aliases': [name]} for name in context_fields + business_fields}
+    registry = {
+        'version': 'select-scope-regression', 'table': 'phone_sensor_test',
+        'query_roles': {'sql_filter_fields': context_fields, 'sql_select_fields': 'all_fields'},
+        'fields': fields,
+        'composite_fields': {
+            'wide': {'label': '宽指标', 'aliases': ['宽查询'], 'expand_to': business_fields},
+            'identity': {'label': '身份', 'aliases': [], 'expand_to': context_fields},
+        },
+        'value_aliases': {
+            'manufacturer': {'A': {'aliases': ['厂商A']}, 'B': {'aliases': ['厂商B']}},
+            'device_model': {'M1': {'aliases': ['机型M1']}},
+            'module_name': {'MAIN': {'aliases': ['模组MAIN']}},
+        },
+    }
+    parsed = parse_ns['main'](json.dumps(registry, ensure_ascii=False), 'ok')
+    must(parsed['jf_registry_parse_status'] == 'ok', parsed['jf_registry_error'])
+
+    def compile(question, memory=''):
+        result = plan_ns['main'](json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', memory)
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return json.loads(result['jf_sql_plan_json']), result['jf_current_execution_context_json']
+
+    wide, memory = compile('厂商A 机型M1 模组MAIN 宽查询')
+    must(len(wide['select_fields']) == 38, 'case 1 wide SELECT fixture is not 30+ fields')
+    narrow, _ = compile('厂商B metric_01 metric_02 metric_03', memory)
+    expected_narrow = context_fields + business_fields[:3]
+    must(narrow['select_fields'] == expected_narrow, 'case 1 explicit narrow SELECT inherited historical fields')
+    must(len(narrow['select_fields']) < len(set(wide['select_fields'] + expected_narrow)), 'narrow SELECT did not shrink historical union')
+    must(len(narrow['query_scopes']) == 2 and ' OR ' in narrow['sql'], 'case 1 historical WHERE scopes stopped using OR')
+
+    filter_only, _ = compile('厂商B', memory)
+    must(filter_only['select_fields'] == wide['select_fields'], 'case 2 filter-only follow-up did not inherit recent SELECT')
+    new_filter_select, _ = compile('厂商B metric_01', memory)
+    must(new_filter_select['select_fields'] == context_fields + business_fields[:1], 'case 3 new filter and SELECT inherited wide fields')
+    select_only, _ = compile('metric_01 metric_02', memory)
+    must(select_only['where_filters'] == wide['where_filters'], 'case 4 SELECT-only follow-up did not inherit filters')
+    must(select_only['select_fields'] == context_fields + business_fields[:2], 'case 4 filter inheritance also inherited wide SELECT')
+    omitted, _ = compile('继续说明', memory)
+    must(omitted['where_filters'] == wide['where_filters'] and omitted['select_fields'] == wide['select_fields'], 'case 5 omitted follow-up did not inherit filter and SELECT')
+    fallback, _ = compile('首次查询')
+    must('SELECT_FIELDS_FALLBACK_USED' in [item.get('type') for item in fallback['warnings']], 'case 6 initial identity fallback changed')
+
+    result_a = {'sql_plan': {'select_fields': ['metric_01'], 'where_filters': {'manufacturer': ['A']}, 'sql': 'hidden'}, 'row_count': 1, 'rows': [{'metric_01': 'RESULT_A'}], 'warnings': ['hidden']}
+    result_b = {'sql_plan': {'select_fields': ['metric_02'], 'where_filters': {'manufacturer': ['B']}}, 'row_count': 1, 'rows': [{'metric_02': 'RESULT_B'}]}
+    llm_result = llm_ns['main'](
+        json.dumps({'question': 'current'}), json.dumps(result_b), '{}', parsed['jf_alias_index_json'],
+        'system', 'rules', memory, json.dumps(result_a),
+    )
+    prompt_package = json.loads(llm_result['llm_user_prompt'].split('【输入数据包】\n', 1)[1])
+    must(prompt_package['previous_query_result']['rows'] == result_a['rows'], 'previous result was overwritten by current rows before llm_input')
+    must(prompt_package['rows'] == result_b['rows'], 'current rows missing from llm_input')
+    must(set(prompt_package['previous_query_result']) == {'sql_plan', 'row_count', 'rows'}, 'previous result leaked debug fields')
+    must(set(prompt_package['previous_query_result']['sql_plan']) == {'select_fields', 'where_filters'}, 'previous SQL plan leaked internals')
+    return {'historical_count': len(set(wide['select_fields'] + expected_narrow)), 'current_count': len(narrow['select_fields']), 'current_fields': narrow['select_fields']}
 
 def explicit_limit_samples(doc, nodes):
     registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
@@ -543,6 +617,7 @@ def main():
     fuzzy_count = fuzzy_device_model_samples(nodes)
     memory_scenarios = query_memory_warning_samples(d, nodes)
     scope_plan = filter_scope_independence_samples(nodes)
+    select_stats = select_scope_and_result_memory_samples(nodes)
     limit_count = explicit_limit_samples(d, nodes)
     traceability_count = traceability_samples(d, nodes)
     print('PASS frontend schema')
@@ -552,6 +627,7 @@ def main():
     print('PASS fuzzy device_model regression groups: %d' % fuzzy_count)
     print('PASS query-memory warning/fallback scenarios: %d' % len(memory_scenarios))
     print('PASS filter scope independence cases 1-6: %s' % json.dumps(scope_plan['where_filters'], ensure_ascii=False))
+    print('PASS SELECT scope cases 1-6 and previous-result timing: %s' % json.dumps(select_stats, ensure_ascii=False))
     print('PASS explicit/default limit scenarios: %d' % limit_count)
     print('PASS query traceability/analysis basis scenarios: %d' % traceability_count)
 if __name__=='__main__':
