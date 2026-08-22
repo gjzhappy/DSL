@@ -42,6 +42,39 @@
         "value_type": "string"
       },
       {
+        "description": "LLM context window token budget; invalid or empty runtime values safely fall back to 32768.",
+        "id": "env-phone-local-context-tokens",
+        "name": "LOCAL_CONTEXT_TOKENS",
+        "selector": [
+          "env",
+          "LOCAL_CONTEXT_TOKENS"
+        ],
+        "value": "32768",
+        "value_type": "string"
+      },
+      {
+        "description": "Reserved maximum LLM output tokens; invalid or empty runtime values safely fall back to 4096.",
+        "id": "env-phone-local-max-predict-tokens",
+        "name": "LOCAL_MAX_PREDICT_TOKENS",
+        "selector": [
+          "env",
+          "LOCAL_MAX_PREDICT_TOKENS"
+        ],
+        "value": "4096",
+        "value_type": "string"
+      },
+      {
+        "description": "Prompt token safety margin; invalid or empty runtime values safely fall back to 1024.",
+        "id": "env-phone-prompt-token-safety-margin",
+        "name": "PROMPT_TOKEN_SAFETY_MARGIN",
+        "selector": [
+          "env",
+          "PROMPT_TOKEN_SAFETY_MARGIN"
+        ],
+        "value": "1024",
+        "value_type": "string"
+      },
+      {
         "description": "Use full LLM HTTP path when true; otherwise local LLM is used.",
         "id": "env-phone-enable-full-llm",
         "name": "ENABLE_FULL_LLM",
