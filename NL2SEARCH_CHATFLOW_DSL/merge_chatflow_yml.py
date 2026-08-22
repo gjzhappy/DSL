@@ -26,6 +26,8 @@ PART_RE=re.compile(r'PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$')
 
 def fail(msg): raise SystemExit(f'FAIL: {msg}')
 
+def warn(msg): print(f'WARN: {msg}', file=sys.stderr)
+
 def discover_parts():
     numbered=[]
     for p in BASE_DIR.glob('PHONE_MODULE_JF_CHATFLOW_*.yml'):
@@ -63,8 +65,11 @@ ENV_DOLLAR_RE=re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 REQUIRED_ENV_NAMES={
     'JF_QUERY_REGISTRY_JSON','JF_ANALYSIS_SYSTEM_PROMPT',
     'JF_ANALYSIS_USER_PROMPT','ENABLE_FULL_LLM','SN_MYSQL_QUERY_URLS',
-    'SN_FULL_LLM_CHAT_URLS','LOCAL_CONTEXT_TOKENS',
-    'LOCAL_MAX_PREDICT_TOKENS','PROMPT_TOKEN_SAFETY_MARGIN',
+    'SN_FULL_LLM_CHAT_URLS',
+}
+OPTIONAL_LLM_BUDGET_ENV_NAMES={
+    'LOCAL_CONTEXT_TOKENS','LOCAL_MAX_PREDICT_TOKENS',
+    'PROMPT_TOKEN_SAFETY_MARGIN',
 }
 DEPRECATED_ENV_NAMES={
     'MONGO_QUERY_URL','SN_MONGODB_QUERY_URLS',
@@ -147,7 +152,12 @@ def env_defs(doc):
 def validate_env(doc):
     refs=collect_env_refs(doc); defs=env_defs(doc)
     missing=sorted(set(refs)-set(defs))
-    if missing: fail(f'env references missing workflow.environment_variables definitions: {missing}')
+    missing_optional=sorted(set(missing)&OPTIONAL_LLM_BUDGET_ENV_NAMES)
+    missing_required_refs=sorted(set(missing)-OPTIONAL_LLM_BUDGET_ENV_NAMES)
+    if missing_optional:
+        warn(f'optional LLM budget environment variables missing; runtime defaults apply: {missing_optional}')
+    if missing_required_refs:
+        fail(f'env references missing workflow.environment_variables definitions: {missing_required_refs}')
     missing_required=sorted(REQUIRED_ENV_NAMES-set(defs))
     if missing_required: fail(f'required environment variables missing: {missing_required}')
     all_env_names=set(refs)|set(defs)
@@ -163,6 +173,12 @@ def validate_env(doc):
         selector = e.get("selector")
         if selector != ["env", name]:
             fail(f"environment variable selector mismatch for {name}: {selector}")
+    for name in sorted(OPTIONAL_LLM_BUDGET_ENV_NAMES & set(defs)):
+        e=defs[name]
+        if e.get('selector') != ['env', name]:
+            fail(f'environment variable selector mismatch for {name}: {e.get("selector")}')
+        if e.get('value_type') != 'string':
+            fail(f'{name} value_type must be string')
     if defs.get('ENABLE_FULL_LLM',{}).get('value_type') != 'string':
         fail('ENABLE_FULL_LLM value_type must be string')
     if defs.get('JF_QUERY_REGISTRY_JSON',{}).get('value_type') != 'string':
