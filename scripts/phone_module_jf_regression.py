@@ -476,6 +476,41 @@ def select_scope_and_result_memory_samples(nodes):
     must(set(prompt_package['previous_query_result']['sql_plan']) == {'select_fields', 'where_filters'}, 'previous SQL plan leaked internals')
     return {'historical_count': len(set(wide['select_fields'] + expected_narrow)), 'current_count': len(narrow['select_fields']), 'current_fields': narrow['select_fields']}
 
+def llm_input_budget_samples(nodes):
+    namespace = {}
+    code = nodes['llm_input']['data']['code']
+    exec(code, namespace)
+
+    def run(question, context='', predict='', margin=''):
+        result = namespace['main'](
+            json.dumps({'question': question}),
+            json.dumps({'rows': [], 'sql_plan': {}}),
+            '{}', '{}', 'system', 'rules', '', '', context, predict, margin,
+        )
+        return json.loads(result['llm_handler_input_json'])
+
+    default = run('small')
+    must(default['status'] == 'ok', 'default LLM input budget rejected a small prompt')
+    handler_context = default['handler_context']
+    must(handler_context['local_context_tokens'] == 32768, 'LOCAL_CONTEXT_TOKENS default changed')
+    must(handler_context['local_max_predict_tokens'] == 4096, 'LOCAL_MAX_PREDICT_TOKENS default changed')
+    must('positive_int_or_default(prompt_token_safety_margin, 1024)' in code, 'PROMPT_TOKEN_SAFETY_MARGIN default changed')
+    must('LOCAL_CONTEXT_TOKENS\n        - LOCAL_MAX_PREDICT_TOKENS\n        - PROMPT_TOKEN_SAFETY_MARGIN' in code, 'LLM input budget formula changed')
+
+    invalid = run('small', 'invalid', '0', '-1')
+    must(invalid['status'] == 'ok', 'invalid LLM budget environment values did not safely fall back')
+    must(invalid['handler_context']['local_context_tokens'] == 32768, 'invalid context value fallback changed')
+    must(invalid['handler_context']['local_max_predict_tokens'] == 4096, 'invalid output value fallback changed')
+
+    large_question = 'x' * 120000
+    must(run(large_question)['error'] == 'LLM_INPUT_TOO_LARGE', 'default over-budget prompt was not rejected')
+    expanded = run(large_question, '131072', '16384', '4096')
+    must(expanded['status'] == 'ok', 'configured expanded LLM input budget was not applied')
+    must(expanded['handler_context']['local_context_tokens'] == 131072, 'configured context value was not applied')
+    must(expanded['handler_context']['local_max_predict_tokens'] == 16384, 'configured output value was not applied')
+    must(run('x' * 500000, '131072', '16384', '4096')['error'] == 'LLM_INPUT_TOO_LARGE', 'configured over-budget prompt was not rejected')
+    return 3
+
 def explicit_limit_samples(doc, nodes):
     registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
     parse_ns, plan_ns = {}, {}
@@ -657,6 +692,7 @@ def main():
     memory_scenarios = query_memory_warning_samples(d, nodes)
     scope_plan = filter_scope_independence_samples(nodes)
     select_stats = select_scope_and_result_memory_samples(nodes)
+    budget_count = llm_input_budget_samples(nodes)
     limit_count = explicit_limit_samples(d, nodes)
     traceability_count = traceability_samples(d, nodes)
     presence_count = presence_operator_samples(d, nodes)
@@ -668,6 +704,7 @@ def main():
     print('PASS query-memory warning/fallback scenarios: %d' % len(memory_scenarios))
     print('PASS filter scope independence cases 1-6: %s' % json.dumps(scope_plan['where_filters'], ensure_ascii=False))
     print('PASS SELECT scope cases 1-6 and previous-result timing: %s' % json.dumps(select_stats, ensure_ascii=False))
+    print('PASS LLM input budget default/configured/over-budget cases: %d' % budget_count)
     print('PASS explicit/default limit scenarios: %d' % limit_count)
     print('PASS query traceability/analysis basis scenarios: %d' % traceability_count)
     print('PASS exists/empty operator scenarios: %d' % presence_count)
