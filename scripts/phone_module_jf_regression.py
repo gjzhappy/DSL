@@ -282,7 +282,7 @@ def fuzzy_device_model_samples(nodes):
         'current_user_query': 'vvo X200 Pto', 'query_scopes': first['query_scopes'],
         'sql': 'must be ignored', 'params': ['must be ignored'],
     }, ensure_ascii=False)
-    follow = compile('厂商', memory_registry, memory)
+    follow = compile('它的厂商', memory_registry, memory)
     must(follow['query_scopes'][0]['where_filters'] == {'device_model': ['Vivo X200 pro']}, 'memory filter inheritance failed')
     must('manufacturer' in follow['select_fields'], 'memory field follow-up failed')
     must(follow['params'] == ['Vivo X200 pro'], 'memory params are unstable or untrusted fields leaked')
@@ -324,22 +324,16 @@ def query_memory_warning_samples(doc, nodes):
         must('将仅按 SELECT 字段查询' not in json.dumps(plan['warnings'], ensure_ascii=False), name + ' emitted misleading warning text')
         must(plan['params'] == expected_params, name + ' changed params')
     must(scenarios['continued_analysis']['sql'] == expected_sql, 'continued analysis changed inherited SQL')
-    must(scenarios['continued_analysis']['query_scopes'] == [expected_scope], 'continued analysis changed or duplicated query scope')
+    must(len(scenarios['continued_analysis']['query_scopes']) == 1 and scenarios['continued_analysis']['where_filters'] == expected_scope['where_filters'], 'continued analysis changed or duplicated query scope')
     must(scenarios['field_follow_up']['select_fields'] != expected_scope['select_fields'], 'explicit field follow-up retained all historical SELECT fields')
 
     switched = scenarios['module_switch']
-    must(switched['warnings'] == [], 'module switch warnings changed')
-    must(switched['params'] == ['Vivo X200 pro', '主摄', '长焦'], 'module switch params changed')
-    must([scope['where_filters'] for scope in switched['query_scopes']] == [
-        {'device_model': ['Vivo X200 pro'], 'module_name': ['主摄']},
-        {'module_name': ['长焦']},
-    ], 'module switch scopes changed')
+    must(switched['query_intent_meta']['query_scope_behavior'] == 'reset', 'module switch without reference did not reset')
+    must(switched['params'] == ['长焦'], 'module switch inherited historical scope')
 
     compared = scenarios['comparison']
-    must(compared['params'] == ['Vivo X200 pro', '主摄', '小米15Ultra'], 'comparison params changed')
-    must(compared['query_scopes'][1]['select_fields'] == expected_scope['select_fields'], 'comparison did not inherit specification fields')
-    must('device_pic_url' not in compared['query_scopes'][1]['select_fields'] and '`device_pic_url`' not in compared['sql'], 'comparison fallback added device_pic_url')
-    must('SELECT_FIELDS_FALLBACK_USED' not in [item.get('type') for item in compared['warnings']], 'comparison emitted field fallback warning')
+    must(compared['query_intent_meta']['query_scope_behavior'] == 'reset', 'comparison without reference did not reset')
+    must(compared['params'] == ['小米15Ultra'], 'comparison inherited historical scope')
 
     no_filter, _ = compile('Sensor型号有哪些？')
     must(' WHERE ' not in no_filter['sql'] and 'NO_STRUCTURED_FILTER_FOUND' in [item.get('type') for item in no_filter['warnings']], 'unscoped query lost filter warning')
@@ -397,18 +391,18 @@ def filter_scope_independence_samples(nodes):
     current = {'device_manufacturer': ['小米', 'VIVO']}
     must(independent['current_query_delta']['explicit_where_filters'] == current, 'case 1 explicit filter parsing changed')
     must(independent['where_filters'] == current and independent['query_scopes'][-1]['where_filters'] == current, 'case 1 current/top-level filters inherited history')
-    must(len(independent['query_scopes']) == 2 and ' OR ' in independent['sql'], 'case 4 historical scope OR compilation changed')
-    must(independent['params'] == ['OPPO', 'OPPO Find X8 Ultra', '主摄', '小米', 'VIVO'], 'case 4 scoped SQL params changed')
+    must(len(independent['query_scopes']) == 1 and ' OR ' not in independent['sql'], 'case 4 reset retained historical scope')
+    must(independent['params'] == ['小米', 'VIVO'], 'case 4 reset SQL params changed')
 
     inherited, _ = compile('它的像素尺寸呢？', memory)
     must(inherited['current_query_delta']['explicit_where_filters'] == {}, 'case 2 follow-up unexpectedly parsed filters')
     must(inherited['where_filters'] == first_filters and inherited['query_scopes'][-1]['where_filters'] == first_filters, 'case 2 empty explicit filters did not inherit')
 
-    partial, _ = compile('那 vivo 呢？', memory)
+    partial, _ = compile('那它们中 vivo 呢？', memory)
     vivo_only = {'device_manufacturer': ['VIVO']}
-    must(partial['where_filters'] == vivo_only and partial['query_scopes'][-1]['where_filters'] == vivo_only, 'case 3 partial explicit filter was supplemented from history')
+    must(partial['where_filters'] == {**first_filters, **vivo_only}, 'case 3 referenced explicit filter did not extend history')
 
-    must(set(first['select_fields']) <= set(independent['select_fields']), 'case 6 inherited SELECT fields regressed')
+    must(independent['query_intent_meta']['query_scope_behavior'] == 'reset', 'case 6 independent query did not reset')
     must(set(independent['select_fields']) == set(independent['selected_field_meta']), 'case 6 selected field metadata contract regressed')
     must(independent['selected_composites'] == first['selected_composites'], 'case 6 selected composite contract regressed')
     return independent
@@ -449,16 +443,16 @@ def select_scope_and_result_memory_samples(nodes):
     expected_narrow = context_fields + business_fields[:3]
     must(narrow['select_fields'] == expected_narrow, 'case 1 explicit narrow SELECT inherited historical fields')
     must(len(narrow['select_fields']) < len(set(wide['select_fields'] + expected_narrow)), 'narrow SELECT did not shrink historical union')
-    must(len(narrow['query_scopes']) == 2 and ' OR ' in narrow['sql'], 'case 1 historical WHERE scopes stopped using OR')
+    must(len(narrow['query_scopes']) == 1 and ' OR ' not in narrow['sql'], 'case 1 reset retained historical WHERE')
 
-    filter_only, _ = compile('厂商B', memory)
+    filter_only, _ = compile('它们中厂商B', memory)
     must(filter_only['select_fields'] == wide['select_fields'], 'case 2 filter-only follow-up did not inherit recent SELECT')
-    new_filter_select, _ = compile('厂商B metric_01', memory)
+    new_filter_select, _ = compile('它们中厂商B metric_01', memory)
     must(new_filter_select['select_fields'] == context_fields + business_fields[:1], 'case 3 new filter and SELECT inherited wide fields')
-    select_only, _ = compile('metric_01 metric_02', memory)
+    select_only, _ = compile('它们的 metric_01 metric_02', memory)
     must(select_only['where_filters'] == wide['where_filters'], 'case 4 SELECT-only follow-up did not inherit filters')
     must(select_only['select_fields'] == context_fields + business_fields[:2], 'case 4 filter inheritance also inherited wide SELECT')
-    omitted, _ = compile('继续说明', memory)
+    omitted, _ = compile('继续说明它们', memory)
     must(omitted['where_filters'] == wide['where_filters'] and omitted['select_fields'] == wide['select_fields'], 'case 5 omitted follow-up did not inherit filter and SELECT')
     fallback, _ = compile('首次查询')
     must('SELECT_FIELDS_FALLBACK_USED' in [item.get('type') for item in fallback['warnings']], 'case 6 initial identity fallback changed')
@@ -651,6 +645,40 @@ def traceability_samples(doc, nodes):
     must('<details>' not in failed_answer, 'failed query received success raw data')
     return 5
 
+def query_scope_behavior_samples(doc, nodes):
+    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    parsed = parse_ns['main'](registry_raw, 'ok')
+
+    def compile(question, memory=''):
+        result = plan_ns['main'](json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', memory)
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return json.loads(result['jf_sql_plan_json']), result['jf_current_execution_context_json']
+
+    first, memory = compile('查询 iPhone16 Pro Max、vivo X200 Pro 和小米15 Ultra 主摄规格')
+    historical_values = first['params']
+    reset, reset_memory = compile('查存在Tline的手机周期总功耗', memory)
+    must(reset['query_intent_meta'] == {'query_scope_behavior': 'reset', 'has_reference_expression': False}, 'case 1 scope metadata invalid')
+    must(not any(value in reset['params'] for value in historical_values), 'case 1 SQL inherited device/module scope')
+    must(reset['where_filters'] == {} and reset['semantic_filters'][0]['target'] == 'tline', 'case 1 effective scope invalid')
+
+    inherited, inherited_memory = compile('它们的周期总功耗', memory)
+    must(inherited['query_intent_meta'] == {'query_scope_behavior': 'inherit', 'has_reference_expression': True}, 'case 2 scope metadata invalid')
+    must(inherited['where_filters'] == first['where_filters'], 'case 2 did not inherit historical scope')
+
+    extended, extended_memory = compile('它们中存在Tline数据的手机', memory)
+    must(extended['query_intent_meta'] == {'query_scope_behavior': 'extend', 'has_reference_expression': True}, 'case 3 scope metadata invalid')
+    must(extended['where_filters'] == first['where_filters'], 'case 3 lost historical device/module scope')
+    must(extended['semantic_filters'] == [{'target_type': 'composite', 'target': 'tline', 'operator': 'exists'}], 'case 3 semantic extension invalid')
+    must('`device_model` IN (' in extended['sql'] and '`module_name` IN (' in extended['sql'] and '`physical_tline` IS NOT NULL' in extended['sql'], 'case 3 SQL did not combine historical and semantic filters')
+    persisted = json.loads(extended_memory)
+    must('query_intent_meta' not in persisted and 'query_scope_behavior' not in persisted and 'has_reference_expression' not in persisted, 'planner interpretation metadata leaked into memory')
+    must(persisted['last_scope']['semantic_filters'] == extended['semantic_filters'], 'final effective semantic scope was not persisted')
+    must('query_scope_behavior' not in reset_memory + inherited_memory + extended_memory and 'has_reference_expression' not in reset_memory + inherited_memory + extended_memory, 'transient fields leaked into memory JSON')
+    return 3
+
 def presence_operator_samples(doc, nodes):
     registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
     parse_ns, plan_ns = {}, {}
@@ -704,6 +732,7 @@ def main():
     budget_count = llm_input_budget_samples(nodes)
     limit_count = explicit_limit_samples(d, nodes)
     traceability_count = traceability_samples(d, nodes)
+    scope_behavior_count = query_scope_behavior_samples(d, nodes)
     presence_count = presence_operator_samples(d, nodes)
     print('PASS frontend schema')
     print('PASS query-memory schema/graph/contract and negative injections: %d' % negative_count)
@@ -716,6 +745,7 @@ def main():
     print('PASS LLM input budget default/full/partial/invalid environment cases: %d' % budget_count)
     print('PASS explicit/default limit scenarios: %d' % limit_count)
     print('PASS query traceability/analysis basis scenarios: %d' % traceability_count)
+    print('PASS query scope reset/inherit/extend scenarios: %d' % scope_behavior_count)
     print('PASS exists/empty operator scenarios: %d' % presence_count)
 if __name__=='__main__':
     try: main()
