@@ -497,10 +497,19 @@ def llm_input_budget_samples(nodes):
     must('positive_int_or_default(prompt_token_safety_margin, 1024)' in code, 'PROMPT_TOKEN_SAFETY_MARGIN default changed')
     must('LOCAL_CONTEXT_TOKENS\n        - LOCAL_MAX_PREDICT_TOKENS\n        - PROMPT_TOKEN_SAFETY_MARGIN' in code, 'LLM input budget formula changed')
 
-    invalid = run('small', 'invalid', '0', '-1')
-    must(invalid['status'] == 'ok', 'invalid LLM budget environment values did not safely fall back')
-    must(invalid['handler_context']['local_context_tokens'] == 32768, 'invalid context value fallback changed')
-    must(invalid['handler_context']['local_max_predict_tokens'] == 4096, 'invalid output value fallback changed')
+    configured = run('small', '65536', '8192', '2048')
+    must(configured['handler_context']['local_context_tokens'] == 65536, 'configured context value was not applied')
+    must(configured['handler_context']['local_max_predict_tokens'] == 8192, 'configured output value was not applied')
+
+    partial = run('small', '65536')
+    must(partial['handler_context']['local_context_tokens'] == 65536, 'partial context override was not applied')
+    must(partial['handler_context']['local_max_predict_tokens'] == 4096, 'partial configuration changed output default')
+
+    for context, predict, margin in (('', '', ''), ('invalid', 'not-a-number', 'bad'), ('0', '-1', '0')):
+        invalid = run('small', context, predict, margin)
+        must(invalid['status'] == 'ok', 'invalid LLM budget environment values did not safely fall back')
+        must(invalid['handler_context']['local_context_tokens'] == 32768, 'invalid context value fallback changed')
+        must(invalid['handler_context']['local_max_predict_tokens'] == 4096, 'invalid output value fallback changed')
 
     large_question = 'x' * 120000
     must(run(large_question)['error'] == 'LLM_INPUT_TOO_LARGE', 'default over-budget prompt was not rejected')
@@ -509,7 +518,7 @@ def llm_input_budget_samples(nodes):
     must(expanded['handler_context']['local_context_tokens'] == 131072, 'configured context value was not applied')
     must(expanded['handler_context']['local_max_predict_tokens'] == 16384, 'configured output value was not applied')
     must(run('x' * 500000, '131072', '16384', '4096')['error'] == 'LLM_INPUT_TOO_LARGE', 'configured over-budget prompt was not rejected')
-    return 3
+    return 4
 
 def explicit_limit_samples(doc, nodes):
     registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
@@ -704,7 +713,7 @@ def main():
     print('PASS query-memory warning/fallback scenarios: %d' % len(memory_scenarios))
     print('PASS filter scope independence cases 1-6: %s' % json.dumps(scope_plan['where_filters'], ensure_ascii=False))
     print('PASS SELECT scope cases 1-6 and previous-result timing: %s' % json.dumps(select_stats, ensure_ascii=False))
-    print('PASS LLM input budget default/configured/over-budget cases: %d' % budget_count)
+    print('PASS LLM input budget default/full/partial/invalid environment cases: %d' % budget_count)
     print('PASS explicit/default limit scenarios: %d' % limit_count)
     print('PASS query traceability/analysis basis scenarios: %d' % traceability_count)
     print('PASS exists/empty operator scenarios: %d' % presence_count)
