@@ -620,27 +620,31 @@ def presence_operator_samples(doc, nodes):
         return json.loads(result['jf_sql_plan_json'])
 
     exists = compile('查询有关键指标的 Sensor，并分析这些 Sensor 数据')
-    must(exists['semantic_filters'] == [{'field': 'key_metric', 'operator': 'exists'}], 'exists semantic filter invalid')
+    must(exists['semantic_filters'] == [{'target_type': 'field', 'target': 'key_metric', 'operator': 'exists'}], 'exists semantic filter invalid')
     must("`key_metric` IS NOT NULL AND `key_metric` != ''" in exists['sql'], 'exists SQL invalid')
     composite_exists = compile('查询存在Tline数据的手机的周期总功耗')
     must(composite_exists['semantic_filters'] == [{'target_type': 'composite', 'target': 'tline', 'operator': 'exists'}], 'composite exists semantic filter invalid')
     must("`physical_tline` IS NOT NULL AND `physical_tline` != ''" in composite_exists['sql'], 'composite exists physical field SQL invalid')
     must("`equivalent_tline_adc` IS NOT NULL AND `equivalent_tline_adc` != ''" in composite_exists['sql'], 'composite exists equivalent field SQL invalid')
     must(" OR " in composite_exists['sql'].split(' WHERE ', 1)[1], 'composite exists fields were not joined by OR')
-    composite_empty = compile('查询没有Tline数据的手机')
+    for question in ('查询Tline不为空的手机', '查询Tline非空的手机'):
+        normalized_exists = compile(question)
+        must(normalized_exists['semantic_filters'] == composite_exists['semantic_filters'], 'composite exists phrase normalization invalid: ' + question)
+        must(normalized_exists['sql'].split(' WHERE ', 1)[1] == composite_exists['sql'].split(' WHERE ', 1)[1], 'composite exists SQL normalization invalid: ' + question)
+    composite_empty = compile('查询不存在Tline数据的手机')
     must(composite_empty['semantic_filters'] == [{'target_type': 'composite', 'target': 'tline', 'operator': 'empty'}], 'composite empty semantic filter invalid')
     must("`physical_tline` IS NULL OR `physical_tline` = ''" in composite_empty['sql'], 'composite empty physical field SQL invalid')
     must("`equivalent_tline_adc` IS NULL OR `equivalent_tline_adc` = ''" in composite_empty['sql'], 'composite empty equivalent field SQL invalid')
     must(" AND " in composite_empty['sql'].split(' WHERE ', 1)[1], 'composite empty fields were not joined by AND')
     empty = compile('查询没有关键技术信息的 Sensor')
-    must(empty['semantic_filters'] == [{'field': 'key_technology', 'operator': 'empty'}], 'empty semantic filter invalid')
+    must(empty['semantic_filters'] == [{'target_type': 'field', 'target': 'key_technology', 'operator': 'empty'}], 'empty semantic filter invalid')
     must("`key_technology` IS NULL OR `key_technology` = ''" in empty['sql'], 'empty SQL invalid')
     contains = compile('查询关键指标包含 HDR 的 Sensor')
-    must(contains['semantic_filters'] == [{'field': 'key_metric', 'operator': 'exists'}], 'contains was not reduced to exists')
+    must(contains['semantic_filters'] == [{'target_type': 'field', 'target': 'key_metric', 'operator': 'exists'}], 'contains was not reduced to exists')
     must('contains' not in json.dumps(contains, ensure_ascii=False), 'contains operator leaked into plan')
     ordinary = compile('查询 Sony Sensor')
     must(ordinary['semantic_filters'] == [] and ' WHERE ' not in ordinary['sql'], 'ordinary query behavior changed')
-    return 6
+    return 8
 
 def main():
     d = load_doc()
