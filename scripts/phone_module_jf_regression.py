@@ -607,6 +607,31 @@ def traceability_samples(doc, nodes):
     must('<details>' not in failed_answer, 'failed query received success raw data')
     return 5
 
+def presence_operator_samples(doc, nodes):
+    registry_raw = next(item['value'] for item in doc['workflow']['environment_variables'] if item['name'] == 'JF_QUERY_REGISTRY_JSON')
+    parse_ns, plan_ns = {}, {}
+    exec(nodes['jf_registry_parse']['data']['code'], parse_ns)
+    exec(nodes['jf_sql_plan']['data']['code'], plan_ns)
+    parsed = parse_ns['main'](registry_raw, 'ok')
+
+    def compile(question):
+        result = plan_ns['main'](json.dumps({'question': question}, ensure_ascii=False), parsed['jf_registry_json'], parsed['jf_alias_index_json'], 'ok', '', '')
+        must(result['jf_sql_compile_status'] == 'ok', result['jf_sql_compile_error_answer'])
+        return json.loads(result['jf_sql_plan_json'])
+
+    exists = compile('查询有关键指标的 Sensor，并分析这些 Sensor 数据')
+    must(exists['semantic_filters'] == [{'field': 'key_metric', 'operator': 'exists'}], 'exists semantic filter invalid')
+    must("`key_metric` IS NOT NULL AND `key_metric` != ''" in exists['sql'], 'exists SQL invalid')
+    empty = compile('查询没有关键技术信息的 Sensor')
+    must(empty['semantic_filters'] == [{'field': 'key_technology', 'operator': 'empty'}], 'empty semantic filter invalid')
+    must("`key_technology` IS NULL OR `key_technology` = ''" in empty['sql'], 'empty SQL invalid')
+    contains = compile('查询关键指标包含 HDR 的 Sensor')
+    must(contains['semantic_filters'] == [{'field': 'key_metric', 'operator': 'exists'}], 'contains was not reduced to exists')
+    must('contains' not in json.dumps(contains, ensure_ascii=False), 'contains operator leaked into plan')
+    ordinary = compile('查询 Sony Sensor')
+    must(ordinary['semantic_filters'] == [] and ' WHERE ' not in ordinary['sql'], 'ordinary query behavior changed')
+    return 4
+
 def main():
     d = load_doc()
     nodes, title, out, inc = graph(d)
@@ -620,6 +645,7 @@ def main():
     select_stats = select_scope_and_result_memory_samples(nodes)
     limit_count = explicit_limit_samples(d, nodes)
     traceability_count = traceability_samples(d, nodes)
+    presence_count = presence_operator_samples(d, nodes)
     print('PASS frontend schema')
     print('PASS query-memory schema/graph/contract and negative injections: %d' % negative_count)
     for idx, actual in enumerate(sample_results, 1):
@@ -630,6 +656,7 @@ def main():
     print('PASS SELECT scope cases 1-6 and previous-result timing: %s' % json.dumps(select_stats, ensure_ascii=False))
     print('PASS explicit/default limit scenarios: %d' % limit_count)
     print('PASS query traceability/analysis basis scenarios: %d' % traceability_count)
+    print('PASS exists/empty operator scenarios: %d' % presence_count)
 if __name__=='__main__':
     try: main()
     except Exception as e: print(f'FAIL: {e}', file=sys.stderr); raise SystemExit(1)
