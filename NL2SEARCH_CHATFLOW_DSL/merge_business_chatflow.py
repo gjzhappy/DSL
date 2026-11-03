@@ -139,6 +139,9 @@ def validate_doc(key: str, doc: dict) -> dict:
 
     conversations = workflow.get("conversation_variables") or []
     conv_names = [item.get("name") for item in conversations]
+    conv_ids = [item.get("id") for item in conversations]
+    if len(conv_ids) != len(set(conv_ids)) or any(not value for value in conv_ids):
+        fail(key + ": conversation variable ids missing or duplicated")
     expected_memory = {cfg["prefix"] + "query_memory_json", cfg["prefix"] + "previous_query_result_json"}
     if len(conv_names) != len(set(conv_names)) or not expected_memory <= set(conv_names):
         fail(key + ": conversation memory variables missing or duplicated")
