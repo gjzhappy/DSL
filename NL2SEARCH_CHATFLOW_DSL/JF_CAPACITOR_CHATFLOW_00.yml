@@ -10,7 +10,7 @@
     "environment_variables": [
       {
         "description": "JF电容对比查询注册表。定义真实MySQL表、字段语义、复合字段、SQL过滤角色和标准值别名。",
-        "id": "env-phone-jf-query-registry-json",
+        "id": "env-jf-capacitor-query-registry-json",
         "name": "JF_CAPACITOR_QUERY_REGISTRY_JSON",
         "selector": [
           "env",
@@ -21,7 +21,7 @@
       },
       {
         "description": "JF电容对比分析助手的系统角色与回答边界。",
-        "id": "env-phone-jf-analysis-system-prompt",
+        "id": "env-jf-capacitor-analysis-system-prompt",
         "name": "JF_CAPACITOR_ANALYSIS_SYSTEM_PROMPT",
         "selector": [
           "env",
@@ -32,7 +32,7 @@
       },
       {
         "description": "JF电容对比业务分析规则；运行时输入数据包由llm_input节点追加。",
-        "id": "env-phone-jf-analysis-user-prompt",
+        "id": "env-jf-capacitor-analysis-user-prompt",
         "name": "JF_CAPACITOR_ANALYSIS_USER_PROMPT",
         "selector": [
           "env",
@@ -43,7 +43,7 @@
       },
       {
         "description": "LLM context window token budget; invalid or empty runtime values safely fall back to 32768.",
-        "id": "env-phone-local-context-tokens",
+        "id": "env-jf-capacitor-local-context-tokens",
         "name": "LOCAL_CONTEXT_TOKENS",
         "selector": [
           "env",
@@ -54,7 +54,7 @@
       },
       {
         "description": "Reserved maximum LLM output tokens; invalid or empty runtime values safely fall back to 4096.",
-        "id": "env-phone-local-max-predict-tokens",
+        "id": "env-jf-capacitor-local-max-predict-tokens",
         "name": "LOCAL_MAX_PREDICT_TOKENS",
         "selector": [
           "env",
@@ -65,7 +65,7 @@
       },
       {
         "description": "Prompt token safety margin; invalid or empty runtime values safely fall back to 1024.",
-        "id": "env-phone-prompt-token-safety-margin",
+        "id": "env-jf-capacitor-prompt-token-safety-margin",
         "name": "PROMPT_TOKEN_SAFETY_MARGIN",
         "selector": [
           "env",
@@ -76,7 +76,7 @@
       },
       {
         "description": "Use full LLM HTTP path when true; otherwise local LLM is used.",
-        "id": "env-phone-enable-full-llm",
+        "id": "env-jf-capacitor-enable-full-llm",
         "name": "ENABLE_FULL_LLM",
         "selector": [
           "env",
@@ -87,7 +87,7 @@
       },
       {
         "description": "Java backend proxy endpoint for full LLM chat completions.",
-        "id": "env-phone-sn-full-llm-chat-urls",
+        "id": "env-jf-capacitor-sn-full-llm-chat-urls",
         "name": "SN_FULL_LLM_CHAT_URLS",
         "selector": [
           "env",
@@ -98,7 +98,7 @@
       },
       {
         "description": "统一 MySQL 参数化查询后端接口地址。",
-        "id": "env-phone-sn-mysql-query-urls",
+        "id": "env-jf-capacitor-sn-mysql-query-urls",
         "name": "SN_MYSQL_QUERY_URLS",
         "selector": [
           "env",
