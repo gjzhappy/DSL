@@ -67,12 +67,12 @@ def check_workflow(key: str) -> dict:
     parsed, env = run_registry(cfg, nodes, doc)
 
     if key == "SI_DESIGN_CONSTRAINT":
-        question = "查询华为长沙平台 SOC 芯片 UFS 模块的插损和回损"
+        question = "查询华为长沙平台各芯片、模块的插损和回损"
         followup = "这些模块的串扰呢？"
         expected_params = ["Huawei", "Changsha"]
         expected_fields = {"manufacturer", "platform", "chip", "module", "level", "insertion_loss", "return_loss"}
     else:
-        question = "查询苹果 A19 平台 CPU 电源域的远端总容值和远端电容面积"
+        question = "查询苹果 A19 平台各电源域、Pin/Net 的远端总容值和远端电容面积"
         followup = "这些网络的远端电容数量呢？"
         expected_params = ["Apple", "A19"]
         expected_fields = {"manufacturer", "platform", "power_domain", "pin_net_name", "far_total_capacitance", "far_cap_area_mm2"}
