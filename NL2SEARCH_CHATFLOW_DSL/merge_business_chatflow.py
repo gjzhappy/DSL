@@ -304,6 +304,52 @@ def validate_doc(key: str, doc: dict) -> dict:
     if "JF_QUERY_REGISTRY_JSON" in all_text or "JF_ANALYSIS_SYSTEM_PROMPT" in all_text:
         fail(key + ": old JF environment variable names remain")
 
+    # Preserve the two conversation-memory contracts and their graph order.
+    plan_node = by_id[cfg["prefix"] + "sql_plan"]["data"]
+    ready_name = cfg["prefix"] + "memory_write_ready"
+    ready_output = (plan_node.get("outputs") or {}).get(ready_name) or {}
+    if ready_output.get("type") != "boolean":
+        fail(key + ": memory_write_ready must be a boolean Code output")
+    if "'%s': bool(memory_write_ready)" % ready_name not in (plan_node.get("code") or ""):
+        fail(key + ": memory_write_ready return value is not boolean")
+
+    memory_condition = (by_id["if_memory_write"]["data"].get("cases") or [{}])[0].get("conditions") or [{}]
+    memory_condition = memory_condition[0]
+    if memory_condition.get("variable_selector") != [cfg["prefix"] + "sql_plan", ready_name]:
+        fail(key + ": memory IF selector mismatch")
+    if memory_condition.get("comparison_operator") != "is" or memory_condition.get("varType") != "boolean" or memory_condition.get("value") is not True:
+        fail(key + ": memory IF must compare boolean true")
+
+    memory_assign = by_id["save_query_memory"]["data"]
+    memory_item = (memory_assign.get("items") or [{}])[0]
+    if memory_item.get("variable_selector") != ["conversation", cfg["prefix"] + "query_memory_json"]:
+        fail(key + ": query memory assigner target mismatch")
+    if memory_item.get("value") != [cfg["prefix"] + "sql_plan", cfg["prefix"] + "current_execution_context_json"]:
+        fail(key + ": query memory assigner source mismatch")
+
+    result_assign = by_id["save_query_result_memory"]["data"]
+    result_item = (result_assign.get("items") or [{}])[0]
+    if result_item.get("variable_selector") != ["conversation", cfg["prefix"] + "previous_query_result_json"]:
+        fail(key + ": previous result assigner target mismatch")
+    if result_item.get("value") != ["mysql_normalize", "mysql_query_result_json"]:
+        fail(key + ": previous result assigner source mismatch")
+
+    llm_variables = {item.get("variable"): item.get("value_selector") for item in (by_id["llm_input"]["data"].get("variables") or [])}
+    if llm_variables.get(cfg["prefix"] + "previous_query_result_json") != ["conversation", cfg["prefix"] + "previous_query_result_json"]:
+        fail(key + ": llm_input previous result selector mismatch")
+
+    required_edges = {
+        ("if_sql_ok", "success", "if_memory_write"),
+        ("if_memory_write", "memory_write_true", "save_query_memory"),
+        ("if_memory_write", "false", "llm_input"),
+        ("save_query_memory", "source", "llm_input"),
+        ("llm_input", "source", "save_query_result_memory"),
+        ("save_query_result_memory", "source", "ifllm")
+    }
+    actual_edges = {(edge["source"], edge.get("sourceHandle"), edge["target"]) for edge in edges}
+    if not required_edges <= actual_edges:
+        fail(key + ": query-memory graph wiring mismatch")
+
     return {
         "nodes": len(nodes),
         "edges": len(edges),
