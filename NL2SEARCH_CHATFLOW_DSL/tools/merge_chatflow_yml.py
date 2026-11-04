@@ -10,7 +10,7 @@ registry-driven SQL planning, Spring Boot MySQL query execution, and full/local
 LLM result generation.
 """
 from __future__ import annotations
-import argparse, re, subprocess, sys
+import argparse, json, re, subprocess, sys
 from collections import defaultdict, deque
 from pathlib import Path
 
