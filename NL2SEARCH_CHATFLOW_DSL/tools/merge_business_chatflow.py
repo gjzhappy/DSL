@@ -7,11 +7,12 @@ import re
 from collections import defaultdict, deque
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
+DSL_ROOT = Path(__file__).resolve().parents[1]
 
 CONFIGS = {
     "SI_DESIGN_CONSTRAINT": {
         "stem": "SI_DESIGN_CONSTRAINT_CHATFLOW",
+        "directory": "SI_DESIGN_CONSTRAINT_CHATFLOW",
         "app_name": "SI_DESIGN_CONSTRAINT_CHATFLOW",
         "prefix": "si_design_constraint_",
         "registry_env": "SI_DESIGN_CONSTRAINT_QUERY_REGISTRY_JSON",
@@ -25,6 +26,7 @@ CONFIGS = {
     },
     "JF_CAPACITOR": {
         "stem": "JF_CAPACITOR_CHATFLOW",
+        "directory": "JF_CAPACITOR_CHATFLOW",
         "app_name": "JF_CAPACITOR_CHATFLOW",
         "prefix": "jf_capacitor_",
         "registry_env": "JF_CAPACITOR_QUERY_REGISTRY_JSON",
@@ -47,7 +49,7 @@ def fail(message: str) -> None:
 def discover_parts(cfg: dict) -> list[Path]:
     pattern = re.compile(re.escape(cfg["stem"]) + r"_(\d+)\.yml$")
     found = []
-    for path in BASE_DIR.glob(cfg["stem"] + "_*.yml"):
+    for path in (DSL_ROOT / cfg["directory"]).glob(cfg["stem"] + "_*.yml"):
         match = pattern.match(path.name)
         if match:
             found.append((int(match.group(1)), path))
@@ -373,7 +375,7 @@ def main() -> int:
         doc, text = load_doc(key)
         summary = validate_doc(key, doc)
         if args.write:
-            output = BASE_DIR / (cfg["stem"] + ".yml")
+            output = DSL_ROOT / cfg["directory"] / (cfg["stem"] + ".yml")
             output.write_text(text, encoding="utf-8")
             print("WROTE " + str(output))
         print("PASS " + key + " " + json.dumps(summary, ensure_ascii=False))

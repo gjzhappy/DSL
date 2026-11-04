@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "NL2SEARCH_CHATFLOW_DSL"))
+sys.path.insert(0, str(ROOT / "NL2SEARCH_CHATFLOW_DSL" / "tools"))
 from merge_business_chatflow import CONFIGS, load_doc, validate_doc
 
 def must(condition: bool, message: str) -> None:
