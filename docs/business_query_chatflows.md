@@ -68,19 +68,21 @@ Registry 字段清单根据现有 SI / JF 电容导入数据结构建立。导�
 
 ## 5. 本地分片合并与验证
 
-在仓库根目录执行：
+在仓库根目录执行统一合并脚本，传入具体业务目录即可，执行后直接生成同目录下的完整 Dify YAML：
 
-    python NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py ALL --write
+    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW
+    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW
+    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW
+
+只检查、不生成文件时，在命令末尾增加 `--check`。不传目录时，默认合并 PHONE_MODULE_JF_CHATFLOW。
+
+合并后的业务回归与结构检查：
+
     python scripts/dify_dsl_schema_check.py NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW/SI_DESIGN_CONSTRAINT_CHATFLOW.yml
     python scripts/dify_dsl_schema_check.py NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW/JF_CAPACITOR_CHATFLOW.yml
     python scripts/business_query_chatflow_regression.py ALL
     ruby scripts/dsl_self_check.rb NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW/SI_DESIGN_CONSTRAINT_CHATFLOW.yml
     ruby scripts/dsl_self_check.rb NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW/JF_CAPACITOR_CHATFLOW.yml
-
-PHONE 工作流分片合并与检查：
-
-    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py
-    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py --check
     python scripts/check_phone_module_jf_dsl.py
     python scripts/phone_module_jf_regression.py
 

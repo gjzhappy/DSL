@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge, validate, or print PHONE_MODULE_JF_CHATFLOW fragments.
+"""Merge numbered Dify Chatflow fragments from a selected business directory.
 
 PHONE_MODULE_JF_CHATFLOW_*.yml fragments are the source of truth. The full
 PHONE_MODULE_JF_CHATFLOW.yml file is a local generated Dify import artifact and
@@ -330,24 +330,118 @@ def check_full_consistency(text):
         fail('PHONE_MODULE_JF_CHATFLOW.yml exists but does not match raw-concatenated fragments')
     return True
 
-def main(argv=None):
-    ap=argparse.ArgumentParser(description=__doc__)
-    mode=ap.add_mutually_exclusive_group()
-    mode.add_argument('--check',action='store_true',help='validate fragments and compare existing generated full file if present')
-    mode.add_argument('--stdout',action='store_true',help='print raw-concatenated full DSL to stdout without writing')
-    args=ap.parse_args(argv)
-    parts=discover_parts(); text=merged_text(parts); doc=load_doc(text); nodes,edges,refs,defs=validate(doc)
-    if args.stdout:
-        sys.stdout.write(text); return 0
-    if args.check:
+def resolve_business_dir(raw):
+    if raw is None:
+        return BUSINESS_DIR.resolve()
+
+    supplied = Path(raw).expanduser()
+    candidates = [supplied] if supplied.is_absolute() else [
+        Path.cwd() / supplied,
+        DSL_ROOT / supplied,
+        DSL_ROOT.parent / supplied,
+    ]
+    seen = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if not resolved.is_dir():
+            continue
+        try:
+            resolved.relative_to(DSL_ROOT.resolve())
+        except ValueError:
+            continue
+        return resolved
+    fail(f'business directory not found under {DSL_ROOT}: {raw}')
+
+
+def merge_phone(directory, check=False, stdout=False):
+    global BUSINESS_DIR, FULL_FILE
+    BUSINESS_DIR = directory
+    FULL_FILE = directory / 'PHONE_MODULE_JF_CHATFLOW.yml'
+
+    parts = discover_parts()
+    text = merged_text(parts)
+    doc = load_doc(text)
+    nodes, edges, refs, defs = validate(doc)
+
+    if stdout:
+        sys.stdout.write(text)
+        return 0
+    if check:
         if check_full_consistency(text):
             print_env_report(refs, defs)
             print(f'OK: PHONE split fragments valid; full file matches fragments ({len(parts)} fragments, {nodes} nodes, {edges} edges)')
         else:
             print_env_report(refs, defs)
-            print('OK: PHONE split fragments valid; full file not found, run merge to generate local import file')
+            print('OK: PHONE split fragments valid; full file not found')
         return 0
-    FULL_FILE.write_text(text,encoding='utf-8')
-    print(f'OK: generated local PHONE_MODULE_JF_CHATFLOW.yml from {len(parts)} fragments ({nodes} nodes, {edges} edges)')
+
+    FULL_FILE.write_text(text, encoding='utf-8')
+    print(f'OK: generated {FULL_FILE} from {len(parts)} fragments ({nodes} nodes, {edges} edges)')
     return 0
+
+
+def merge_business(directory, check=False, stdout=False):
+    tools_dir = Path(__file__).resolve().parent
+    if str(tools_dir) not in sys.path:
+        sys.path.insert(0, str(tools_dir))
+    import merge_business_chatflow as business
+
+    matches = [
+        key for key, cfg in business.CONFIGS.items()
+        if cfg['directory'] == directory.name
+    ]
+    if len(matches) != 1:
+        fail(
+            'unsupported business directory: '
+            + directory.name
+            + '; expected one of PHONE_MODULE_JF_CHATFLOW, '
+            + ', '.join(cfg['directory'] for cfg in business.CONFIGS.values())
+        )
+
+    key = matches[0]
+    cfg = business.CONFIGS[key]
+    doc, text = business.load_doc(key)
+    summary = business.validate_doc(key, doc)
+    output = directory / (cfg['stem'] + '.yml')
+
+    if stdout:
+        sys.stdout.write(text)
+        return 0
+    if check:
+        if output.exists() and output.read_text(encoding='utf-8') != text:
+            fail(f'{output.name} exists but does not match the source fragments')
+        state = 'matches fragments' if output.exists() else 'not generated yet'
+        print(f'OK: {key} fragments valid; full file {state}')
+        print(json.dumps(summary, ensure_ascii=False))
+        return 0
+
+    output.write_text(text, encoding='utf-8')
+    print(f'OK: generated {output} from numbered fragments')
+    print(json.dumps(summary, ensure_ascii=False))
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Merge numbered Dify Chatflow YAML fragments from one business directory.'
+    )
+    parser.add_argument(
+        'directory',
+        nargs='?',
+        help='business directory, e.g. ./SI_DESIGN_CONSTRAINT_CHATFLOW; defaults to PHONE_MODULE_JF_CHATFLOW',
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--check', action='store_true', help='validate fragments without writing')
+    mode.add_argument('--stdout', action='store_true', help='write merged DSL to stdout without creating a file')
+    args = parser.parse_args(argv)
+
+    directory = resolve_business_dir(args.directory)
+    if directory.name == 'PHONE_MODULE_JF_CHATFLOW':
+        return merge_phone(directory, check=args.check, stdout=args.stdout)
+    return merge_business(directory, check=args.check, stdout=args.stdout)
+
+
 if __name__=='__main__': raise SystemExit(main())
