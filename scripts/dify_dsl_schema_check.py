@@ -15,7 +15,8 @@ for n in nodes or []:
   if k not in n: errs.append(f"node {n.get('id')} missing {k}")
  ids.add(n.get('id'))
  data=n.get('data',{}); typ=data.get('type')
- if typ in ['start','code','answer','llm']: 
+ # Start/Code/Answer nodes expose variables; LLM nodes bind inputs through prompt_template.
+ if typ in ['start','code','answer']:
   if 'variables' not in data or not isinstance(data.get('variables'),list): errs.append(f"node {n.get('id')} variables must be array")
  if typ=='if-else' and not isinstance(data.get('cases'),list): errs.append(f"if node {n.get('id')} cases must be array")
  if typ=='llm':
