@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import json, sys, collections, re
-p=sys.argv[1] if len(sys.argv)>1 else 'NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW.yml'
+p=sys.argv[1] if len(sys.argv)>1 else 'NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW/PHONE_MODULE_JF_CHATFLOW.yml'
 d=json.load(open(p,encoding='utf-8'))
 errs=[]
 for k in ['app','kind','version','workflow']:

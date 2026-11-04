@@ -9,6 +9,8 @@
 
 两者复用现有 PHONE_MODULE_JF_CHATFLOW 的 Registry 驱动查询骨架，但各自拥有独立的 Registry、Prompt、查询记忆和 DSL 分片。原 PHONE/JF 工作流不修改。
 
+三个业务的源分片分别存放在 `NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW/`、`NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW/` 和 `NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW/`。合并工具统一放在 `NL2SEARCH_CHATFLOW_DSL/tools/`。
+
 ## 2. 环境变量
 
 ### SI 设计约束
@@ -68,14 +70,21 @@ Registry 字段清单根据现有 SI / JF 电容导入数据结构建立。导�
 
 在仓库根目录执行：
 
-    python NL2SEARCH_CHATFLOW_DSL/merge_business_chatflow.py ALL --write
-    python scripts/dify_dsl_schema_check.py NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW.yml
-    python scripts/dify_dsl_schema_check.py NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW.yml
+    python NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py ALL --write
+    python scripts/dify_dsl_schema_check.py NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW/SI_DESIGN_CONSTRAINT_CHATFLOW.yml
+    python scripts/dify_dsl_schema_check.py NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW/JF_CAPACITOR_CHATFLOW.yml
     python scripts/business_query_chatflow_regression.py ALL
-    ruby scripts/dsl_self_check.rb NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW.yml
-    ruby scripts/dsl_self_check.rb NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW.yml
+    ruby scripts/dsl_self_check.rb NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW/SI_DESIGN_CONSTRAINT_CHATFLOW.yml
+    ruby scripts/dsl_self_check.rb NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW/JF_CAPACITOR_CHATFLOW.yml
 
-00、01、02 分片是 Git 源文件；合并生成的 *_CHATFLOW.yml 是本地 Dify 导入产物，已加入 .gitignore，不提交。
+PHONE 工作流分片合并与检查：
+
+    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py
+    python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py --check
+    python scripts/check_phone_module_jf_dsl.py
+    python scripts/phone_module_jf_regression.py
+
+00、01、02 分片是 Git 源文件；各业务目录下合并生成的 *_CHATFLOW.yml 是本地 Dify 导入产物，已加入 .gitignore，不提交。
 
 ## 6. 外部依赖
 

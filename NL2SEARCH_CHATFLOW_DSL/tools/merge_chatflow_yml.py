@@ -14,13 +14,14 @@ import argparse, re, subprocess, sys
 from collections import defaultdict, deque
 from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from scripts.graph_phone_common import load_phone_dsl_text
 
-BASE_DIR=Path(__file__).resolve().parent
-FULL_FILE=BASE_DIR/'PHONE_MODULE_JF_CHATFLOW.yml'
+DSL_ROOT=Path(__file__).resolve().parents[1]
+BUSINESS_DIR=DSL_ROOT/'PHONE_MODULE_JF_CHATFLOW'
+FULL_FILE=BUSINESS_DIR/'PHONE_MODULE_JF_CHATFLOW.yml'
 PART_RE=re.compile(r'PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$')
 
 
@@ -30,7 +31,7 @@ def warn(msg): print(f'WARN: {msg}', file=sys.stderr)
 
 def discover_parts():
     numbered=[]
-    for p in BASE_DIR.glob('PHONE_MODULE_JF_CHATFLOW_*.yml'):
+    for p in BUSINESS_DIR.glob('PHONE_MODULE_JF_CHATFLOW_*.yml'):
         m=PART_RE.match(p.name)
         if m: numbered.append((int(m.group(1)),p))
     if not numbered: fail('no PHONE_MODULE_JF_CHATFLOW_*.yml fragments found')

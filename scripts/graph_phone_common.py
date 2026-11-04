@@ -6,10 +6,11 @@ ROOT=Path(__file__).resolve().parents[1]
 BASE=ROOT/'NL2SEARCH_CHATFLOW_DSL'
 PART_RE=re.compile(r'PHONE_MODULE_JF_CHATFLOW_(\d+)\.yml$')
 
-FULL_FILE=BASE/'PHONE_MODULE_JF_CHATFLOW.yml'
+BUSINESS_DIR=BASE/'PHONE_MODULE_JF_CHATFLOW'
+FULL_FILE=BUSINESS_DIR/'PHONE_MODULE_JF_CHATFLOW.yml'
 
 def parts():
-    ps=sorted([p for p in BASE.glob('PHONE_MODULE_JF_CHATFLOW_*.yml') if PART_RE.match(p.name)], key=lambda p:int(PART_RE.match(p.name).group(1)))
+    ps=sorted([p for p in BUSINESS_DIR.glob('PHONE_MODULE_JF_CHATFLOW_*.yml') if PART_RE.match(p.name)], key=lambda p:int(PART_RE.match(p.name).group(1)))
     if not ps: raise AssertionError('PHONE fragments missing')
     nums=[int(PART_RE.match(p.name).group(1)) for p in ps]
     if nums != list(range(0,len(nums))): raise AssertionError(f'PHONE fragments must be continuous from 00: {nums}')

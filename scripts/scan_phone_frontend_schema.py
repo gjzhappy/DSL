@@ -28,7 +28,7 @@ def list_paths(obj, prefix='data'):
     return out
 
 def main():
-    p=Path('NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW.yml')
+    p=Path('NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW/PHONE_MODULE_JF_CHATFLOW.yml')
     d=load_phone_dsl_text(p.read_text(encoding='utf-8'))
     risk_missing=risk_null=risk_type=0
     print('node_id\ttitle\ttype\tdata_keys\tlist_fields\tmissing\tnull\ttype_errors')
