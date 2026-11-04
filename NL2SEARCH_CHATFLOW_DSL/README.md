@@ -28,8 +28,9 @@ NL2SEARCH_CHATFLOW_DSL/
 
 Run from the repository root.
 
-- PHONE: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py`
-- SI + JF: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py ALL --write`
+- PHONE: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW`
+- SI design constraints: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW`
+- JF capacitor: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW`
 - SI + JF regression: `python scripts/business_query_chatflow_regression.py ALL`
 - PHONE graph check: `python scripts/check_phone_module_jf_dsl.py`
 - PHONE regression: `python scripts/phone_module_jf_regression.py`
