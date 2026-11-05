@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge numbered Dify Chatflow fragments from a selected business directory.
+"""Merge numbered Dify Chatflow fragments from one or all business directories.
 
 PHONE_MODULE_JF_CHATFLOW_*.yml fragments are the source of truth. The full
 PHONE_MODULE_JF_CHATFLOW.yml file is a local generated Dify import artifact and
@@ -12,6 +12,8 @@ LLM result generation.
 from __future__ import annotations
 import argparse, json, re, subprocess, sys
 from collections import defaultdict, deque
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -424,19 +426,101 @@ def merge_business(directory, check=False, stdout=False):
     return 0
 
 
+
+BATCH_PART_RE = re.compile(r'^(?P<stem>.+)_(?P<index>\d+)\.yml$')
+
+
+def discover_batch_targets():
+    """Discover every numbered Chatflow group in direct DSL subdirectories."""
+    targets = []
+    for directory in sorted(DSL_ROOT.iterdir(), key=lambda p: p.name):
+        if not directory.is_dir():
+            continue
+        groups = defaultdict(list)
+        for path in directory.iterdir():
+            if not path.is_file():
+                continue
+            match = BATCH_PART_RE.fullmatch(path.name)
+            if match:
+                groups[match.group('stem')].append((int(match.group('index')), path))
+        for stem, numbered in sorted(groups.items()):
+            numbered.sort(key=lambda pair: (pair[0], pair[1].name))
+            numbers = [index for index, _ in numbered]
+            if len(numbers) < 2 or numbers != list(range(len(numbers))):
+                fail(f'{directory.name}/{stem}: fragments must be continuous from _00 (at least _00 and _01); found {numbers}')
+            targets.append((directory, stem, [path for _, path in numbered]))
+    if not targets:
+        fail(f'no numbered Chatflow fragments found under {DSL_ROOT}')
+    return targets
+
+
+def merge_all_businesses(check=False):
+    """Validate all groups first; then create one full YAML per group."""
+    tools_dir = Path(__file__).resolve().parent
+    if str(tools_dir) not in sys.path:
+        sys.path.insert(0, str(tools_dir))
+    import merge_business_chatflow as business
+    registered = {cfg['directory']: cfg['stem'] for cfg in business.CONFIGS.values()}
+
+    prepared = []
+    for directory, stem, parts in discover_batch_targets():
+        if directory.name == stem and (stem == 'PHONE_MODULE_JF_CHATFLOW' or registered.get(stem) == stem):
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                if stem == 'PHONE_MODULE_JF_CHATFLOW':
+                    merge_phone(directory, stdout=True)
+                else:
+                    merge_business(directory, stdout=True)
+            text = buffer.getvalue()
+        else:
+            # Future business directories work without changing the CLI.
+            text = merged_text(parts)
+            doc = load_doc(text)
+            graph = (doc.get('workflow') or {}).get('graph') or {}
+            if (doc.get('kind') != 'app'
+                    or not isinstance(graph.get('nodes'), list)
+                    or not isinstance(graph.get('edges'), list)):
+                fail(f'{directory.name}/{stem}: invalid Dify Chatflow structure')
+        if not text.strip():
+            fail(f'{directory.name}/{stem}: merged output is empty')
+        output = directory / (stem + '.yml')
+        if output.is_symlink():
+            fail(f'{output}: refusing to overwrite symlink')
+        prepared.append((output, text, len(parts)))
+
+    if check:
+        for output, text, count in prepared:
+            if output.exists() and output.read_text(encoding='utf-8') != text:
+                fail(f'{output.name} exists but does not match numbered fragments')
+            print(f'OK: validated {output} ({count} fragments)')
+        print(f'OK: batch validation passed ({len(prepared)} Chatflows, no files written)')
+        return 0
+
+    for output, text, count in prepared:
+        output.write_text(text, encoding='utf-8')
+        print(f'OK: generated {output} from {count} fragments')
+    print(f'OK: batch generated {len(prepared)} Chatflows')
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Merge numbered Dify Chatflow YAML fragments from one business directory.'
+        description='Merge numbered Dify Chatflow YAML fragments; no directory merges all business subdirectories.'
     )
     parser.add_argument(
         'directory',
         nargs='?',
-        help='business directory, e.g. ./SI_DESIGN_CONSTRAINT_CHATFLOW; defaults to PHONE_MODULE_JF_CHATFLOW',
+        help='optional business directory; omitted means merge every numbered Chatflow group',
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--check', action='store_true', help='validate fragments without writing')
     mode.add_argument('--stdout', action='store_true', help='write merged DSL to stdout without creating a file')
     args = parser.parse_args(argv)
+
+    if args.directory is None:
+        if args.stdout:
+            fail('--stdout requires an explicit directory')
+        return merge_all_businesses(check=args.check)
 
     directory = resolve_business_dir(args.directory)
     if directory.name == 'PHONE_MODULE_JF_CHATFLOW':
