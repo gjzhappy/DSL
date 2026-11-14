@@ -466,45 +466,16 @@ def validate_doc(key: str, doc: dict) -> dict:
                     "description": description,
                     "aliases": aliases or [label],
                 }
-        query_aliases = {
-            "integration_total_area_mm2": ["整机总面积", "整机集成度总面积"],
-            "small_system_total_area_mm2": ["小系统总面积"],
-            "peripheral_total_area_mm2": ["外设总面积"],
-            "wireless_total_area_mm2": ["无线总面积"],
-            "wireless_rf_total_area_mm2": ["无线RF总面积", "RF总面积"],
-            "wireless_nc_total_area_mm2": ["无线NC总面积", "NC总面积"],
-            "wireless_antenna_total_area_mm2": ["天线总面积"],
-            "camera_total_area_mm2": ["摄像头总面积"],
-            "fpc_total_area_mm2": ["FPC总面积"],
-            "pmu_total_area_mm2": ["PMU总面积"],
-            "scharger_total_area_mm2": ["Scharger总面积"],
-            "display_total_area_mm2": ["显示总面积"],
-            "audio_total_area_mm2": ["音频总面积"],
-            "storage_total_area_mm2": ["存储总面积"],
-            "test_point_total_area_mm2": ["测试点总面积"],
-            "sensor_lowercase_group_total_area_mm2": ["小写sensor总面积"],
-            "sensor_uppercase_group_total_area_mm2": ["大写SENSOR总面积"],
-            "temperature_detection_total_area_mm2": ["温度检测原始分组总面积"],
-        }
-        for name, aliases in query_aliases.items():
-            if name in registry["fields"]:
-                field = registry["fields"][name]
-                field["aliases"] = list(dict.fromkeys((field.get("aliases") or []) + aliases))
-        for composite in (registry.get("composite_fields") or {}).values():
-            exact = composite.pop("_expand_exact", []) or []
-            prefixes = composite.pop("_expand_prefixes", []) or []
-            contains = composite.pop("_expand_contains", []) or []
-            if set(exact) - set(registry["fields"]):
-                fail(key + ": composite references unknown exact fields")
-            selected = [
-                name for name in registry["fields"]
-                if name in exact
-                or any(name.startswith(prefix) for prefix in prefixes)
-                or any(token.casefold() in name.casefold() for token in contains)
-            ]
-            if not selected:
-                fail(key + ": composite expansion is empty")
-            composite["expand_to"] = selected
+        for composite_name, composite in (registry.get("composite_fields") or {}).items():
+            if not isinstance(composite, dict):
+                fail(key + ": invalid composite definition: " + composite_name)
+            expand_to = composite.get("expand_to")
+            if not isinstance(expand_to, list) or not expand_to:
+                fail(key + ": composite expand_to missing: " + composite_name)
+            if len(expand_to) != len(set(expand_to)):
+                fail(key + ": duplicate composite expand_to field: " + composite_name)
+            if any(not isinstance(name, str) or name not in registry["fields"] for name in expand_to):
+                fail(key + ": composite references unknown fields: " + composite_name)
 
     if registry.get("table") != cfg["table"]:
         fail(key + ": Registry table mismatch")
@@ -539,6 +510,11 @@ def validate_doc(key: str, doc: dict) -> dict:
     for field_name, values in (registry.get("value_aliases") or {}).items():
         if field_name not in fields or field_name not in cfg["filter_fields"] or not isinstance(values, dict):
             fail(key + ": invalid value_aliases field: " + field_name)
+        for canonical, definition in values.items():
+            if not isinstance(canonical, str) or not isinstance(definition, dict) or not isinstance(definition.get("aliases"), list):
+                fail(key + ": invalid value_alias definition: " + field_name + "." + str(canonical))
+            if any(not isinstance(alias, str) or not alias.strip() for alias in definition["aliases"]):
+                fail(key + ": invalid value_alias alias: " + field_name + "." + str(canonical))
 
     conversations = workflow.get("conversation_variables") or []
     conv_names = [item.get("name") for item in conversations]

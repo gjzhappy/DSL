@@ -19,6 +19,12 @@ NL2SEARCH_CHATFLOW_DSL/
 │   ├── JF_CAPACITOR_CHATFLOW_01.yml
 │   ├── JF_CAPACITOR_CHATFLOW_02.yml
 │   └── JF_CAPACITOR_CHATFLOW.yml                     # generated, gitignored
+├── INTEGRATION_COMPETITION_CHATFLOW/
+│   ├── INTEGRATION_COMPETITION_CHATFLOW_00.yml
+│   ├── INTEGRATION_COMPETITION_CHATFLOW_01.yml
+│   ├── INTEGRATION_COMPETITION_CHATFLOW_02.yml
+│   ├── INTEGRATION_COMPETITION_CHATFLOW_03.yml
+│   └── INTEGRATION_COMPETITION_CHATFLOW.yml          # generated, gitignored
 └── tools/
     ├── merge_chatflow_yml.py
     └── merge_business_chatflow.py
@@ -31,6 +37,8 @@ Run from the repository root.
 - PHONE: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/PHONE_MODULE_JF_CHATFLOW`
 - SI design constraints: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/SI_DESIGN_CONSTRAINT_CHATFLOW`
 - JF capacitor: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_chatflow_yml.py ./NL2SEARCH_CHATFLOW_DSL/JF_CAPACITOR_CHATFLOW`
+- Integration competition: `python NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py INTEGRATION_COMPETITION --write`
+- Integration competition regression: `python NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py`
 - SI + JF regression: `python scripts/business_query_chatflow_regression.py ALL`
 - PHONE graph check: `python scripts/check_phone_module_jf_dsl.py`
 - PHONE regression: `python scripts/phone_module_jf_regression.py`
