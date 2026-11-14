@@ -10,7 +10,7 @@
     "environment_variables": [
       {
         "description": "整机集成度竞分Registry基础结构；真实字段定义由三个DDL字段片段在加载节点合并。",
-        "id": "env-jf-capacitor-query-registry-json",
+        "id": "env-integration-competition-query-registry-json",
         "name": "INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON",
         "selector": [
           "env",
@@ -20,8 +20,8 @@
         "value_type": "string"
       },
       {
-        "description": "JF集成度竞分分析助手的系统角色与回答边界。",
-        "id": "env-jf-capacitor-analysis-system-prompt",
+        "description": "整机集成度竞分分析助手的系统角色与回答边界。",
+        "id": "env-integration-competition-analysis-system-prompt",
         "name": "INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT",
         "selector": [
           "env",
@@ -31,8 +31,8 @@
         "value_type": "string"
       },
       {
-        "description": "JF集成度竞分业务分析规则；运行时输入数据包由llm_input节点追加。",
-        "id": "env-jf-capacitor-analysis-user-prompt",
+        "description": "整机集成度竞分业务分析规则；运行时输入数据包由llm_input节点追加。",
+        "id": "env-integration-competition-analysis-user-prompt",
         "name": "INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT",
         "selector": [
           "env",
@@ -43,7 +43,7 @@
       },
       {
         "description": "LLM context window token budget; invalid or empty runtime values safely fall back to 32768.",
-        "id": "env-jf-capacitor-local-context-tokens",
+        "id": "env-integration-competition-local-context-tokens",
         "name": "LOCAL_CONTEXT_TOKENS",
         "selector": [
           "env",
@@ -54,7 +54,7 @@
       },
       {
         "description": "Reserved maximum LLM output tokens; invalid or empty runtime values safely fall back to 4096.",
-        "id": "env-jf-capacitor-local-max-predict-tokens",
+        "id": "env-integration-competition-local-max-predict-tokens",
         "name": "LOCAL_MAX_PREDICT_TOKENS",
         "selector": [
           "env",
@@ -65,7 +65,7 @@
       },
       {
         "description": "Prompt token safety margin; invalid or empty runtime values safely fall back to 1024.",
-        "id": "env-jf-capacitor-prompt-token-safety-margin",
+        "id": "env-integration-competition-prompt-token-safety-margin",
         "name": "PROMPT_TOKEN_SAFETY_MARGIN",
         "selector": [
           "env",
@@ -76,7 +76,7 @@
       },
       {
         "description": "Use full LLM HTTP path when true; otherwise local LLM is used.",
-        "id": "env-jf-capacitor-enable-full-llm",
+        "id": "env-integration-competition-enable-full-llm",
         "name": "ENABLE_FULL_LLM",
         "selector": [
           "env",
@@ -87,7 +87,7 @@
       },
       {
         "description": "Java backend proxy endpoint for full LLM chat completions.",
-        "id": "env-jf-capacitor-sn-full-llm-chat-urls",
+        "id": "env-integration-competition-sn-full-llm-chat-urls",
         "name": "SN_FULL_LLM_CHAT_URLS",
         "selector": [
           "env",
@@ -98,7 +98,7 @@
       },
       {
         "description": "统一 MySQL 参数化查询后端接口地址。",
-        "id": "env-jf-capacitor-sn-mysql-query-urls",
+        "id": "env-integration-competition-sn-mysql-query-urls",
         "name": "SN_MYSQL_QUERY_URLS",
         "selector": [
           "env",
@@ -443,4 +443,4 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(integration_competition_registry_raw_json='', integration_competition_registry_load_status=''):\n    import json\n    import re\n    import unicodedata\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def fail(status, message, warnings=None):\n        return {\n            'integration_competition_registry_json': '{}',\n            'integration_competition_alias_index_json': '{}',\n            'integration_competition_registry_parse_status': status,\n            'integration_competition_registry_warnings_json': dump(warnings or []),\n            'integration_competition_registry_error': message,\n        }\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    if str(integration_competition_registry_load_status or '') != 'ok':\n        return fail(str(integration_competition_registry_load_status or 'missing'), 'JF集成度竞分查询配置未加载，无法生成 SQL 查询。')\n\n    try:\n        registry = json.loads(integration_competition_registry_raw_json or '{}')\n    except Exception as exc:\n        return fail('error', 'INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON 不是合法 JSON：%s' % exc)\n\n    
+            "source_code": "def main(integration_competition_registry_raw_json='', integration_competition_registry_load_status=''):\n    import json\n    import re\n    import unicodedata\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def fail(status, message, warnings=None):\n        return {\n            'integration_competition_registry_json': '{}',\n            'integration_competition_alias_index_json': '{}',\n            'integration_competition_registry_parse_status': status,\n            'integration_competition_registry_warnings_json': dump(warnings or []),\n            'integration_competition_registry_error': message,\n        }\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    if str(integration_competition_registry_load_status or '') != 'ok':\n        return fail(str(integration_competition_registry_load_status or 'missing'), '整机集成度竞分查询配置未加载，无法生成 SQL 查询。')\n\n    try:\n        registry = json.loads(integration_competition_registry_raw_json or '{}')\n    except Exception as exc:\n        return fail('error', 'INTEGR
