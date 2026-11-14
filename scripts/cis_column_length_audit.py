@@ -364,7 +364,34 @@ def write_reports(output_dir: Path, column_stats: list[dict], summary: dict, etl
     return csv_path, json_path
 
 
+class SelfTestFailure(RuntimeError):
+    def __init__(self, check_name: str, error_type: str):
+        super().__init__(check_name)
+        self.check_name = check_name
+        self.error_type = error_type
+
+
+def _run_self_test_stage(name: str, action):
+    try:
+        result = action()
+    except Exception as exc:
+        error_type = type(exc).__name__
+        print(f"SELF_TEST_CHECK=FAIL name={name} error_type={error_type}", flush=True)
+        raise SelfTestFailure(name, error_type) from None
+    print(f"SELF_TEST_CHECK=PASS name={name}", flush=True)
+    return result
+
+
 def run_self_test(etl):
+    def check_schema():
+        assert len(etl.EXPECTED_COLUMNS) == EXPECTED_LOGICAL_COLUMNS
+        assert len(set(etl.EXPECTED_COLUMNS)) == EXPECTED_LOGICAL_COLUMNS
+        assert len(etl.AREA_COLUMNS) == EXPECTED_AREA_COLUMNS
+        assert len(etl.JSON_COLUMNS) == 5
+        return True
+
+    _run_self_test_stage("SCHEMA_COUNTS", check_schema)
+
     row = {field: None for field in etl.EXPECTED_COLUMNS}
     row.update({
         "manufacturer": "SENSITIVE_MANUFACTURER",
@@ -376,31 +403,70 @@ def run_self_test(etl):
         "wireless_antenna_ant10_ant_11_area_mm2": "42.77,16.59,9.38",
         "device_design_attributes": {"secret": "SENSITIVE_JSON_VALUE"},
     })
-    stats = build_column_stats([row], etl)
+
+    stats = _run_self_test_stage(
+        "BUILD_285_COLUMN_STATS",
+        lambda: build_column_stats([row], etl),
+    )
     by_name = {item["field"]: item for item in stats}
-    assert len(stats) == EXPECTED_LOGICAL_COLUMNS == len(etl.EXPECTED_COLUMNS)
-    assert len(etl.AREA_COLUMNS) == EXPECTED_AREA_COLUMNS
-    assert by_name["integration_total_area_mm2"]["multivalue_count"] == 1
-    assert by_name["wireless_antenna_ant10_ant_11_area_mm2"]["max_observations"] == 3
-    assert by_name["integration_total_area_mm2"]["recommended_type"].startswith("VARCHAR(")
-    assert by_name["device_design_attributes"]["recommended_type"] == "JSON"
-    assert by_name["id"]["observed_in_source"] is False
 
-    long_row = dict(row)
-    long_row["integration_total_area_mm2"] = "1" * 700
-    long_stats = build_column_stats([long_row], etl)
-    long_area = next(x for x in long_stats if x["field"] == "integration_total_area_mm2")
-    assert long_area["recommended_type"].startswith("TEXT")
+    def check_multivalue():
+        assert len(stats) == EXPECTED_LOGICAL_COLUMNS
+        assert by_name["integration_total_area_mm2"]["multivalue_count"] == 1
+        assert by_name["wireless_antenna_ant10_ant_11_area_mm2"]["max_observations"] == 3
+        return True
 
-    width = estimate_row_width(stats, [row], etl)
-    with tempfile.TemporaryDirectory(prefix="cis_audit_selftest_") as tmp:
-        csv_path, json_path = write_reports(Path(tmp), stats, {"row_width_estimate": width}, etl)
-        combined = csv_path.read_text(encoding="utf-8-sig") + json_path.read_text(encoding="utf-8")
-        for sentinel in ("SENSITIVE_MANUFACTURER", "SENSITIVE_PLATFORM", "SENSITIVE_MODEL", "SENSITIVE_JSON_VALUE"):
-            assert sentinel not in combined
-        assert "0123456789abcdef01234567" not in combined
-    print("SELF_TEST=PASS columns=285 area_columns=267 multivalue=PASS varchar_text_classification=PASS row_width_estimate=PASS redaction=PASS mysql_connect=NO mongo_write=NO")
+    _run_self_test_stage("MULTIVALUE_ORDER_AND_COUNTS", check_multivalue)
 
+    def check_types():
+        assert by_name["integration_total_area_mm2"]["recommended_type"].startswith("VARCHAR(")
+        assert by_name["device_design_attributes"]["recommended_type"] == "JSON"
+        assert by_name["id"]["observed_in_source"] is False
+        return True
+
+    _run_self_test_stage("TYPE_RECOMMENDATIONS", check_types)
+
+    def check_long_text():
+        long_row = dict(row)
+        long_row["integration_total_area_mm2"] = "1" * 700
+        long_stats = build_column_stats([long_row], etl)
+        long_area = next(x for x in long_stats if x["field"] == "integration_total_area_mm2")
+        assert long_area["recommended_type"].startswith("TEXT")
+        return True
+
+    _run_self_test_stage("LONG_VALUE_TEXT_FALLBACK", check_long_text)
+
+    width = _run_self_test_stage(
+        "ROW_WIDTH_ESTIMATE",
+        lambda: estimate_row_width(stats, [row], etl),
+    )
+
+    def check_redaction():
+        with tempfile.TemporaryDirectory(prefix="cis_audit_selftest_") as tmp:
+            csv_path, json_path = write_reports(
+                Path(tmp), stats, {"row_width_estimate": width}, etl
+            )
+            combined = (
+                csv_path.read_text(encoding="utf-8-sig")
+                + json_path.read_text(encoding="utf-8")
+            )
+            for sentinel in (
+                "SENSITIVE_MANUFACTURER",
+                "SENSITIVE_PLATFORM",
+                "SENSITIVE_MODEL",
+                "SENSITIVE_JSON_VALUE",
+                "0123456789abcdef01234567",
+            ):
+                assert sentinel not in combined
+        return True
+
+    _run_self_test_stage("REPORT_REDACTION", check_redaction)
+    print(
+        "SELF_TEST=PASS columns=285 area_columns=267 multivalue=PASS "
+        "varchar_text_classification=PASS row_width_estimate=PASS "
+        "redaction=PASS mysql_connect=NO mongo_write=NO",
+        flush=True,
+    )
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Read-only CIS MongoDB field-length audit")
@@ -539,6 +605,14 @@ def main():
             run_self_test(etl)
             return 0
         return run_audit(args, etl)
+    except SelfTestFailure as exc:
+        print(
+            f"AUDIT=FAILED phase=SELF_TEST check={exc.check_name} "
+            f"error_type={exc.error_type} sensitive_details=REDACTED",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
     except Exception as exc:
         # Never print exception messages: driver exceptions may include hostnames,
         # URIs, authentication details, document fragments, or raw values.
@@ -549,7 +623,7 @@ def main():
             "DEPENDENCY_MISSING_PYMONGO", "EMPTY_MONGO_PASSWORD",
         }
         error_code = str(exc) if str(exc) in safe_codes else "REDACTED"
-        print(f"AUDIT=FAILED error_type={error_type} error_code={error_code}", file=sys.stderr)
+        print(f"AUDIT=FAILED error_type={error_type} error_code={error_code}", file=sys.stderr, flush=True)
         return 2
 
 
