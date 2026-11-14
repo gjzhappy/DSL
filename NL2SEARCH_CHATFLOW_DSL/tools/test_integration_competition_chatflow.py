@@ -186,6 +186,9 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
         self.assertIn("small_system", plan["selected_composites"])
         self.assertIn("small_system_total_area_mm2", plan["select_fields"])
         self.assertIn("small_system_soc_total_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_pmk_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_pmu1_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_pmu2_area_mm2", plan["select_fields"])
 
     def test_09_followup_inherits_device_scope(self):
         _, parsed = self.build_runtime_registry()
