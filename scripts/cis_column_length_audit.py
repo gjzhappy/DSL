@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MongoDB integration_device -> MySQL sn_cis_integration_competition_wide
-ETL version: 1.0.2
-Target schema: cis-integration-v4-multivalue (285 columns)
+Read-only CIS value-length audit based directly on ETL v1.0.2.
+Source: MongoDB kirin_shennong_datacenter_dev.integration_device.
+This audit-only copy reuses the original ETL's transform_document(), build_targets()
+and WRITE_COLUMNS. It never connects to MySQL and never writes to either database.
 
 Design:
-- One MongoDB device document -> one MySQL fact row.
+- One MongoDB device document -> one transformed ETL row for measurement.
 - Unique identity: manufacturer + platform + device_type + device_model.
 - MongoDB is read-only. MySQL is the only write target.
 - Does NOT create/drop/truncate tables and does NOT delete stale rows.
@@ -1877,7 +1878,7 @@ def run_self_test():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="MongoDB integration_device -> MySQL CIS self-describing wide table"
+        description="Read-only MongoDB CIS ETL v1.0.2 value-length audit"
     )
     parser.add_argument("--mongo-uri", default="", help="完整MongoDB URI；不建议将凭据直接写在命令行")
     parser.add_argument("--mongo-server-selection-timeout-ms", type=int, default=10000)
