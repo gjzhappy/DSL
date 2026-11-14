@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import getpass
 import importlib.util
 import json
 import logging
@@ -21,7 +20,6 @@ from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-ETL_NAME = "sn_cis_integration_competition_wide_mongo_to_mysql_v1_0_2.py"
 BUCKETS = (16, 24, 32, 48, 64, 96, 128, 192, 255, 384, 512, 768, 1024, 2048)
 ROW_LIMIT = 8126
 ROW_WARNING_LIMIT = 7000
@@ -31,7 +29,8 @@ def load_etl(path: Path):
     if not path.is_file():
         raise RuntimeError("ETL_SCRIPT_NOT_FOUND")
 
-    # Prevent ETL v1.0.2 from creating its own log or writing source details.
+    # The ETL creates its own file/console logger on import. A NullHandler keeps
+    # this diagnostic from producing a second log containing source diagnostics.
     logger = logging.getLogger("cis_integration_mongo_to_mysql")
     logger.addHandler(logging.NullHandler())
 
@@ -62,37 +61,48 @@ def percentile(values, pct):
     return values[max(0, math.ceil(len(values) * pct / 100) - 1)]
 
 
+def varchar_recommendation(max_chars, minimum, charset, max_varchar=512):
+    target = max(minimum, math.ceil(max_chars * 1.2))
+    length = next((n for n in BUCKETS if n >= target), None)
+    if length is None or length > max_varchar:
+        return f"TEXT CHARACTER SET {charset}", charset, 20
+    bytes_per_char = 1 if charset == "ascii" else 4
+    prefix = 1 if length * bytes_per_char <= 255 else 2
+    return (
+        f"VARCHAR({length}) CHARACTER SET {charset}",
+        charset,
+        length * bytes_per_char + prefix,
+    )
+
+
 def recommend(field, max_chars, etl):
     if field in etl.JSON_COLUMNS:
         return "JSON", "n/a", 20
     if field == "release_date":
         return "DATE", "n/a", 3
 
-    ascii_field = field in etl.AREA_COLUMNS or field == "source_document_id"
-    charset = "ascii" if ascii_field else "utf8mb4"
+    # Preserve the ETL's existing hard limits for identity/source fields.
+    fixed = {
+        "manufacturer": ("VARCHAR(64) CHARACTER SET utf8mb4", "utf8mb4", 257),
+        "platform": ("VARCHAR(128) CHARACTER SET utf8mb4", "utf8mb4", 514),
+        "device_type": ("VARCHAR(32) CHARACTER SET utf8mb4", "utf8mb4", 129),
+        "device_model": ("VARCHAR(128) CHARACTER SET utf8mb4", "utf8mb4", 514),
+        "source_document_id": ("CHAR(24) CHARACTER SET ascii", "ascii", 24),
+        "release_date_text": ("VARCHAR(64) CHARACTER SET utf8mb4", "utf8mb4", 258),
+    }
+    if field in fixed:
+        return fixed[field]
+
     if field in etl.AREA_COLUMNS:
-        minimum = 16
-    elif field == "device_pic_url":
-        minimum = 255
-    elif field == "device_model":
-        minimum = 64
-    elif field in ("manufacturer", "device_type", "release_date_text", "semantic_version"):
-        minimum = 32
-    elif field == "platform":
-        minimum = 64
-    elif field == "source_document_id":
-        minimum = 16
-    else:
-        minimum = 32
-
-    target = max(minimum, math.ceil(max_chars * 1.2))
-    length = next((n for n in BUCKETS if n >= target), None)
-    if length is None:
-        return f"TEXT CHARACTER SET {charset}", charset, 20
-
-    bytes_per_char = 1 if ascii_field else 4
-    prefix = 1 if length * bytes_per_char <= 255 else 2
-    return f"VARCHAR({length}) CHARACTER SET {charset}", charset, length * bytes_per_char + prefix
+        return varchar_recommendation(max_chars, 16, "ascii", max_varchar=512)
+    if field == "device_pic_url":
+        # ETL accepts up to 1024 chars; TEXT avoids reserving 1024*4 inline bytes.
+        return "TEXT CHARACTER SET utf8mb4", "utf8mb4", 20
+    if field == "area_unit":
+        return varchar_recommendation(max_chars, 16, "utf8mb4")
+    if field == "semantic_version":
+        return varchar_recommendation(max_chars, 32, "utf8mb4")
+    return varchar_recommendation(max_chars, 32, "utf8mb4")
 
 
 def measure(rows, etl):
@@ -103,8 +113,8 @@ def measure(rows, etl):
             for row in rows
             if row.get(field) is not None
         ]
-        char_lengths = [len(v) for v in values]
-        byte_lengths = [len(v.encode("utf-8")) for v in values]
+        char_lengths = [len(value) for value in values]
+        byte_lengths = [len(value.encode("utf-8")) for value in values]
         mysql_type, charset, declared_bytes = recommend(
             field, max(char_lengths, default=0), etl
         )
@@ -129,18 +139,16 @@ def measure(rows, etl):
 
 
 def estimate_row_size(columns, etl):
-    # Conservative DDL-width estimate: maximum VARCHAR bytes, plus NULL bitmap
-    # and modest record overhead. JSON/TEXT use an external-value pointer estimate.
-    nullable_bitmap = math.ceil(len(etl.WRITE_COLUMNS) / 8)
-    overhead = 32
-    declared = sum(x["declared_row_bytes"] for x in columns)
-    total = declared + nullable_bitmap + overhead
+    declared = sum(column["declared_row_bytes"] for column in columns)
+    null_bitmap = math.ceil(len(etl.WRITE_COLUMNS) / 8)
+    record_overhead = 32
+    total = declared + null_bitmap + record_overhead
     status = (
         "PASS_WITH_MARGIN" if total <= ROW_WARNING_LIMIT
         else "NEAR_LIMIT" if total <= ROW_LIMIT
         else "OVER_LIMIT"
     )
-    return total, nullable_bitmap, overhead, status
+    return total, null_bitmap, record_overhead, status
 
 
 def write_csv(path: Path, columns):
@@ -150,12 +158,12 @@ def write_csv(path: Path, columns):
         "p95_char_length", "p99_char_length", "max_utf8_bytes",
         "recommended_mysql_type", "charset", "declared_row_bytes",
     ]
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8-sig") as handle:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         writer.writerows(columns)
-    os.replace(tmp, path)
+    os.replace(temporary, path)
 
 
 def self_test():
@@ -180,14 +188,14 @@ def self_test():
         "release_date": date(2026, 11, 14),
     }]
     columns = measure(rows, FakeETL)
-    by_name = {x["field"]: x for x in columns}
+    by_name = {column["field"]: column for column in columns}
     assert by_name["integration_total_area_mm2"]["max_char_length"] == 11
     assert by_name["integration_total_area_mm2"]["recommended_mysql_type"].startswith("VARCHAR(")
     assert by_name["device_design_attributes"]["recommended_mysql_type"] == "JSON"
     assert by_name["release_date"]["recommended_mysql_type"] == "DATE"
 
-    with tempfile.TemporaryDirectory(prefix="cis_length_selftest_") as tmp:
-        path = Path(tmp) / "audit.csv"
+    with tempfile.TemporaryDirectory(prefix="cis_length_selftest_") as directory:
+        path = Path(directory) / "audit.csv"
         write_csv(path, columns)
         output = path.read_text(encoding="utf-8-sig")
         assert "DO_NOT_EXPORT" not in output
@@ -243,12 +251,13 @@ def main():
         phase = "MEASURE_LENGTHS"
         columns = measure(rows, etl)
         row_bytes, null_bytes, overhead_bytes, row_status = estimate_row_size(columns, etl)
-        write_csv(Path(args.output).expanduser().resolve(), columns)
+        output_path = Path(args.output).expanduser().resolve()
+        write_csv(output_path, columns)
 
-        area_count = sum(1 for x in columns if x["category"] == "AREA")
-        json_count = sum(1 for x in columns if x["category"] == "JSON")
-        text_count = sum(1 for x in columns if x["recommended_mysql_type"].startswith("TEXT"))
-        varchar_count = sum(1 for x in columns if x["recommended_mysql_type"].startswith("VARCHAR"))
+        area_count = sum(column["category"] == "AREA" for column in columns)
+        json_count = sum(column["category"] == "JSON" for column in columns)
+        text_count = sum(column["recommended_mysql_type"].startswith("TEXT") for column in columns)
+        varchar_count = sum(column["recommended_mysql_type"].startswith("VARCHAR") for column in columns)
 
         print(
             f"AUDIT=PASS documents={stats['scanned_documents']} "
@@ -257,11 +266,11 @@ def main():
             f"varchar={varchar_count} text={text_count}"
         )
         print(
-            f"ROW_SIZE_ESTIMATE_BYTES={row_bytes} "
-            f"NULL_BITMAP_BYTES={null_bytes} RECORD_OVERHEAD_BYTES={overhead_bytes} "
+            f"ROW_SIZE_ESTIMATE_BYTES={row_bytes} NULL_BITMAP_BYTES={null_bytes} "
+            f"RECORD_OVERHEAD_BYTES={overhead_bytes} "
             f"INNODB_LIMIT_BYTES={ROW_LIMIT} STATUS={row_status}"
         )
-        print(f"CSV_REPORT={Path(args.output).name}")
+        print(f"CSV_REPORT={output_path.name}")
         print(
             "MONGODB_READ_ONLY=YES MONGODB_WRITE=NO "
             "MYSQL_CONNECT=NO MYSQL_WRITE=NO SENSITIVE_VALUES=REDACTED"
