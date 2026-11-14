@@ -178,16 +178,16 @@
             "title": "加载竞分集成度竞分查询注册表",
             "type": "code",
             "outputs": {
-              "jf_capacitor_registry_raw_json": {
+              "integration_competition_registry_raw_json": {
                 "type": "string"
               },
-              "jf_capacitor_registry_load_status": {
+              "integration_competition_registry_load_status": {
                 "type": "string"
               },
-              "jf_capacitor_registry_load_error": {
+              "integration_competition_registry_load_error": {
                 "type": "string"
               },
-              "jf_capacitor_registry_source": {
+              "integration_competition_registry_source": {
                 "type": "string"
               }
             },
@@ -205,4 +205,5 @@
             "code": "def main(integration_competition_query_registry_json=''):\n    raw = str(integration_competition_query_registry_json or '').strip()\n    status = 'ok' if raw else 'missing'\n    error = '' if raw else 'env.INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON 未配置，无法生成 JF集成度竞分 SQL 查询。'\n    source = 'env.INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON' if raw else 'missing'\n    return {\n        'integration_competition_registry_raw_json': raw,\n        'integration_competition_registry_load_status': status,\n        'integration_competition_registry_load_error': error,\n        'integration_competition_registry_source': source,\n    }\n"
           },
           "position": {
-            "x":
+            "x": 720,
+        
