@@ -197,7 +197,7 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
 
     def test_10_area_rules_are_present_in_prompts(self):
         prompt = self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"] + "\n" + self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"]
-        for term in ("42.77,16.59", "不强制等于RF+NC", "不是第三个可加总业务域", "NULL", "GG", "SUM"):
+        for term in ("42.77,16.59", "不强制等于RF+NC", "不是无线下第三个可加总业务域", "天线不是第三个加数", "NULL", "GG", "SUM"):
             self.assertIn(term, prompt)
 
 
