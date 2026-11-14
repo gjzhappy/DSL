@@ -1,4 +1,109 @@
-
+      'mysql_request_error_answer': 'MySQL 查询请求构建失败：只允许 SELECT 查询。',\n        }\n\n    return {\n        'mysql_request_body_json': dump({'sql': sql, 'params': params, 'user': user}),\n        'mysql_request_status': 'ok',\n        'mysql_request_error_answer': '',\n    }\n",
+            "variables": [
+              {
+                "variable": "integration_competition_sql_plan_json",
+                "value_selector": [
+                  "integration_competition_sql_plan",
+                  "integration_competition_sql_plan_json"
+                ]
+              },
+              {
+                "variable": "context_json",
+                "value_selector": [
+                  "ctx",
+                  "context_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(integration_competition_sql_plan_json='', context_json=''):\n    import json\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    plan = load_json(integration_competition_sql_plan_json, {})\n    context = load_json(context_json, {})\n\n    if plan.get('status') != 'ok':\n        message = plan.get('error') or 'SQL 查询计划无效。'\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败，原因：%s' % message,\n        }\n\n    sql = str(plan.get('sql') or '').strip()\n    params = plan.get('params') if isinstance(plan.get('params'), list) else []\n    user = str(context.get('user') or '').strip()\n\n    if not sql.lower().startswith('select '):\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败：只允许 SELECT 查询。',\n        }\n\n    return {\n        'mysql_request_body_json': dump({'sql': sql, 'params': params, 'user': user}),\n        'mysql_request_status': 'ok',\n        'mysql_request_error_answer': '',\n    }\n"
+          },
+          "position": {
+            "x": 2880,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 2880,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "if_sql_ok",
+          "type": "custom",
+          "data": {
+            "title": "检查查询结果",
+            "type": "if-else",
+            "cases": [
+              {
+                "case_id": "success",
+                "conditions": [
+                  {
+                    "id": "if-sql-ok-success",
+                    "variable_selector": [
+                      "mysql_normalize",
+                      "mysql_query_status"
+                    ],
+                    "comparison_operator": "is",
+                    "value": "ok"
+                  }
+                ],
+                "logical_operator": "and"
+              }
+            ],
+            "logical_operator": "and"
+          },
+          "position": {
+            "x": 4320,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 4320,
+            "y": 300
+          },
+          "width": 300,
+          "height": 154
+        },
+        {
+          "id": "ans_sql_error",
+          "type": "custom",
+          "data": {
+            "title": "返回查询提示",
+            "type": "answer",
+            "answer": "{{#mysql_request.mysql_request_error_answer#}}{{#mysql_normalize.mysql_query_error_answer#}}",
+            "outputs": [],
+            "variables": []
+          },
+          "position": {
+            "x": 4680,
+            "y": 600
+          },
+          "positionAbsolute": {
+            "x": 4680,
+            "y": 600
+          },
+          "width": 280,
+          "height": 110
+        },
+        {
+          "id": "llm_input",
+          "type": "custom",
+          "data": {
+            "title": "准备整机集成度分析内容",
+            "type": "code",
+            "outputs": {
+              "llm_handler_input_json": {
+                "type": "string"
+              },
+              "llm_task_type": {
+                "type": "string"
+              },
+              "llm_output_kind": {
+                "type": "string"
+              },
+              "llm_artifact_type": {
+                "type": "string"
               },
               "llm_system_prompt": {
                 "type": "string"
