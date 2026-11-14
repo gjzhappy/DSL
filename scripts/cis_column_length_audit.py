@@ -29,10 +29,11 @@ def load_etl(path: Path):
     if not path.is_file():
         raise RuntimeError("ETL_SCRIPT_NOT_FOUND")
 
-    # The ETL creates its own file/console logger on import. A NullHandler keeps
-    # this diagnostic from producing a second log containing source diagnostics.
+    # The ETL initializes its own logger at import time. Install a NullHandler
+    # first so this read-only audit does not create a second ETL log.
     logger = logging.getLogger("cis_integration_mongo_to_mysql")
-    logger.addHandler(logging.NullHandler())
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
 
     spec = importlib.util.spec_from_file_location("cis_etl_v102_length_probe", str(path))
     if spec is None or spec.loader is None:
@@ -41,10 +42,28 @@ def load_etl(path: Path):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
 
-    if module.ETL_VERSION != "1.0.2":
-        raise RuntimeError("ETL_VERSION_MISMATCH")
-    if len(module.EXPECTED_COLUMNS) != 285 or len(module.AREA_COLUMNS) != 267:
-        raise RuntimeError("ETL_SCHEMA_MISMATCH")
+    actual_version = getattr(module, "ETL_VERSION", None)
+    if actual_version != "1.0.2":
+        raise RuntimeError(f"ETL_VERSION_MISMATCH actual={actual_version!r}")
+
+    required = (
+        "MONGO_COLLECTION", "EXPECTED_COLUMNS", "WRITE_COLUMNS",
+        "AREA_COLUMNS", "JSON_COLUMNS", "acquire_mongo_uri",
+        "connect_mongo_primary", "read_mongo_documents", "build_targets",
+        "canonical_json",
+    )
+    missing = [name for name in required if not hasattr(module, name)]
+    if missing:
+        raise RuntimeError("ETL_API_MISSING fields=" + ",".join(missing))
+
+    expected = set(module.EXPECTED_COLUMNS)
+    writable = set(module.WRITE_COLUMNS)
+    if not expected or not writable or not writable.issubset(expected):
+        raise RuntimeError("ETL_SCHEMA_CONTRACT_INVALID")
+    if not set(module.AREA_COLUMNS).issubset(writable):
+        raise RuntimeError("ETL_AREA_COLUMN_CONTRACT_INVALID")
+    if not set(module.JSON_COLUMNS).issubset(writable):
+        raise RuntimeError("ETL_JSON_COLUMN_CONTRACT_INVALID")
     return module
 
 
@@ -229,6 +248,13 @@ def main():
     phase = "LOAD_ETL"
     try:
         etl = load_etl(Path(args.etl_script).expanduser().resolve())
+        print(
+            f"ETL_LOAD=PASS version={etl.ETL_VERSION} "
+            f"expected_columns={len(etl.EXPECTED_COLUMNS)} "
+            f"write_columns={len(etl.WRITE_COLUMNS)} "
+            f"area_columns={len(etl.AREA_COLUMNS)} "
+            f"json_columns={len(etl.JSON_COLUMNS)}"
+        )
         phase = "MONGODB_CONNECT"
         mongo_args = SimpleNamespace(
             mongo_uri="",
@@ -279,9 +305,16 @@ def main():
         )
         return 0
     except Exception as exc:
+        safe_detail = str(exc)
+        if not safe_detail.startswith((
+            "ETL_SCRIPT_NOT_FOUND", "ETL_IMPORT_FAILED", "ETL_VERSION_MISMATCH",
+            "ETL_API_MISSING", "ETL_SCHEMA_CONTRACT_INVALID",
+            "ETL_AREA_COLUMN_CONTRACT_INVALID", "ETL_JSON_COLUMN_CONTRACT_INVALID",
+        )):
+            safe_detail = "REDACTED"
         print(
             f"AUDIT=FAILED phase={phase} error_type={type(exc).__name__} "
-            "exception_details=REDACTED",
+            f"error_code={safe_detail}",
             file=sys.stderr,
         )
         return 2
