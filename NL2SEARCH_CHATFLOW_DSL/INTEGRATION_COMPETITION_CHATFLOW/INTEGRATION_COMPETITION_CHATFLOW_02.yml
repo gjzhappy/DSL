@@ -1,4 +1,34 @@
-      'mysql_request_error_answer': 'MySQL 查询请求构建失败：只允许 SELECT 查询。',\n        }\n\n    return {\n        'mysql_request_body_json': dump({'sql': sql, 'params': params, 'user': user}),\n        'mysql_request_status': 'ok',\n        'mysql_request_error_answer': '',\n    }\n",
+ allowed_fields or not valid_identifier(field):\n            return fail('error', 'SQL 字段未通过白名单校验: %s' % field)\n\n    current_query_delta = {'current_user_query': question, 'explicit_where_filters': where_filters, 'explicit_semantic_filters': semantic_filters, 'explicit_select_fields': selected_fields, 'explicit_selected_composites': selected_composites}\n    effective_scope = resolve_query_scope(history_scopes, question, query_scope_behavior, where_filters, semantic_filters, select_fields, effective_selected_composites)\n    query_scopes = [effective_scope]\n    placeholders, params = compile_scoped_where(query_scopes, filter_fields)\n    presence_clauses = compile_presence_where(effective_scope['semantic_filters'], composite_meta, allowed_fields)\n    if not placeholders and not presence_clauses:\n        warnings.append({\n            'type': 'NO_STRUCTURED_FILTER_FOUND',\n            'message': \"未命中已配置的厂商、平台、设备类型或设备型号标准值过滤；未识别的设备身份不得猜测或改写，只能依据本轮真实rows回答。\"\n        })\n    select_sql = ', '.join('`%s`' % field for field in select_fields)\n    sql = 'SELECT %s FROM `%s`' % (select_sql, table)\n    where_parts = []\n    if placeholders:\n        where_parts.append('(' + ' OR '.join(placeholders) + ')')\n    where_parts.extend(presence_clauses)\n    if where_parts:\n        sql += ' WHERE ' + ' AND '.join(where_parts)\n    if limit is not None:\n        sql += ' LIMIT ?'\n        params.append(limit)\n    # Planner 的解释元数据不进入长期记忆；仅写入最终有效 scope。\n    execution_context = {'version': 'integration_competition_query_memory_v1', 'previous_user_query': previous_user_query, 'current_user_query': question, 'last_scope': effective_scope}\n    memory_write_ready = bool(effective_scope['where_filters'] or effective_scope['semantic_filters'] or selected_fields or selected_composites)\n\n    selected_field_meta = {}\n    for field in select_fields:\n        selected_field_meta[field] = field_meta_all.get(field) or {'label': field, 'description': ''}\n\n    try:\n        select_field_summary = build_select_field_summary(\n            direct_field_hits,\n            composite_hits,\n            context_fields,\n            fallback_used,\n            fallback_message,\n            select_fields,\n        )\n    except Exception as exc:\n        select_field_summary = '字段选择摘要生成失败：%s' % str(exc)[:120]\n\n    sql_plan = {\n        'status': 'ok',\n        'backend': 'mysql_http',\n        'readonly': True,\n        'table': table,\n        'select_fields': select_fields,\n        'where_filters': effective_scope['where_filters'],\n        'semantic_filters': effective_scope['semantic_filters'],\n        'query_intent_meta': query_intent_meta,\n        'query_scopes': query_scopes,\n        'current_query_delta': current_query_delta,\n        'where_allowed_fields': filter_fields,\n        'sql': sql,\n        'params': params,\n        'limit': limit,\n        'sql_select_mode': sql_select_mode,\n        'selected_composites': effective_selected_composites,\n        'selected_field_meta': selected_field_meta,\n        'value_alias_hits': value_alias_hits,\n        'fuzzy_alias_hits': fuzzy_alias_hits,\n        'warnings': warnings,\n    }\n\n    return {\n        'integration_competition_sql_plan_json': dump(sql_plan),\n        'integration_competition_sql_compile_status': 'ok',\n        'integration_competition_sql_compile_error_answer': '',\n        'integration_competition_selected_field_meta_json': dump(selected_field_meta),\n        'integration_competition_select_field_summary': select_field_summary,\n        'integration_competition_current_execution_context_json': dump(execution_context),\n        'integration_competition_memory_write_ready': bool(memory_write_ready),\n    }\n"
+          },
+          "position": {
+            "x": 2520,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 2520,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "mysql_request",
+          "type": "custom",
+          "data": {
+            "title": "准备参数化数据查询",
+            "type": "code",
+            "outputs": {
+              "mysql_request_body_json": {
+                "type": "string"
+              },
+              "mysql_request_status": {
+                "type": "string"
+              },
+              "mysql_request_error_answer": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(integration_competition_sql_plan_json='', context_json=''):\n    import json\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    plan = load_json(integration_competition_sql_plan_json, {})\n    context = load_json(context_json, {})\n\n    if plan.get('status') != 'ok':\n        message = plan.get('error') or 'SQL 查询计划无效。'\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败，原因：%s' % message,\n        }\n\n    sql = str(plan.get('sql') or '').strip()\n    params = plan.get('params') if isinstance(plan.get('params'), list) else []\n    user = str(context.get('user') or '').strip()\n\n    if not sql.lower().startswith('select '):\n        return {\n            'mysql_request_body_json': '{}',\n            'mysql_request_status': 'error',\n            'mysql_request_error_answer': 'MySQL 查询请求构建失败：只允许 SELECT 查询。',\n        }\n\n    return {\n        'mysql_request_body_json': dump({'sql': sql, 'params': params, 'user': user}),\n        'mysql_request_status': 'ok',\n        'mysql_request_error_answer': '',\n    }\n",
             "variables": [
               {
                 "variable": "integration_competition_sql_plan_json",
