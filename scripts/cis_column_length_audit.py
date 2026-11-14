@@ -221,7 +221,31 @@ def self_test():
         output = path.read_text(encoding="utf-8-sig")
         assert "DO_NOT_EXPORT" not in output
         assert "PRIVATE_DEVICE_MODEL" not in output
-    print("SELF_TEST=PASS length=PASS json=PASS date=PASS redaction=PASS")
+
+        # A tiny compatible ETL contract with deliberately non-production column
+        # counts proves the loader follows ETL metadata instead of fixed counts.
+        stub = Path(directory) / "etl_stub.py"
+        stub.write_text(
+            "ETL_VERSION='1.0.2'\n"
+            "MONGO_COLLECTION='integration_device'\n"
+            "EXPECTED_COLUMNS=('id','value')\n"
+            "WRITE_COLUMNS=('value',)\n"
+            "AREA_COLUMNS=('value',)\n"
+            "JSON_COLUMNS=()\n"
+            "acquire_mongo_uri=lambda args: ''\n"
+            "connect_mongo_primary=lambda uri,args: (None,'')\n"
+            "read_mongo_documents=lambda collection,args: []\n"
+            "build_targets=lambda documents: ([],{})\n"
+            "canonical_json=lambda value: '{}'\n",
+            encoding="utf-8",
+        )
+        loaded = load_etl(stub)
+        assert len(loaded.EXPECTED_COLUMNS) == 2
+        assert len(loaded.AREA_COLUMNS) == 1
+    print(
+        "SELF_TEST=PASS length=PASS json=PASS date=PASS "
+        "redaction=PASS etl_contract=PASS dynamic_schema=PASS"
+    )
 
 
 def parse_args():
@@ -242,6 +266,14 @@ def main():
         return 2
     if args.self_test:
         self_test()
+        etl = load_etl(Path(args.etl_script).expanduser().resolve())
+        print(
+            f"ETL_LOAD=PASS version={etl.ETL_VERSION} "
+            f"expected_columns={len(etl.EXPECTED_COLUMNS)} "
+            f"write_columns={len(etl.WRITE_COLUMNS)} "
+            f"area_columns={len(etl.AREA_COLUMNS)} "
+            f"json_columns={len(etl.JSON_COLUMNS)}"
+        )
         return 0
 
     client = None
