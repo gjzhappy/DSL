@@ -37,14 +37,16 @@ CONFIGS = {
         "filter_fields": ["manufacturer", "platform", "power_domain", "pin_net_name", "inductor"],
         "prompt_terms": ["电源域", "Pin/Net", "近端电容", "远端电容", "far_total_capacitance"],
         "forbidden_terms": ["PHONE_MODULE_JF_CHATFLOW", "摄像模组", "HDR模式", "这些手机", "这些机型"]
-    }
-,
+    },
     "INTEGRATION_COMPETITION": {
         "stem": "INTEGRATION_COMPETITION_CHATFLOW",
         "directory": "INTEGRATION_COMPETITION_CHATFLOW",
         "app_name": "INTEGRATION_COMPETITION_CHATFLOW",
         "prefix": "integration_competition_",
         "registry_env": "INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON",
+        "field_chunk_envs": ["INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_00_JSON", "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_01_JSON", "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_02_JSON"],
+        "area_field_count": 267,
+        "json_fields": ["device_design_attributes", "raw_value_annotations", "additional_metrics", "module_chip_models", "unmapped_integration_values"],
         "system_env": "INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT",
         "user_env": "INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT",
         "table": "sn_cis_integration_competition_wide",
@@ -340,14 +342,18 @@ CONFIGS = {
         ],
         "prompt_terms": [
             "整机集成度",
-            "小系统",
+            "逗号分隔",
             "无线",
-            "面积"
+            "RF",
+            "NC",
+            "NULL"
         ],
         "forbidden_terms": [
-            "JF_CAPACITOR_QUERY_REGISTRY_JSON",
-            "PHONE_MODULE_JF_CHATFLOW",
-            "摄像模组"
+            "JF_CAPACITOR",
+            "jf_capacitor_",
+            "JF电容对比",
+            "电容对比",
+            "PHONE_MODULE_JF_CHATFLOW"
         ]
     },
 }
@@ -423,6 +429,7 @@ def validate_doc(key: str, doc: dict) -> dict:
         "ENABLE_FULL_LLM", "SN_FULL_LLM_CHAT_URLS", "SN_MYSQL_QUERY_URLS",
         "LOCAL_CONTEXT_TOKENS", "LOCAL_MAX_PREDICT_TOKENS", "PROMPT_TOKEN_SAFETY_MARGIN"
     ]
+    required_envs.extend(cfg.get("field_chunk_envs") or [])
     for name in required_envs:
         if name not in env_defs or not str(env_defs[name].get("value") or "").strip():
             fail(key + ": required environment variable missing or empty: " + name)
@@ -431,11 +438,93 @@ def validate_doc(key: str, doc: dict) -> dict:
         registry = json.loads(env_defs[cfg["registry_env"]]["value"])
     except Exception as exc:
         fail(key + ": Registry JSON invalid: " + str(exc))
+    if key == "INTEGRATION_COMPETITION":
+        base_fields = registry.get("fields")
+        if not isinstance(base_fields, dict) or base_fields:
+            fail(key + ": Registry base fields must be an empty object")
+        for chunk_name in cfg["field_chunk_envs"]:
+            try:
+                chunk = json.loads(env_defs[chunk_name]["value"])
+            except Exception as exc:
+                fail(key + ": Registry field chunk invalid: " + chunk_name + " " + str(exc))
+            if not isinstance(chunk, list):
+                fail(key + ": Registry field chunk must be an array: " + chunk_name)
+            for item in chunk:
+                if not isinstance(item, list) or len(item) != 4:
+                    fail(key + ": Registry field row invalid: " + chunk_name)
+                name, label, description, aliases = item
+                if not isinstance(name, str) or not name or name in registry["fields"]:
+                    fail(key + ": duplicate or invalid Registry field: " + repr(name))
+                if not isinstance(label, str) or not label.strip() or not isinstance(description, str) or not description.strip():
+                    fail(key + ": Registry field metadata missing: " + name)
+                if not isinstance(aliases, list):
+                    fail(key + ": Registry field aliases invalid: " + name)
+                if any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+                    fail(key + ": Registry field alias invalid: " + name)
+                registry["fields"][name] = {
+                    "label": label,
+                    "description": description,
+                    "aliases": aliases or [label],
+                }
+        query_aliases = {
+            "integration_total_area_mm2": ["整机总面积", "整机集成度总面积"],
+            "small_system_total_area_mm2": ["小系统总面积"],
+            "peripheral_total_area_mm2": ["外设总面积"],
+            "wireless_total_area_mm2": ["无线总面积"],
+            "wireless_rf_total_area_mm2": ["无线RF总面积", "RF总面积"],
+            "wireless_nc_total_area_mm2": ["无线NC总面积", "NC总面积"],
+            "wireless_antenna_total_area_mm2": ["天线总面积"],
+            "camera_total_area_mm2": ["摄像头总面积"],
+            "fpc_total_area_mm2": ["FPC总面积"],
+            "pmu_total_area_mm2": ["PMU总面积"],
+            "scharger_total_area_mm2": ["Scharger总面积"],
+            "display_total_area_mm2": ["显示总面积"],
+            "audio_total_area_mm2": ["音频总面积"],
+            "storage_total_area_mm2": ["存储总面积"],
+            "test_point_total_area_mm2": ["测试点总面积"],
+            "sensor_lowercase_group_total_area_mm2": ["小写sensor总面积"],
+            "sensor_uppercase_group_total_area_mm2": ["大写SENSOR总面积"],
+            "temperature_detection_total_area_mm2": ["温度检测原始分组总面积"],
+        }
+        for name, aliases in query_aliases.items():
+            if name in registry["fields"]:
+                field = registry["fields"][name]
+                field["aliases"] = list(dict.fromkeys((field.get("aliases") or []) + aliases))
+        for composite in (registry.get("composite_fields") or {}).values():
+            exact = composite.pop("_expand_exact", []) or []
+            prefixes = composite.pop("_expand_prefixes", []) or []
+            contains = composite.pop("_expand_contains", []) or []
+            if set(exact) - set(registry["fields"]):
+                fail(key + ": composite references unknown exact fields")
+            selected = [
+                name for name in registry["fields"]
+                if name in exact
+                or any(name.startswith(prefix) for prefix in prefixes)
+                or any(token.casefold() in name.casefold() for token in contains)
+            ]
+            if not selected:
+                fail(key + ": composite expansion is empty")
+            composite["expand_to"] = selected
+
     if registry.get("table") != cfg["table"]:
         fail(key + ": Registry table mismatch")
     fields = registry.get("fields") or {}
     if set(fields) != set(cfg["fields"]):
         fail(key + ": Registry field set mismatch: " + repr(sorted(set(cfg["fields"]) ^ set(fields))))
+    if key == "INTEGRATION_COMPETITION":
+        if sum(1 for name in fields if name.endswith("_area_mm2")) != cfg["area_field_count"]:
+            fail(key + ": Registry area field count mismatch")
+        if not set(cfg["json_fields"]) <= set(fields):
+            fail(key + ": Registry JSON field inventory mismatch")
+        for name, field in fields.items():
+            if not str(field.get("label") or "").strip() or not str(field.get("description") or "").strip():
+                fail(key + ": Registry field metadata missing: " + name)
+            if not isinstance(field.get("aliases"), list) or not field.get("aliases"):
+                fail(key + ": Registry field aliases missing: " + name)
+            if name.endswith("_area_mm2"):
+                description = str(field.get("description") or "")
+                if "业务定义" not in description or "数据层级" not in description:
+                    fail(key + ": DDL area semantics missing: " + name)
     roles = registry.get("query_roles") or {}
     if roles.get("sql_select_fields") != "all_fields":
         fail(key + ": sql_select_fields must be all_fields")
@@ -666,6 +755,48 @@ def validate_doc(key: str, doc: dict) -> dict:
     actual_edges = {(edge["source"], edge.get("sourceHandle"), edge["target"]) for edge in edges}
     if not required_edges <= actual_edges:
         fail(key + ": query-memory graph wiring mismatch")
+    if key == "INTEGRATION_COMPETITION":
+        if set((registry.get("value_aliases") or {}).keys()) != set(cfg["filter_fields"]):
+            fail(key + ": dynamic value_aliases must cover all four identity fields")
+        if any((registry.get("value_aliases") or {}).get(field) for field in cfg["filter_fields"]):
+            fail(key + ": static canonical identity values are forbidden")
+        if set((registry.get("match_policies") or {}).keys()) != {"device_model"}:
+            fail(key + ": only device_model fuzzy matching is allowed")
+        system_prompt = env_defs[cfg["system_env"]]["value"]
+        user_prompt = env_defs[cfg["user_env"]]["value"]
+        for term in ("42.77,16.59", "不强制等于RF+NC", "NULL", "GG", "SUM"):
+            if term not in system_prompt + user_prompt:
+                fail(key + ": area semantic prompt rule missing: " + term)
+        if "不是无线下第三个可加总业务域" not in fields["wireless_antenna_total_area_mm2"]["description"]:
+            fail(key + ": antenna cross-domain rule missing")
+        catalog_nodes = (
+            "integration_competition_identity_catalog_prepare",
+            "http_identity_catalog",
+            "integration_competition_identity_catalog_merge",
+        )
+        if any(node_id not in by_id for node_id in catalog_nodes):
+            fail(key + ": dynamic identity catalog nodes missing")
+        prepare_code = by_id[catalog_nodes[0]]["data"].get("code") or ""
+        merge_code = by_id[catalog_nodes[2]]["data"].get("code") or ""
+        if "SELECT DISTINCT" not in prepare_code or cfg["table"] not in prepare_code:
+            fail(key + ": identity catalog must query live DISTINCT values")
+        if any(word in prepare_code.upper() for word in ("UPDATE ", "DELETE ", "INSERT ", "DROP ", "TRUNCATE ")):
+            fail(key + ": identity catalog query must be read-only")
+        if "normalization_collision_count" not in merge_code or "approved_aliases" not in merge_code:
+            fail(key + ": dynamic alias normalization/collision guard missing")
+        if by_id[catalog_nodes[1]]["data"].get("url") != by_id["http_mysql_query"]["data"].get("url"):
+            fail(key + ": identity catalog must reuse the configured MySQL endpoint")
+        catalog_edges = {
+            ("integration_competition_registry_load", "source", "integration_competition_identity_catalog_prepare"),
+            ("integration_competition_identity_catalog_prepare", "source", "http_identity_catalog"),
+            ("http_identity_catalog", "source", "integration_competition_identity_catalog_merge"),
+            ("integration_competition_identity_catalog_merge", "source", "integration_competition_registry_parse"),
+        }
+        if not catalog_edges <= actual_edges:
+            fail(key + ": dynamic identity catalog graph wiring mismatch")
+        load_code = by_id["integration_competition_registry_load"]["data"].get("code") or ""
+        if "REGISTRY_FIELD_INVENTORY_MISMATCH" not in load_code or "282" not in load_code or "267" not in load_code:
+            fail(key + ": runtime Registry schema gate missing")
 
     return {
         "nodes": len(nodes),
