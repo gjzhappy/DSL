@@ -23,7 +23,6 @@ Design:
 from __future__ import annotations
 
 import argparse
-import csv
 import getpass
 import hashlib
 import json
@@ -1562,21 +1561,24 @@ def measure_value_lengths(rows):
     return result
 
 
-def write_value_length_report(output_path, columns, rows):
-    output_path = Path(output_path).expanduser().resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    fields = [
-        "field", "category", "row_count", "non_null_count", "null_count",
-        "max_char_length", "p95_char_length", "p99_char_length",
-        "max_utf8_bytes", "recommended_mysql_type", "declared_row_bytes",
-    ]
-    temporary = output_path.with_suffix(output_path.suffix + ".tmp")
-    with temporary.open("w", newline="", encoding="utf-8-sig") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(columns)
-    os.replace(temporary, output_path)
+def print_value_length_report(columns, rows):
+    # Print only field names and length statistics; never print source values
+    # or device identities. PowerShell transcript captures the same output.
+    log(
+        "VALUE_LENGTH_HEADER field category rows non_null null "
+        "max_chars p95_chars p99_chars max_utf8_bytes recommended_mysql_type"
+    )
+    for item in columns:
+        log(
+            "VALUE_LENGTH "
+            f"field={item['field']} category={item['category']} "
+            f"rows={item['row_count']} non_null={item['non_null_count']} "
+            f"null={item['null_count']} max_chars={item['max_char_length']} "
+            f"p95_chars={item['p95_char_length']} "
+            f"p99_chars={item['p99_char_length']} "
+            f"max_utf8_bytes={item['max_utf8_bytes']} "
+            f"mysql_type={item['recommended_mysql_type']}"
+        )
 
     # The three ETL-managed columns are not supplied by WRITE_COLUMNS.
     declared_bytes = sum(item["declared_row_bytes"] for item in columns)
@@ -1600,7 +1602,6 @@ def write_value_length_report(output_path, columns, rows):
         "char": sum(item["recommended_mysql_type"].startswith("CHAR") for item in columns),
     }
     return {
-        "output_path": output_path,
         "field_count": len(columns),
         "row_count": len(rows),
         "area_columns": len(AREA_COLUMNS),
@@ -1908,11 +1909,6 @@ def main(argv=None):
         action="store_true",
         help="只读MongoDB，按ETL转换结果统计WRITE_COLUMNS字段长度；绝不连接MySQL",
     )
-    parser.add_argument(
-        "--audit-output",
-        default="cis_column_length_audit.csv",
-        help="字段长度CSV报告路径",
-    )
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -1999,7 +1995,7 @@ def main(argv=None):
 
         if args.audit_value_lengths:
             audit_columns = measure_value_lengths(rows)
-            audit = write_value_length_report(args.audit_output, audit_columns, rows)
+            audit = print_value_length_report(audit_columns, rows)
             log(
                 f"AUDIT_VALUE_LENGTHS=PASS rows={audit['row_count']} "
                 f"fields={audit['field_count']} area_columns={audit['area_columns']} "
@@ -2014,7 +2010,7 @@ def main(argv=None):
                 f"STATUS={audit['row_status']}"
             )
             log(
-                f"AUDIT_CSV={audit['output_path'].name} "
+                "AUDIT_OUTPUT=CONSOLE "
                 "MONGODB_WRITE=NONE MYSQL_CONNECT=NO MYSQL_WRITE=NONE "
                 "SENSITIVE_VALUES=REDACTED"
             )
