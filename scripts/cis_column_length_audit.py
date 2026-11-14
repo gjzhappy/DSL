@@ -153,24 +153,27 @@ def classify_column(field: str, etl) -> str:
 
 
 def _varchar_recommendation(max_chars: int, *, minimum: int, charset: str,
-                            max_varchar: int = 512, absolute_margin: int = 8) -> dict[str, Any]:
+                            max_varchar: int = 512, absolute_margin: int = 8,
+                            collation: str | None = None) -> dict[str, Any]:
     length = choose_varchar_length(max_chars, minimum=minimum, absolute_margin=absolute_margin)
+    effective_collation = collation or ("ascii_bin" if charset == "ascii" else None)
+    suffix = f" COLLATE {effective_collation}" if effective_collation else ""
     if length is None or length > max_varchar:
         return {
-            "recommended_type": f"TEXT CHARACTER SET {charset}",
+            "recommended_type": f"TEXT CHARACTER SET {charset}{suffix}",
             "charset": charset,
             "confidence": "OBSERVED_MAX_PLUS_HEADROOM_TEXT",
             "declared_max_bytes": TEXT_POINTER_BYTES,
+            "length_prefix_bytes": 0,
         }
     bytes_per_char = 1 if charset == "ascii" else 4
     prefix = 1 if length * bytes_per_char <= 255 else 2
-    collation = "ascii_bin" if charset == "ascii" else None
-    suffix = f" COLLATE {collation}" if collation else ""
     return {
         "recommended_type": f"VARCHAR({length}) CHARACTER SET {charset}{suffix}",
         "charset": charset,
         "confidence": "OBSERVED_MAX_PLUS_HEADROOM",
         "declared_max_bytes": length * bytes_per_char + prefix,
+        "length_prefix_bytes": prefix,
     }
 
 
@@ -197,12 +200,14 @@ def recommend_column(field: str, stat: dict, etl) -> dict[str, Any]:
     if role == "AREA_VALUE":
         # ETL v1.0.2 normalizes numeric area observations to ASCII digits,
         # decimal point, sign and comma; source annotations are stored elsewhere.
-        return _varchar_recommendation(max_chars, minimum=12, charset="ascii", max_varchar=512, absolute_margin=4)
+        return _varchar_recommendation(max_chars, minimum=12, charset="ascii", max_varchar=512,
+                                       absolute_margin=4, collation="ascii_bin")
     if role == "DEVICE_IDENTITY":
         baseline = IDENTITY_BASELINES[field]
         recommendation = _varchar_recommendation(
             max(max_chars, baseline - max(8, math.ceil(baseline * 0.5))),
             minimum=baseline, charset="utf8mb4", max_varchar=512,
+            collation="utf8mb4_0900_bin",
         )
         recommendation["confidence"] = "EXISTING_DDL_BASELINE_AND_OBSERVED"
         return recommendation
@@ -289,7 +294,7 @@ def estimate_row_width(column_stats: list[dict], rows: list[dict], etl) -> dict:
             if rec_type.startswith(("TEXT", "JSON")):
                 size += raw_size if raw_size <= TEXT_INLINE_THRESHOLD_BYTES else TEXT_POINTER_BYTES
             elif rec_type.startswith("VARCHAR"):
-                size += raw_size + (1 if raw_size <= 255 else 2)
+                size += raw_size + recommendation_by_field[field].get("length_prefix_bytes", 2)
             elif rec_type.startswith("CHAR"):
                 size += recommendation_by_field[field]["declared_max_bytes"]
             elif rec_type.startswith("DATETIME"):
@@ -332,7 +337,7 @@ def write_reports(output_dir: Path, column_stats: list[dict], summary: dict, etl
         "max_char_length", "p95_char_length", "p99_char_length",
         "max_utf8_bytes", "p95_utf8_bytes", "p99_utf8_bytes",
         "multivalue_count", "max_observations", "recommended_type",
-        "charset", "confidence", "declared_max_bytes",
+        "charset", "confidence", "declared_max_bytes", "length_prefix_bytes",
     ]
     csv_tmp = csv_path.with_suffix(".csv.tmp")
     with csv_tmp.open("w", newline="", encoding="utf-8-sig") as handle:
