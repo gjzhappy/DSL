@@ -111,20 +111,14 @@ def init_logging():
     logger.setLevel(logging.INFO)
     logger.propagate = False
     if not logger.handlers:
-        try:
-            log_path = Path(__file__).resolve().with_name(
-                f"{Path(__file__).stem}.log"
-            )
-        except Exception:
-            log_path = Path.cwd() / f"{Path(__file__).stem}.log"
         formatter = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        fh = logging.FileHandler(log_path, encoding="utf-8")
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
-        sh = logging.StreamHandler()
+        # This audit is console-only. PowerShell Start-Transcript owns the
+        # single log file; opening a second FileHandler on that path fails on
+        # Windows and duplicates every message.
+        sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(formatter)
         logger.addHandler(sh)
     return logger
@@ -1618,6 +1612,15 @@ def print_value_length_report(columns, rows):
 
 
 def run_self_test():
+    assert any(
+        isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+        for handler in LOG.handlers
+    ), "console logging handler missing"
+    assert not any(
+        isinstance(handler, logging.FileHandler) for handler in LOG.handlers
+    ), "audit mode must not open a second log file"
+
     sample = {
         "_id": "0123456789abcdef01234567",
         "manufacturer": "Apple",
@@ -1873,7 +1876,8 @@ def run_self_test():
         "annotated_raw_preserved=PASS unknown_nodes_preserved=PASS "
         "design_attribute=PASS chip_models=PASS cross_source_conflict=REJECT "
         "duplicate_identity=REJECT log_redaction=PASS value_length_audit=PASS "
-        "audit_redaction=PASS mongo_write=NONE mysql_write=NONE"
+        "audit_redaction=PASS console_logging=PASS "
+        "no_file_handler=PASS mongo_write=NONE mysql_write=NONE"
     )
 
 
