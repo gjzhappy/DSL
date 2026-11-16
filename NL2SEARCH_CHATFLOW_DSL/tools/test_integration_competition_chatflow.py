@@ -162,6 +162,8 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
         enriched = json.loads(result["integration_competition_registry_enriched_json"])
         self.assertEqual(enriched["value_aliases"]["device_model"], {})
         self.assertGreater(int(result["integration_competition_identity_catalog_warning_count"]), 0)
+        self.assertNotIn("Apple", enriched["value_aliases"]["manufacturer"])
+        self.assertNotIn("A19", enriched["value_aliases"]["platform"])
 
     def test_06_catalog_failure_fails_closed(self):
         result = run_code_node(
