@@ -52,8 +52,9 @@ try {
     Push-Location $src
     try {
         Write-Host '========== 3. RUN 14 TESTS =========='
-        & python 'NL2SEARCH_CHATFLOW_DSL\tools\test_integration_competition_chatflow.py' > (Join-Path $run 'test.stdout.log') 2> (Join-Path $run 'test.stderr.log')
-        $testExit = $LASTEXITCODE
+        $py = (Get-Command python.exe -ErrorAction Stop).Source
+        $process = Start-Process -FilePath $py -ArgumentList 'NL2SEARCH_CHATFLOW_DSL\tools\test_integration_competition_chatflow.py' -WorkingDirectory $src -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'test.stdout.log') -RedirectStandardError (Join-Path $run 'test.stderr.log')
+        $testExit = $process.ExitCode
         $testLog = (Get-Content -LiteralPath (Join-Path $run 'test.stdout.log') -Raw) + (Get-Content -LiteralPath (Join-Path $run 'test.stderr.log') -Raw)
         Write-Host "TEST_EXIT=$testExit"
         Get-Content -LiteralPath (Join-Path $run 'test.stderr.log') -Tail 18
@@ -63,16 +64,16 @@ try {
         Write-Host 'REGRESSION_TEST=PASS'
 
         Write-Host '========== 4. MERGE AND SCHEMA =========='
-        & python 'NL2SEARCH_CHATFLOW_DSL\tools\merge_business_chatflow.py' INTEGRATION_COMPETITION --write > (Join-Path $run 'merge.stdout.log') 2> (Join-Path $run 'merge.stderr.log')
-        $mergeExit = $LASTEXITCODE
+        $process = Start-Process -FilePath $py -ArgumentList @('NL2SEARCH_CHATFLOW_DSL\tools\merge_business_chatflow.py','INTEGRATION_COMPETITION','--write') -WorkingDirectory $src -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'merge.stdout.log') -RedirectStandardError (Join-Path $run 'merge.stderr.log')
+        $mergeExit = $process.ExitCode
         Write-Host "MERGE_EXIT=$mergeExit"
         if($mergeExit -ne 0){
             Get-Content -LiteralPath (Join-Path $run 'merge.stderr.log') -Tail 18
             throw 'MERGE_FAILED'
         }
         $rel = 'NL2SEARCH_CHATFLOW_DSL\INTEGRATION_COMPETITION_CHATFLOW\INTEGRATION_COMPETITION_CHATFLOW.yml'
-        & python 'scripts\dify_dsl_schema_check.py' $rel > (Join-Path $run 'schema.stdout.log') 2> (Join-Path $run 'schema.stderr.log')
-        $schemaExit = $LASTEXITCODE
+        $process = Start-Process -FilePath $py -ArgumentList @('scripts\dify_dsl_schema_check.py',$rel) -WorkingDirectory $src -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'schema.stdout.log') -RedirectStandardError (Join-Path $run 'schema.stderr.log')
+        $schemaExit = $process.ExitCode
         Write-Host "SCHEMA_EXIT=$schemaExit"
         if($schemaExit -ne 0){
             Get-Content -LiteralPath (Join-Path $run 'schema.stderr.log') -Tail 18
