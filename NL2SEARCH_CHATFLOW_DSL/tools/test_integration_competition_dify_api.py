@@ -48,6 +48,8 @@ def diagnostic(error: object) -> dict:
         return {"category": "UNSPECIFIED", "fingerprint": ""}
     raw = str(error)
     normalized = raw.lower()
+    if any(x in normalized for x in ("length of output variable", "output variable length", "code_max_string_length", "must be less than 80000", "string length exceeds", "output is too long")):
+        return {"category": "CODE_OUTPUT_LENGTH_LIMIT", "fingerprint": digest(raw)}
     for category, pattern in (
         ("AUTH", r"\b(401|403|unauthorized|forbidden|invalid.api.key)\b"),
         ("HTTP_5XX", r"\b(500|502|503|504|bad gateway|service unavailable)\b"),
@@ -183,9 +185,14 @@ def run():
     parser.add_argument("--execute", action="store_true", help="Allow test chat messages; does not import/publish/alter applications.")
     parser.add_argument("--diagnose-first", action="store_true", help="Send just the overview query and report redacted failure evidence.")
     parser.add_argument("--model-a", default="", help="Existing database device model for the smoke test, avoids repeat input.")
+    parser.add_argument("--inspect-run-id", default="", help="Read one existing Dify workflow run without sending a chat message.")
     opts = parser.parse_args()
     if opts.diagnose_first and not opts.execute:
         raise SystemExit("DIAGNOSE_FIRST_REQUIRES_EXECUTE")
+    if opts.inspect_run_id and (opts.execute or opts.diagnose_first):
+        raise SystemExit("RUN_INSPECTION_MUST_BE_READ_ONLY")
+    if opts.inspect_run_id and not re.fullmatch(r"[0-9a-fA-F-]{36}", opts.inspect_run_id):
+        raise SystemExit("WORKFLOW_RUN_ID_INVALID")
     url = opts.base_url.rstrip("/")
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.path.rstrip("/") != "/v1":
@@ -207,7 +214,7 @@ def run():
     opener = build_opener(ProxyHandler({}), NoRedirect)
     print("DIFY_HOST=" + str(parsed.hostname))
     print("APP_EXPECTED=" + EXPECTED_APP)
-    print("MODE=" + ("CHAT_MESSAGES_EXPLICIT" if opts.execute else "READ_ONLY_INFO"))
+    print("MODE=" + ("READ_ONLY_WORKFLOW_RUN" if opts.inspect_run_id else "CHAT_MESSAGES_EXPLICIT" if opts.execute else "READ_ONLY_INFO"))
     if parsed.scheme == "http":
         print("TRANSPORT_WARNING=HTTP_UNENCRYPTED_INTERNAL_ONLY")
     api_key = getpass.getpass("Dify 集成度应用 API Key（隐藏输入，不写日志）: ").strip()
@@ -233,6 +240,29 @@ def run():
             return 2, report, logpath
         report["app_verified"] = True
         print("APP_IDENTITY=PASS")
+        if opts.inspect_run_id:
+            run_info = request_json(opener, url + "/workflows/run/" + opts.inspect_run_id, api_key, "GET")
+            if not run_info.get("ok") or not isinstance(run_info.get("body"), dict):
+                report["outcome"] = "READ_ONLY_RUN_LOOKUP_FAILED"
+                report["http_status"] = run_info.get("http_status", 0)
+                print("WORKFLOW_RUN_LOOKUP=FAIL HTTP=" + str(report["http_status"]))
+                return 2, report, logpath
+            body = run_info["body"]
+            error = diagnostic(body.get("error"))
+            report["outcome"] = "READ_ONLY_RUN_LOOKUP_PASS"
+            report["run"] = {
+                "workflow_run_id": opts.inspect_run_id,
+                "status": str(body.get("status") or "")[:24],
+                "error_category": error["category"],
+                "error_fingerprint": error["fingerprint"],
+                "error_present": bool(body.get("error")),
+            }
+            print("WORKFLOW_RUN_LOOKUP=PASS")
+            print("RUN_STATUS=" + report["run"]["status"])
+            print("RUN_ERROR_CATEGORY=" + error["category"])
+            print("RUN_ERROR_FINGERPRINT=" + error["fingerprint"])
+            print("RUN_ERROR_PRESENT=" + str(report["run"]["error_present"]))
+            return 0, report, logpath
         if not opts.execute:
             report["outcome"] = "READ_ONLY_PREFLIGHT_PASS"
             print("DIFY_READONLY_PREFLIGHT=PASS")
