@@ -71,11 +71,21 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
             "integration_competition_registry_parse",
             integration_competition_registry_raw_json=json.dumps(enriched, ensure_ascii=False),
             integration_competition_registry_load_status="ok",
+            context_json=json.dumps({"question": ""}, ensure_ascii=False),
         )
         self.assertEqual(parsed["integration_competition_registry_parse_status"], "ok")
         return enriched, parsed
 
     def plan(self, question: str, parsed: dict, memory: str = "{}") -> dict:
+        # Production Registry parser receives the current question from ctx.
+        # Rebuild a question-specific alias view for each regression query.
+        parsed = run_code_node(
+            self.doc, "integration_competition_registry_parse",
+            integration_competition_registry_raw_json=parsed["integration_competition_registry_json"],
+            integration_competition_registry_load_status="ok",
+            context_json=json.dumps({"question": question}, ensure_ascii=False),
+        )
+        self.assertEqual(parsed["integration_competition_registry_parse_status"], "ok")
         result = run_code_node(
             self.doc,
             "integration_competition_sql_plan",
@@ -305,6 +315,26 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
         )
         self.assertEqual(len(enriched["fields"]), 282)
         self.assertEqual(len(enriched["composite_fields"]), 28)
+        for question, expected_kind, expected_key in (
+            ("查询iPhone17 Pro Max的小系统面积构成", "composite_alias_to_name", "小系统"),
+            ("查询iPhone17 Pro Max的无线总面积", "field_alias_to_field", "无线总面积"),
+        ):
+            scoped = run_code_node(
+                self.doc, "integration_competition_registry_parse",
+                integration_competition_registry_raw_json=parsed["integration_competition_registry_json"],
+                integration_competition_registry_load_status="ok",
+                context_json=json.dumps({"question": question}, ensure_ascii=False),
+            )
+            self.assertEqual(scoped["integration_competition_registry_parse_status"], "ok")
+            packed = scoped["integration_competition_alias_index_json"]
+            self.assertLessEqual(len(packed), 78000)
+            alias_map = json.loads(packed)[expected_kind]
+            self.assertIn(expected_key, alias_map)
+            self.assertLess(len(alias_map), 40)
+        # Identity values must remain available for fuzzy matching, even
+        # when the current question does not literally contain their alias.
+        aliases = json.loads(parsed["integration_competition_alias_index_json"])
+        self.assertIn("iphone17promax", aliases["value_alias_to_filter"]["device_model"])
 
 
 
