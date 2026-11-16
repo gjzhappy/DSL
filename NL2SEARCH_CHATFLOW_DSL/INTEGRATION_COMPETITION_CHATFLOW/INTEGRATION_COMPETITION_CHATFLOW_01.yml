@@ -140,6 +140,9 @@
               "integration_competition_identity_catalog_request_body_json": {
                 "type": "string"
               },
+              "catalog_body_json": {
+                "type": "string"
+              },
               "integration_competition_identity_catalog_request_status": {
                 "type": "string"
               },
@@ -147,7 +150,7 @@
                 "type": "string"
               }
             },
-            "source_code": "def main(context_json=''):\n    import json\n    try:\n        context=json.loads(context_json or '{}')\n        if not isinstance(context,dict):context={}\n    except Exception:context={}\n    sql=(\"SELECT DISTINCT manufacturer, platform, device_type, device_model FROM sn_cis_integration_competition_wide WHERE manufacturer IS NOT NULL AND platform IS NOT NULL AND device_type IS NOT NULL AND device_model IS NOT NULL ORDER BY manufacturer, platform, device_type, device_model\")\n    return {'integration_competition_identity_catalog_request_body_json':json.dumps({'sql':sql,'params':[],'user':str(context.get('user') or '').strip()},ensure_ascii=False,separators=(',',':')),'integration_competition_identity_catalog_request_status':'ok','integration_competition_identity_catalog_request_error':''}\n",
+            "source_code": "def main(context_json=''):\n    import json\n    try:\n        context=json.loads(context_json or '{}')\n        if not isinstance(context,dict):context={}\n    except Exception:context={}\n    sql=(\"SELECT DISTINCT manufacturer, platform, device_type, device_model FROM sn_cis_integration_competition_wide WHERE manufacturer IS NOT NULL AND platform IS NOT NULL AND device_type IS NOT NULL AND device_model IS NOT NULL ORDER BY manufacturer, platform, device_type, device_model\")\n    body_json=json.dumps({'sql':sql,'params':[],'user':str(context.get('user') or '').strip()},ensure_ascii=False,separators=(',',':'))\n    return {'catalog_body_json':body_json,'integration_competition_identity_catalog_request_body_json':body_json,'integration_competition_identity_catalog_request_status':'ok','integration_competition_identity_catalog_request_error':''}\n",
             "variables": [
               {
                 "variable": "context_json",
@@ -158,7 +161,7 @@
               }
             ],
             "code_language": "python3",
-            "code": "def main(context_json=''):\n    import json\n    try:\n        context=json.loads(context_json or '{}')\n        if not isinstance(context,dict):context={}\n    except Exception:context={}\n    sql=(\"SELECT DISTINCT manufacturer, platform, device_type, device_model FROM sn_cis_integration_competition_wide WHERE manufacturer IS NOT NULL AND platform IS NOT NULL AND device_type IS NOT NULL AND device_model IS NOT NULL ORDER BY manufacturer, platform, device_type, device_model\")\n    return {'integration_competition_identity_catalog_request_body_json':json.dumps({'sql':sql,'params':[],'user':str(context.get('user') or '').strip()},ensure_ascii=False,separators=(',',':')),'integration_competition_identity_catalog_request_status':'ok','integration_competition_identity_catalog_request_error':''}\n"
+            "code": "def main(context_json=''):\n    import json\n    try:\n        context=json.loads(context_json or '{}')\n        if not isinstance(context,dict):context={}\n    except Exception:context={}\n    sql=(\"SELECT DISTINCT manufacturer, platform, device_type, device_model FROM sn_cis_integration_competition_wide WHERE manufacturer IS NOT NULL AND platform IS NOT NULL AND device_type IS NOT NULL AND device_model IS NOT NULL ORDER BY manufacturer, platform, device_type, device_model\")\n    body_json=json.dumps({'sql':sql,'params':[],'user':str(context.get('user') or '').strip()},ensure_ascii=False,separators=(',',':'))\n    return {'catalog_body_json':body_json,'integration_competition_identity_catalog_request_body_json':body_json,'integration_competition_identity_catalog_request_status':'ok','integration_competition_identity_catalog_request_error':''}\n"
           },
           "position": {
             "x": 1080,
@@ -181,7 +184,7 @@
             "url": "{{#env.SN_MYSQL_QUERY_URLS#}}",
             "body": {
               "type": "raw-text",
-              "data": "{{#integration_competition_identity_catalog_prepare.integration_competition_identity_catalog_request_body_json#}}"
+              "data": "{{#integration_competition_identity_catalog_prepare.catalog_body_json#}}"
             },
             "headers": "Content-Type: application/json\nAccept: application/json",
             "params": "",
