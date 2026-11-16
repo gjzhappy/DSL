@@ -141,6 +141,7 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
             context_json=json.dumps({"user": "regression-test"}),
         )
         request = json.loads(result["integration_competition_identity_catalog_request_body_json"])
+        self.assertEqual(result["catalog_body_json"], result["integration_competition_identity_catalog_request_body_json"])
         sql = request["sql"]
         self.assertIn("SELECT DISTINCT", sql)
         self.assertIn("sn_cis_integration_competition_wide", sql)
@@ -151,13 +152,17 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
         # Production regression: Dify JSON body mode sends an array to the
         # Spring Boot DTO endpoint. The already encoded object must go raw.
         for node_id, variable_ref in (
-            ("http_identity_catalog", "{{#integration_competition_identity_catalog_prepare.integration_competition_identity_catalog_request_body_json#}}"),
+            ("http_identity_catalog", "{{#integration_competition_identity_catalog_prepare.catalog_body_json#}}"),
             ("http_mysql_query", "{{#mysql_request.mysql_request_body_json#}}"),
         ):
             node = next(n for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == node_id)
             self.assertEqual(node["data"]["method"], "POST")
             self.assertEqual(node["data"]["body"], {"type": "raw-text", "data": variable_ref})
             self.assertIn("Content-Type: application/json", node["data"]["headers"])
+            # Dify 1.13.2 VariablePool regex: node <= 50; each field <= 30.
+            import re
+            m = re.fullmatch(r"\{\{#([a-zA-Z0-9_]{1,50})(?:\.([a-zA-Z_][a-zA-Z0-9_]{0,29}))#\}\}", variable_ref)
+            self.assertIsNotNone(m, "Dify HTTP template selector is not substitutable")
 
     def test_04_runtime_aliases_are_database_derived(self):
         enriched, _ = self.build_runtime_registry()
