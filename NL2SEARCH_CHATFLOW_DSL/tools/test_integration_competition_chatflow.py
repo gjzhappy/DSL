@@ -246,8 +246,10 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
                 integration_competition_previous_query_result_json=json.dumps(previous, ensure_ascii=False),
                 local_context_tokens="32768", local_max_predict_tokens="4096", prompt_token_safety_margin="1024",
             )
-            package = json.loads(result["llm_handler_input_json"])
-            self.assertEqual(len(package["previous_query_result"]["rows"]), expected_count)
+            self.assertEqual(json.loads(result["llm_handler_input_json"])["status"], "ok")
+            self.assertIn("【输入数据包】\\n", result["llm_user_prompt"])
+            data_packet = json.loads(result["llm_user_prompt"].split("【输入数据包】\\n", 1)[1])
+            self.assertEqual(len(data_packet["previous_query_result"]["rows"]), expected_count)
 
     def test_13_oversized_prompt_guard_does_not_forward_large_prompt(self):
         _, parsed = self.build_runtime_registry()
