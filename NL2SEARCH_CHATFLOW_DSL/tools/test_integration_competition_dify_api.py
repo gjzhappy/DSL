@@ -182,6 +182,7 @@ def run():
     parser.add_argument("--allow-http", action="store_true", help="Explicitly accept an unencrypted internal HTTP connection.")
     parser.add_argument("--execute", action="store_true", help="Allow test chat messages; does not import/publish/alter applications.")
     parser.add_argument("--diagnose-first", action="store_true", help="Send just the overview query and report redacted failure evidence.")
+    parser.add_argument("--model-a", default="", help="Existing database device model for the smoke test, avoids repeat input.")
     opts = parser.parse_args()
     if opts.diagnose_first and not opts.execute:
         raise SystemExit("DIAGNOSE_FIRST_REQUIRES_EXECUTE")
@@ -236,7 +237,7 @@ def run():
             report["outcome"] = "READ_ONLY_PREFLIGHT_PASS"
             print("DIFY_READONLY_PREFLIGHT=PASS")
             return 0, report, logpath
-        model_a = input("输入 MySQL 中真实存在的设备型号 A（不记录）: ").strip()
+        model_a = opts.model_a.strip() or input("输入 MySQL 中真实存在的设备型号 A（不记录）: ").strip()
         model_b = "" if opts.diagnose_first else input("第二个真实型号 B（可留空）: ").strip()
         if not model_a:
             report["outcome"] = "INPUT_REQUIRED"
