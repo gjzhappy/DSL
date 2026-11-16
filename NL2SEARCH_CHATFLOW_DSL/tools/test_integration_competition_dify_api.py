@@ -84,22 +84,28 @@ def diagnostic(error: object) -> dict:
 
 
 def classify_backend_message(message: str) -> str:
-    """Classify without exposing any SQL, database identifiers or credentials."""
+    """Classify the actual backend message without logging its contents."""
     lower = str(message or "").lower()
+    if re.search(r"not[\s_-]?login|not[\s_-]?logged[\s_-]?in|user[\s_-]?not[\s_-]?login|未登录|请登录|登录失效|尚未登录", lower):
+        return "SERVICE_LOGIN"
+    if re.search(r"token|invalid.api.key|unauthoriz|authentication|鉴权|认证失败", lower):
+        return "TOKEN_OR_SERVICE_AUTH"
+    if re.search(r"access denied for user|mysql.*1045|sqlstate.*28000", lower):
+        return "MYSQL_AUTH"
     if re.search(r"unknown column|1054|字段不存在", lower):
         return "COLUMN_NOT_FOUND"
     if re.search(r"doesn.t exist|unknown table|1146|表不存在", lower):
         return "TABLE_NOT_FOUND"
     if re.search(r"syntax|1064|语法错误", lower):
         return "SQL_SYNTAX"
-    if re.search(r"access denied for user|authentication plugin|mysql.*1045", lower):
-        return "MYSQL_AUTH"
-    if re.search(r"user not login|not logged in|未登录|请先登录", lower):
-        return "SERVICE_LOGIN"
-    if re.search(r"unauthoriz|invalid.token|token expired|authentication failed|认证失败", lower):
-        return "SERVICE_AUTH"
+    if re.search(r"sql.*(empty|blank|must not)|sql不能为空|sql不能為空|sql为空", lower):
+        return "SQL_EMPTY"
+    if re.search(r"placeholder|参数数量|占位符|parameter.*count", lower):
+        return "SQL_PARAMS"
     if re.search(r"permission|forbidden|access denied|权限不足", lower):
         return "PERMISSION"
+    if re.search(r"communications link|connection refused|connection timeout|could not open jdbc|connection is closed", lower):
+        return "MYSQL_CONNECTION"
     if re.search(r"jdbc|database|mysql|connection|sql|数据库", lower):
         return "DATABASE_OTHER"
     return "OTHER" if lower else "EMPTY"
@@ -312,6 +318,9 @@ def run():
         assert classify_backend_message("Unknown column foo") == "COLUMN_NOT_FOUND"
         assert classify_backend_message("User not login") == "SERVICE_LOGIN"
         assert classify_backend_message("Access denied for user x") == "MYSQL_AUTH"
+        assert classify_backend_message("MySQL查询失败: Not login") == "SERVICE_LOGIN"
+        assert classify_backend_message("MySQL查询失败: invalid token") == "TOKEN_OR_SERVICE_AUTH"
+        assert classify_backend_message("MySQL查询失败: Unknown column x") == "COLUMN_NOT_FOUND"
         print("DIAGNOSTIC_SELFTEST=PASS NO_NETWORK=YES")
         return 0, {}, None
     if opts.diagnose_first and not opts.execute:
