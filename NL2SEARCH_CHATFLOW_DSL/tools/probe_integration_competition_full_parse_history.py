@@ -30,7 +30,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def safe_error_code(value):
     value = str(value or "")
-    return value if SAFE_CODE.fullmatch(value) else "REDACTED"
+    return "NONE" if not value else value if SAFE_CODE.fullmatch(value) else "REDACTED"
 
 def category(value):
     text = str(value or "").lower()
@@ -95,12 +95,12 @@ def analyze(items):
         "run_id": RUN,
         "http_full_seen": bool(full_http),
         "http_full_node_status": str(full_http.get("status") or "")[:32],
-        "http_full_status_code": http_outputs.get("status_code") if isinstance(http_outputs.get("status_code"), int) else None,
+        "http_full_status_code": int(str(http_outputs.get("status_code"))) if str(http_outputs.get("status_code", "")).isdigit() else None,
         "java_business_code": business_code if isinstance(business_code, int) and not isinstance(business_code, bool) else None,
         "java_error_code": safe_error_code(body.get("errorCode")),
         "java_message_category": category(body.get("msg")),
         "java_choices_present": isinstance(choices, list) and len(choices) > 0,
-        "java_content_present": bool(choices and isinstance(choices[0], dict) and isinstance(choices[0].get("message"), dict)
+        "java_content_present": bool(isinstance(choices, list) and choices and isinstance(choices[0], dict) and isinstance(choices[0].get("message"), dict)
                                      and isinstance(choices[0]["message"].get("content"), str)
                                      and choices[0]["message"]["content"].strip()),
         "full_parse_seen": bool(full_parse),
