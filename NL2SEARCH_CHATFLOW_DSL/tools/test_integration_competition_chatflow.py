@@ -148,6 +148,16 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
             self.assertIn(field, sql)
         for word in ("UPDATE ", "DELETE ", "INSERT ", "DROP ", "TRUNCATE "):
             self.assertNotIn(word, sql.upper())
+        # Production regression: Dify JSON body mode sends an array to the
+        # Spring Boot DTO endpoint. The already encoded object must go raw.
+        for node_id, variable_ref in (
+            ("http_identity_catalog", "{{#integration_competition_identity_catalog_prepare.integration_competition_identity_catalog_request_body_json#}}"),
+            ("http_mysql_query", "{{#mysql_request.mysql_request_body_json#}}"),
+        ):
+            node = next(n for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == node_id)
+            self.assertEqual(node["data"]["method"], "POST")
+            self.assertEqual(node["data"]["body"], {"type": "raw-text", "data": variable_ref})
+            self.assertIn("Content-Type: application/json", node["data"]["headers"])
 
     def test_04_runtime_aliases_are_database_derived(self):
         enriched, _ = self.build_runtime_registry()
