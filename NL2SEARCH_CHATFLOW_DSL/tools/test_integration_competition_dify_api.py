@@ -31,6 +31,12 @@ EXPECTED_APP = "INTEGRATION_COMPETITION_CHATFLOW"
 DEFAULT_URL = "http://7.222.95.114:8013/v1"
 DSL_BASELINE_SHA = "d5f99a3f71b18b8f79423ae0d2daecc085fd86c3"
 LIMIT = 4 * 1024 * 1024
+CATALOG_SQL = ("SELECT DISTINCT manufacturer, platform, device_type, device_model "
+               "FROM sn_cis_integration_competition_wide "
+               "WHERE manufacturer IS NOT NULL AND platform IS NOT NULL "
+               "AND device_type IS NOT NULL AND device_model IS NOT NULL "
+               "ORDER BY manufacturer, platform, device_type, device_model")
+CATALOG_URL = "http://7.215.224.91:9201/simulation/datacenter/mysql/query/simple"
 NODE_PROBES = {
     "integration_competition_registry_load": ("integration_competition_registry_load_status", "integration_competition_registry_load_error"),
     "integration_competition_identity_catalog_merge": ("integration_competition_registry_load_status", "integration_competition_registry_load_error"),
@@ -75,6 +81,51 @@ def diagnostic(error: object) -> dict:
     match = re.search(r"\b([A-Za-z_]{3,65}(?:Error|Exception))\b", raw)
     return {"category": match.group(1) if match else "UNCLASSIFIED",
             "fingerprint": digest(raw)}
+
+
+def classify_backend_message(message: str) -> str:
+    """Classify without exposing any SQL, database identifiers or credentials."""
+    lower = str(message or "").lower()
+    if re.search(r"unknown column|1054|字段不存在", lower):
+        return "COLUMN_NOT_FOUND"
+    if re.search(r"doesn.t exist|unknown table|1146|表不存在", lower):
+        return "TABLE_NOT_FOUND"
+    if re.search(r"syntax|1064|语法错误", lower):
+        return "SQL_SYNTAX"
+    if re.search(r"access denied for user|authentication plugin|mysql.*1045", lower):
+        return "MYSQL_AUTH"
+    if re.search(r"user not login|not logged in|未登录|请先登录", lower):
+        return "SERVICE_LOGIN"
+    if re.search(r"unauthoriz|invalid.token|token expired|authentication failed|认证失败", lower):
+        return "SERVICE_AUTH"
+    if re.search(r"permission|forbidden|access denied|权限不足", lower):
+        return "PERMISSION"
+    if re.search(r"jdbc|database|mysql|connection|sql|数据库", lower):
+        return "DATABASE_OTHER"
+    return "OTHER" if lower else "EMPTY"
+
+
+def catalog_contract(obj):
+    """Read limited expected SQL fields from Dify SSE; never retain raw inputs."""
+    if isinstance(obj, str):
+        if len(obj) > 20000:
+            return "NOT_VISIBLE"
+        try:
+            obj = json.loads(obj)
+        except (TypeError, ValueError):
+            return "NOT_VISIBLE"
+    if not isinstance(obj, dict):
+        return "NOT_VISIBLE"
+    if "sql" in obj:
+        if not isinstance(obj.get("sql"), str) or not isinstance(obj.get("params"), list):
+            return "MISMATCH"
+        return "MATCH" if obj["sql"].strip() == CATALOG_SQL and obj["params"] == [] else "MISMATCH"
+    for value in obj.values():
+        if isinstance(value, (dict, str)):
+            outcome = catalog_contract(value) if not isinstance(value, str) or len(value) <= 20000 else "NOT_VISIBLE"
+            if outcome != "NOT_VISIBLE":
+                return outcome
+    return "NOT_VISIBLE"
 
 
 def safe_node_id(value: object) -> str:
@@ -130,6 +181,9 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
         error_info = {"category": "UNSPECIFIED", "fingerprint": ""}
         total_bytes = 0
         node_probe = []
+        catalog_build = "NOT_OBSERVED"
+        catalog_http_input = "NOT_VISIBLE"
+        catalog_http_url = "NOT_VISIBLE"
         while True:
             line = response.readline()
             if not line:
@@ -155,6 +209,19 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
                 node_data = item.get("data")
                 if isinstance(node_data, dict):
                     last_node_id = safe_node_id(node_data.get("node_id")) or last_node_id
+                    if event == "node_finished" and last_node_id == "integration_competition_identity_catalog_prepare":
+                        outputs = node_data.get("outputs")
+                        if isinstance(outputs, dict):
+                            catalog_build = catalog_contract(outputs.get("integration_competition_identity_catalog_request_body_json"))
+                    if last_node_id == "http_identity_catalog":
+                        inputs = node_data.get("inputs")
+                        if isinstance(inputs, dict):
+                            found = catalog_contract(inputs)
+                            if found != "NOT_VISIBLE":
+                                catalog_http_input = found
+                            request_url = inputs.get("url")
+                            if isinstance(request_url, str):
+                                catalog_http_url = "MATCH" if request_url == CATALOG_URL else "MISMATCH"
                     if event == "node_finished" and last_node_id == "http_identity_catalog":
                         outputs = node_data.get("outputs")
                         outputs = outputs if isinstance(outputs, dict) else {}
@@ -167,21 +234,7 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
                         raw_backend_code = str(payload.get("code") if payload.get("code") is not None else "")
                         backend_code = raw_backend_code if re.fullmatch(r"[A-Za-z0-9_-]{1,24}", raw_backend_code) else "UNAVAILABLE"
                         backend_msg = str(payload.get("msg") or payload.get("message") or "")
-                        msg_lower = backend_msg.lower()
-                        if re.search(r"not.?login|unauthoriz|authenticat|token|未登录|请登录|登录失效", msg_lower):
-                            category = "AUTH"
-                        elif re.search(r"permission|access.denied|forbidden|没有权限|无权限", msg_lower):
-                            category = "PERMISSION"
-                        elif re.search(r"doesn.t.exist|no.such.table|unknown.table|表不存在", msg_lower):
-                            category = "TABLE_NOT_FOUND"
-                        elif re.search(r"unknown.column|列不存在|字段不存在", msg_lower):
-                            category = "COLUMN_NOT_FOUND"
-                        elif re.search(r"syntax|parse|distinct|order.by|不支持|不允许", msg_lower):
-                            category = "SQL_REJECTED"
-                        elif re.search(r"mysql|jdbc|sql|database|数据库", msg_lower):
-                            category = "DATABASE"
-                        else:
-                            category = "UNCLASSIFIED"
+                        category = classify_backend_message(backend_msg)
                         node_probe.append({
                             "node": "http_identity_catalog",
                             "execution_status": str(node_data.get("status") or "")[:24],
@@ -236,6 +289,9 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
             "error": failure,
             "diagnostic": error_info,
             "node_probe": node_probe,
+            "catalog_build": catalog_build,
+            "catalog_http_input": catalog_http_input,
+            "catalog_http_url": catalog_http_url,
         }
 
 
@@ -247,7 +303,17 @@ def run():
     parser.add_argument("--diagnose-first", action="store_true", help="Send just the overview query and report redacted failure evidence.")
     parser.add_argument("--model-a", default="", help="Existing database device model for the smoke test, avoids repeat input.")
     parser.add_argument("--inspect-run-id", default="", help="Read one existing Dify workflow run without sending a chat message.")
+    parser.add_argument("--selftest", action="store_true", help="Check local diagnostic logic without network or credentials.")
     opts = parser.parse_args()
+    if opts.selftest:
+        assert catalog_contract({"sql": CATALOG_SQL, "params": [], "user": "redacted"}) == "MATCH"
+        assert catalog_contract({"body": json.dumps({"sql": CATALOG_SQL, "params": []})}) == "MATCH"
+        assert catalog_contract({"sql": "SELECT 1", "params": []}) == "MISMATCH"
+        assert classify_backend_message("Unknown column foo") == "COLUMN_NOT_FOUND"
+        assert classify_backend_message("User not login") == "SERVICE_LOGIN"
+        assert classify_backend_message("Access denied for user x") == "MYSQL_AUTH"
+        print("DIAGNOSTIC_SELFTEST=PASS NO_NETWORK=YES")
+        return 0, {}, None
     if opts.diagnose_first and not opts.execute:
         raise SystemExit("DIAGNOSE_FIRST_REQUIRES_EXECUTE")
     if opts.inspect_run_id and (opts.execute or opts.diagnose_first):
@@ -379,6 +445,9 @@ def run():
                 "semantic_validation": "REQUIRES_MYSQL_ORACLE",
                 "node_probe": response.get("node_probe") or [],
                 "error_branch": bool(error_branch),
+                "catalog_build": response.get("catalog_build", "NOT_OBSERVED"),
+                "catalog_http_input": response.get("catalog_http_input", "NOT_VISIBLE"),
+                "catalog_http_url": response.get("catalog_http_url", "NOT_VISIBLE"),
             }
             report["cases"].append(record)
             print("CASE=" + name + " TRANSPORT=" + ("PASS" if success else "FAIL") +
@@ -390,6 +459,9 @@ def run():
                 print("WORKFLOW_ERROR_CATEGORY=" + record["error_category"])
                 print("WORKFLOW_ERROR_FINGERPRINT=" + record["error_fingerprint"])
                 print("WORKFLOW_RUN_ID=" + record["workflow_run_id"])
+                print("CATALOG_BUILD=" + record["catalog_build"] +
+                      " HTTP_INPUT=" + record["catalog_http_input"] +
+                      " HTTP_URL=" + record["catalog_http_url"])
                 for probe in record["node_probe"]:
                     if probe["node"] == "http_identity_catalog":
                         print("CATALOG_HTTP=" + probe["http_status"] +
