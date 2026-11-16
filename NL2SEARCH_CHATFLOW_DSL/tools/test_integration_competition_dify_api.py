@@ -155,6 +155,41 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
                 node_data = item.get("data")
                 if isinstance(node_data, dict):
                     last_node_id = safe_node_id(node_data.get("node_id")) or last_node_id
+                    if event == "node_finished" and last_node_id == "http_identity_catalog":
+                        outputs = node_data.get("outputs")
+                        outputs = outputs if isinstance(outputs, dict) else {}
+                        http_code = str(outputs.get("status_code") or "")
+                        try:
+                            payload = json.loads(outputs.get("body") or "{}")
+                            payload = payload if isinstance(payload, dict) else {}
+                        except (ValueError, TypeError):
+                            payload = {}
+                        raw_backend_code = str(payload.get("code") if payload.get("code") is not None else "")
+                        backend_code = raw_backend_code if re.fullmatch(r"[A-Za-z0-9_-]{1,24}", raw_backend_code) else "UNAVAILABLE"
+                        backend_msg = str(payload.get("msg") or payload.get("message") or "")
+                        msg_lower = backend_msg.lower()
+                        if re.search(r"not.?login|unauthoriz|authenticat|token|未登录|请登录|登录失效", msg_lower):
+                            category = "AUTH"
+                        elif re.search(r"permission|access.denied|forbidden|没有权限|无权限", msg_lower):
+                            category = "PERMISSION"
+                        elif re.search(r"doesn.t.exist|no.such.table|unknown.table|表不存在", msg_lower):
+                            category = "TABLE_NOT_FOUND"
+                        elif re.search(r"unknown.column|列不存在|字段不存在", msg_lower):
+                            category = "COLUMN_NOT_FOUND"
+                        elif re.search(r"syntax|parse|distinct|order.by|不支持|不允许", msg_lower):
+                            category = "SQL_REJECTED"
+                        elif re.search(r"mysql|jdbc|sql|database|数据库", msg_lower):
+                            category = "DATABASE"
+                        else:
+                            category = "UNCLASSIFIED"
+                        node_probe.append({
+                            "node": "http_identity_catalog",
+                            "execution_status": str(node_data.get("status") or "")[:24],
+                            "http_status": http_code if re.fullmatch(r"[0-9]{3}", http_code) else "UNAVAILABLE",
+                            "backend_code": backend_code,
+                            "backend_message_category": category,
+                            "backend_message_fingerprint": digest(backend_msg) if backend_msg else "",
+                        })
                     if event == "node_finished" and last_node_id in NODE_PROBES:
                         status_key, error_key = NODE_PROBES[last_node_id]
                         outputs = node_data.get("outputs")
@@ -356,12 +391,18 @@ def run():
                 print("WORKFLOW_ERROR_FINGERPRINT=" + record["error_fingerprint"])
                 print("WORKFLOW_RUN_ID=" + record["workflow_run_id"])
                 for probe in record["node_probe"]:
-                    print("NODE_PROBE=" + probe["node"] +
-                          " EXEC=" + probe["execution_status"] +
-                          " STATUS=" + probe["business_status"] +
-                          " CODE=" + probe["error_code"] +
-                          " ERROR_SHA256=" + probe["error_fingerprint"] +
-                          " NODE_ERROR=" + probe["node_error_category"])
+                    if probe["node"] == "http_identity_catalog":
+                        print("CATALOG_HTTP=" + probe["http_status"] +
+                              " BACKEND_CODE=" + probe["backend_code"] +
+                              " BACKEND_CATEGORY=" + probe["backend_message_category"] +
+                              " MSG_SHA256=" + probe["backend_message_fingerprint"])
+                    else:
+                        print("NODE_PROBE=" + probe["node"] +
+                              " EXEC=" + probe["execution_status"] +
+                              " STATUS=" + probe["business_status"] +
+                              " CODE=" + probe["error_code"] +
+                              " ERROR_SHA256=" + probe["error_fingerprint"] +
+                              " NODE_ERROR=" + probe["node_error_category"])
                 break
             conversation_id = str(response["conversation_id"])
             time.sleep(0.25)
