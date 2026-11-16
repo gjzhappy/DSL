@@ -30,7 +30,7 @@ try {
         'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_02.yml' = 'dbde9b1a2136843509725a9c2d51e45b5ede4fd9'
         'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_03.yml' = 'c079eb944b0af0d0416b356f0e0c10c56db5c96d'
         'NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py' = 'ad26a4f691fc30a13ee9818c57f939523a797368'
-        'NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py' = '0af79ba3592da598aa50be50983f1e86ae76f936'
+        'NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py' = '26124ecb054b3da4c25965fdd8a12fa89363b821'
         'scripts/dify_dsl_schema_check.py' = '8ffc4b35b7dac90d7b9459709a5da44d5fde6bb9'
     }
     foreach($path in $expected.Keys){
