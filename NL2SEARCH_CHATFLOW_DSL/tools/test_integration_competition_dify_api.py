@@ -14,6 +14,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -39,6 +40,36 @@ class NoRedirect(HTTPRedirectHandler):
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def diagnostic(error: object) -> dict:
+    """Return a fixed category and hash only, never raw Dify errors."""
+    if not error:
+        return {"category": "UNSPECIFIED", "fingerprint": ""}
+    raw = str(error)
+    normalized = raw.lower()
+    for category, pattern in (
+        ("AUTH", r"\b(401|403|unauthorized|forbidden|invalid.api.key)\b"),
+        ("HTTP_5XX", r"\b(500|502|503|504|bad gateway|service unavailable)\b"),
+        ("HTTP_4XX", r"\b(400|404|422|not found|bad request)\b"),
+        ("TIMEOUT", r"timeout|timed out|deadline exceeded"),
+        ("NETWORK", r"connection refused|connection reset|dns|name resolution|network unreachable"),
+        ("MYSQL_BACKEND", r"mysql|sql|database|pymysql|unknown column"),
+        ("REGISTRY", r"registry|alias|field_inventory"),
+        ("VARIABLE", r"variable|parameter|not defined|nameerror|keyerror"),
+        ("LLM", r"llm|model provider|token budget|context length"),
+        ("CODE_NODE", r"code execution|codeexecution|sandbox|traceback"),
+    ):
+        if re.search(pattern, normalized):
+            return {"category": category, "fingerprint": digest(raw)}
+    match = re.search(r"\b([A-Za-z_]{3,65}(?:Error|Exception))\b", raw)
+    return {"category": match.group(1) if match else "UNCLASSIFIED",
+            "fingerprint": digest(raw)}
+
+
+def safe_node_id(value: object) -> str:
+    value = str(value or "")
+    return value if re.fullmatch(r"[A-Za-z0-9_:-]{1,100}", value) else ""
 
 
 def request_json(opener, url: str, api_key: str, method: str, payload=None):
@@ -82,6 +113,11 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
         chunks = []
         conversation_id = ""
         failure = ""
+        workflow_run_id = ""
+        last_node_id = ""
+        failed_node_id = ""
+        failed_node_type = ""
+        error_info = {"category": "UNSPECIFIED", "fingerprint": ""}
         total_bytes = 0
         while True:
             line = response.readline()
@@ -104,12 +140,25 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
                 chunks.append(str(item.get("answer") or ""))
             elif event == "message_replace":
                 chunks = [str(item.get("answer") or "")]
+            elif event in ("node_started", "node_finished"):
+                node_data = item.get("data")
+                if isinstance(node_data, dict):
+                    last_node_id = safe_node_id(node_data.get("node_id")) or last_node_id
+                    if event == "node_finished" and node_data.get("status") in ("failed", "stopped", "exception"):
+                        failed_node_id = safe_node_id(node_data.get("node_id"))
+                        failed_node_type = safe_node_id(node_data.get("node_type"))
+                        error_info = diagnostic(node_data.get("error"))
             elif event == "error":
                 failure = "DIFY_STREAM_ERROR"
+                error_info = diagnostic(item.get("message") or item.get("error"))
             elif event == "workflow_finished":
                 data = item.get("data")
-                if isinstance(data, dict) and data.get("status") in ("failed", "stopped"):
-                    failure = "WORKFLOW_FAILED"
+                if isinstance(data, dict):
+                    workflow_run_id = safe_node_id(item.get("workflow_run_id") or data.get("id") or "")
+                    if data.get("status") in ("failed", "stopped"):
+                        failure = "WORKFLOW_FAILED"
+                        if data.get("error"):
+                            error_info = diagnostic(data.get("error"))
             if item.get("conversation_id"):
                 conversation_id = str(item["conversation_id"])
         answer = "".join(chunks)
@@ -118,7 +167,12 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
             "http_status": status,
             "answer": answer,
             "conversation_id": conversation_id,
+            "workflow_run_id": workflow_run_id,
+            "last_node_id": last_node_id,
+            "failed_node_id": failed_node_id,
+            "failed_node_type": failed_node_type,
             "error": failure,
+            "diagnostic": error_info,
         }
 
 
@@ -127,7 +181,10 @@ def run():
     parser.add_argument("--base-url", default=DEFAULT_URL)
     parser.add_argument("--allow-http", action="store_true", help="Explicitly accept an unencrypted internal HTTP connection.")
     parser.add_argument("--execute", action="store_true", help="Allow test chat messages; does not import/publish/alter applications.")
+    parser.add_argument("--diagnose-first", action="store_true", help="Send just the overview query and report redacted failure evidence.")
     opts = parser.parse_args()
+    if opts.diagnose_first and not opts.execute:
+        raise SystemExit("DIAGNOSE_FIRST_REQUIRES_EXECUTE")
     url = opts.base_url.rstrip("/")
     parsed = urlsplit(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.path.rstrip("/") != "/v1":
@@ -180,7 +237,7 @@ def run():
             print("DIFY_READONLY_PREFLIGHT=PASS")
             return 0, report, logpath
         model_a = input("输入 MySQL 中真实存在的设备型号 A（不记录）: ").strip()
-        model_b = input("第二个真实型号 B（可留空）: ").strip()
+        model_b = "" if opts.diagnose_first else input("第二个真实型号 B（可留空）: ").strip()
         if not model_a:
             report["outcome"] = "INPUT_REQUIRED"
             print("MODEL_A_REQUIRED")
@@ -194,6 +251,8 @@ def run():
         ]
         if model_b:
             questions.append(("two_model_comparison", "对比" + model_a + "和" + model_b + "的整机总面积和小系统总面积。", "fresh"))
+        if opts.diagnose_first:
+            questions = questions[:1]
         conversation_id = ""
         for name, query, continuity in questions:
             if continuity == "fresh":
@@ -215,6 +274,12 @@ def run():
                 "answer_chars": len(answer),
                 "answer_sha256": digest(answer) if answer else "",
                 "conversation_returned": bool(response.get("conversation_id")),
+                "workflow_run_id": response.get("workflow_run_id") or "",
+                "last_node_id": response.get("last_node_id") or "",
+                "failed_node_id": response.get("failed_node_id") or "",
+                "failed_node_type": response.get("failed_node_type") or "",
+                "error_category": (response.get("diagnostic") or {}).get("category") or "UNSPECIFIED",
+                "error_fingerprint": (response.get("diagnostic") or {}).get("fingerprint") or "",
                 "semantic_validation": "REQUIRES_MYSQL_ORACLE",
             }
             report["cases"].append(record)
@@ -222,6 +287,11 @@ def run():
                   " ANSWER_CHARS=" + str(len(answer)))
             if not success:
                 report["outcome"] = "API_SMOKE_FAILED"
+                print("WORKFLOW_FAILED_NODE=" + record["failed_node_id"])
+                print("WORKFLOW_LAST_NODE=" + record["last_node_id"])
+                print("WORKFLOW_ERROR_CATEGORY=" + record["error_category"])
+                print("WORKFLOW_ERROR_FINGERPRINT=" + record["error_fingerprint"])
+                print("WORKFLOW_RUN_ID=" + record["workflow_run_id"])
                 break
             conversation_id = str(response["conversation_id"])
             time.sleep(0.25)
