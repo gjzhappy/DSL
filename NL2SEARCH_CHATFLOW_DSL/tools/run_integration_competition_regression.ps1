@@ -25,12 +25,12 @@ try {
         throw 'GITHUB_PIN_FAILED'
     }
     $expected = [ordered]@{
-        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_00.yml' = 'e21f6f74367d491c9f0288d4be1842f2a0f3bdde'
-        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_01.yml' = 'fad3ecdaa25f3c6c2232759dcbbf532e905e3aaa'
-        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_02.yml' = '62cb6cacae147129949fd1a5fd28be88141e9e3b'
-        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_03.yml' = '575e97fdd1126ad833912cf19d2f2eecb1869441'
-        'NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py' = 'ad26a4f691fc30a13ee9818c57f939523a797368'
-        'NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py' = '0f8d99bb819ac643348ea2eb0b93c5f1f11bb5aa'
+        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_00.yml' = '5513595fc1ebd8bce3ac71b05e97a4b127dc6e4c'
+        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_01.yml' = '61c0e5d366d9ff6cb2e3736bae79a04bb45d4ffd'
+        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_02.yml' = 'fe50c2495d193db7e4a2d92d11a7c5cf0124e131'
+        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_03.yml' = '5642aeee52f3b7fd819160116c5845b82541e96f'
+        'NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py' = 'f73acab735349757e8552497af87bb945fc7399d'
+        'NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py' = 'be4f7234e8791d837ba0b707fb4cdf3ed3e3fc80'
         'scripts/dify_dsl_schema_check.py' = '8ffc4b35b7dac90d7b9459709a5da44d5fde6bb9'
     }
     foreach($path in $expected.Keys){
@@ -51,14 +51,14 @@ try {
 
     Push-Location $src
     try {
-        Write-Host '========== 3. RUN 14 TESTS =========='
+        Write-Host '========== 3. RUN 15 TESTS =========='
         $py = (Get-Command python.exe -ErrorAction Stop).Source
         $process = Start-Process -FilePath $py -ArgumentList 'NL2SEARCH_CHATFLOW_DSL\tools\test_integration_competition_chatflow.py' -WorkingDirectory $src -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'test.stdout.log') -RedirectStandardError (Join-Path $run 'test.stderr.log')
         $testExit = $process.ExitCode
         $testLog = (Get-Content -LiteralPath (Join-Path $run 'test.stdout.log') -Raw) + (Get-Content -LiteralPath (Join-Path $run 'test.stderr.log') -Raw)
         Write-Host "TEST_EXIT=$testExit"
         Get-Content -LiteralPath (Join-Path $run 'test.stderr.log') -Tail 18
-        if($testExit -ne 0 -or $testLog -notmatch 'Ran 14 tests' -or $testLog -notmatch '(?m)^OK\s*$'){
+        if($testExit -ne 0 -or $testLog -notmatch 'Ran 15 tests' -or $testLog -notmatch '(?m)^OK\s*$'){
             throw 'REGRESSION_FAILED'
         }
         Write-Host 'REGRESSION_TEST=PASS'

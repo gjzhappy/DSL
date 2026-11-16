@@ -118,7 +118,11 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
         registry = self.load_runtime_registry()
         area = [field for name, field in registry["fields"].items() if name.endswith("_area_mm2")]
         self.assertEqual(len(area), 267)
-        self.assertTrue(all("业务定义" in field["description"] and "数据层级" in field["description"] for field in area))
+        self.assertTrue(all(field["description"].strip() and "面积" in field["label"] for field in area))
+        self.assertIn("不与下级明细", registry["fields"]["small_system_soc_total_area_mm2"]["description"])
+        self.assertIn("分列", registry["fields"]["small_system_pmu1_area_mm2"]["description"])
+        self.assertIn("不是无线下第三个可加总业务域", registry["fields"]["wireless_antenna_total_area_mm2"]["description"])
+        self.assertIn("不得", registry["fields"]["peripheral_total_area_mm2"]["description"])
 
     def test_03_identity_catalog_query_is_read_only(self):
         result = run_code_node(
@@ -280,6 +284,27 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
                 adapted[adapted.index(start):adapted.index(end, adapted.index(start))],
             )
         self.assertIn("小系统", self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"])
+
+
+
+    def test_15_runtime_registry_outputs_fit_dify_code_budget(self):
+        # Reproduces production failure of the 80k Code node string limit.
+        # Enforce additional headroom for catalog-derived identity aliases.
+        registry = self.load_runtime_registry()
+        serialized = json.dumps(registry, ensure_ascii=False, separators=(",", ":"))
+        self.assertLessEqual(len(serialized), 75000)
+        enriched, parsed = self.build_runtime_registry()
+        self.assertLessEqual(
+            len(json.dumps(enriched, ensure_ascii=False, separators=(",", ":"))), 78000
+        )
+        self.assertLessEqual(
+            len(parsed["integration_competition_registry_json"]), 78000
+        )
+        self.assertLessEqual(
+            len(parsed["integration_competition_alias_index_json"]), 78000
+        )
+        self.assertEqual(len(enriched["fields"]), 282)
+        self.assertEqual(len(enriched["composite_fields"]), 28)
 
 
 

@@ -492,10 +492,13 @@ def validate_doc(key: str, doc: dict) -> dict:
                 fail(key + ": Registry field metadata missing: " + name)
             if not isinstance(field.get("aliases"), list) or not field.get("aliases"):
                 fail(key + ": Registry field aliases missing: " + name)
-            if name.endswith("_area_mm2"):
-                description = str(field.get("description") or "")
-                if "业务定义" not in description or "数据层级" not in description:
-                    fail(key + ": DDL area semantics missing: " + name)
+            if name.endswith("_area_mm2") and "面积" not in str(field.get("label") or ""):
+                fail(key + ": area field label missing area semantics: " + name)
+        # Production Dify Code node output must stay below its configured
+        # 80,000-character string cap. Reserve headroom for runtime aliases.
+        registry_chars = len(json.dumps(registry, ensure_ascii=False, separators=(",", ":")))
+        if registry_chars > 75000:
+            fail(key + ": Dify Registry Code output budget exceeded: " + str(registry_chars))
     roles = registry.get("query_roles") or {}
     if roles.get("sql_select_fields") != "all_fields":
         fail(key + ": sql_select_fields must be all_fields")
