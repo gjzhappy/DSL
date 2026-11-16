@@ -5,6 +5,7 @@ import argparse
 import getpass
 import hashlib
 import json
+import os
 import re
 import time
 import uuid
@@ -15,7 +16,7 @@ from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_ope
 
 BASE = "http://7.222.95.114:8013/v1"
 APP = "INTEGRATION_COMPETITION_CHATFLOW"
-ROOT = Path(r"E:\work\tmp\20261008")
+ROOT = Path(r"E:\work\tmp\20261008") if os.name == "nt" else Path.home() / "dify-ic-regression"
 LIMIT = 8 * 1024 * 1024
 
 class NoRedirect(HTTPRedirectHandler):
