@@ -505,7 +505,7 @@
             "method": "POST",
             "url": "{{#env.SN_MYSQL_QUERY_URLS#}}",
             "body": {
-              "type": "json",
+              "type": "raw-text",
               "data": "{{#mysql_request.mysql_request_body_json#}}"
             },
             "headers": "Content-Type: application/json\nAccept: application/json",
