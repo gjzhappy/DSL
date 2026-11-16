@@ -31,6 +31,14 @@ EXPECTED_APP = "INTEGRATION_COMPETITION_CHATFLOW"
 DEFAULT_URL = "http://7.222.95.114:8013/v1"
 DSL_BASELINE_SHA = "d5f99a3f71b18b8f79423ae0d2daecc085fd86c3"
 LIMIT = 4 * 1024 * 1024
+NODE_PROBES = {
+    "integration_competition_registry_load": ("integration_competition_registry_load_status", "integration_competition_registry_load_error"),
+    "integration_competition_identity_catalog_merge": ("integration_competition_registry_load_status", "integration_competition_registry_load_error"),
+    "integration_competition_registry_parse": ("integration_competition_registry_parse_status", "integration_competition_registry_error"),
+    "integration_competition_sql_plan": ("integration_competition_sql_compile_status", "integration_competition_sql_compile_error_answer"),
+    "mysql_request": ("mysql_request_status", "mysql_request_error_answer"),
+    "mysql_normalize": ("mysql_query_status", "mysql_query_error_answer"),
+}
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -121,6 +129,7 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
         failed_node_type = ""
         error_info = {"category": "UNSPECIFIED", "fingerprint": ""}
         total_bytes = 0
+        node_probe = []
         while True:
             line = response.readline()
             if not line:
@@ -146,6 +155,22 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
                 node_data = item.get("data")
                 if isinstance(node_data, dict):
                     last_node_id = safe_node_id(node_data.get("node_id")) or last_node_id
+                    if event == "node_finished" and last_node_id in NODE_PROBES:
+                        status_key, error_key = NODE_PROBES[last_node_id]
+                        outputs = node_data.get("outputs")
+                        outputs = outputs if isinstance(outputs, dict) else {}
+                        raw_status = str(outputs.get(status_key) or "")
+                        raw_error = str(outputs.get(error_key) or "")
+                        safe_status = raw_status if raw_status in ("ok", "error", "missing") else "NOT_EMITTED"
+                        safe_code = raw_error if re.fullmatch(r"(?:REGISTRY|IDENTITY_CATALOG|INTEGRATION)[A-Z0-9_]{3,80}", raw_error) else ""
+                        node_probe.append({
+                            "node": last_node_id,
+                            "execution_status": str(node_data.get("status") or "")[:24],
+                            "business_status": safe_status,
+                            "error_code": safe_code,
+                            "error_fingerprint": digest(raw_error) if raw_error else "",
+                            "node_error_category": diagnostic(node_data.get("error"))["category"] if node_data.get("error") else "",
+                        })
                     if event == "node_finished" and node_data.get("status") in ("failed", "stopped", "exception"):
                         failed_node_id = safe_node_id(node_data.get("node_id"))
                         failed_node_type = safe_node_id(node_data.get("node_type"))
@@ -175,6 +200,7 @@ def request_json(opener, url: str, api_key: str, method: str, payload=None):
             "failed_node_type": failed_node_type,
             "error": failure,
             "diagnostic": error_info,
+            "node_probe": node_probe,
         }
 
 
@@ -296,7 +322,11 @@ def run():
                 "user": user,
             })
             answer = str(response.get("answer") or "")
-            success = bool(response.get("ok")) and "LLM_INPUT_TOO_LARGE" not in answer
+            # A returned answer can be the dedicated SQL-error branch: it is not a successful query.
+            error_branch = response.get("last_node_id") == "ans_sql_error" or answer.startswith(
+                ("MySQL 查询请求构建失败", "MySQL 查询失败")
+            )
+            success = bool(response.get("ok")) and not error_branch and "LLM_INPUT_TOO_LARGE" not in answer
             if continuity in ("first", "followup") and not response.get("conversation_id"):
                 success = False
             record = {
@@ -312,6 +342,8 @@ def run():
                 "error_category": (response.get("diagnostic") or {}).get("category") or "UNSPECIFIED",
                 "error_fingerprint": (response.get("diagnostic") or {}).get("fingerprint") or "",
                 "semantic_validation": "REQUIRES_MYSQL_ORACLE",
+                "node_probe": response.get("node_probe") or [],
+                "error_branch": bool(error_branch),
             }
             report["cases"].append(record)
             print("CASE=" + name + " TRANSPORT=" + ("PASS" if success else "FAIL") +
@@ -323,6 +355,13 @@ def run():
                 print("WORKFLOW_ERROR_CATEGORY=" + record["error_category"])
                 print("WORKFLOW_ERROR_FINGERPRINT=" + record["error_fingerprint"])
                 print("WORKFLOW_RUN_ID=" + record["workflow_run_id"])
+                for probe in record["node_probe"]:
+                    print("NODE_PROBE=" + probe["node"] +
+                          " EXEC=" + probe["execution_status"] +
+                          " STATUS=" + probe["business_status"] +
+                          " CODE=" + probe["error_code"] +
+                          " ERROR_SHA256=" + probe["error_fingerprint"] +
+                          " NODE_ERROR=" + probe["node_error_category"])
                 break
             conversation_id = str(response["conversation_id"])
             time.sleep(0.25)
