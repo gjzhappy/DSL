@@ -28,7 +28,7 @@ from urllib.request import (
 LOG_ROOT = Path(r"E:\work\tmp\20261008")
 EXPECTED_APP = "INTEGRATION_COMPETITION_CHATFLOW"
 DEFAULT_URL = "http://7.222.95.114:8013/v1"
-SOURCE_SHA = "d27191cb434654fd0f8823bde07371a57a1636b8"
+DSL_BASELINE_SHA = "d27191cb434654fd0f8823bde07371a57a1636b8"
 LIMIT = 4 * 1024 * 1024
 
 
@@ -137,7 +137,7 @@ def run():
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
     logpath = LOG_ROOT / ("DIFY_IC_API_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(os.getpid()) + ".json")
     report = {
-        "source_sha": SOURCE_SHA,
+        "dsl_baseline_sha": DSL_BASELINE_SHA,
         "app_expected": EXPECTED_APP,
         "api_host": parsed.hostname,
         "api_port": parsed.port,
