@@ -228,66 +228,59 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
             self.assertEqual(plan["query_intent_meta"]["query_scope_behavior"], "reset")
             self.assertNotIn("device_model", plan["where_filters"])
 
-    def test_12_previous_result_is_only_attached_for_reference_queries(self):
-        _, parsed = self.build_runtime_registry()
-        first = self.plan("查询 iPhone17 Pro Max 的整机总面积", parsed)
-        previous = {"sql_plan": json.loads(first["integration_competition_sql_plan_json"]), "rows": [{"device_model": "iPhone17 Pro Max", "integration_total_area_mm2": "42.77"}], "row_count": 1}
-        for question, expected_count in (("查询其他模块的无线总面积", 0), ("查询这些机型的无线总面积", 1)):
-            current = self.plan(question, parsed, first["integration_competition_current_execution_context_json"])
-            result = run_code_node(
-                self.doc, "llm_input",
-                context_json=json.dumps({"question": question, "user": "regression-test"}, ensure_ascii=False),
-                mysql_query_result_json=json.dumps({"rows": [{"wireless_total_area_mm2": "10.5"}], "sql_plan": json.loads(current["integration_competition_sql_plan_json"])}, ensure_ascii=False),
-                integration_competition_selected_field_meta_json=current["integration_competition_selected_field_meta_json"],
-                integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
-                analysis_system_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"],
-                analysis_user_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"],
-                integration_competition_current_execution_context_json=current["integration_competition_current_execution_context_json"],
-                integration_competition_previous_query_result_json=json.dumps(previous, ensure_ascii=False),
-                local_context_tokens="32768", local_max_predict_tokens="4096", prompt_token_safety_margin="1024",
-            )
-            self.assertEqual(json.loads(result["llm_handler_input_json"])["status"], "ok")
-            self.assertIn("【输入数据包】\n", result["llm_user_prompt"])
-            data_packet = json.loads(result["llm_user_prompt"].split("【输入数据包】\n", 1)[1])
-            self.assertEqual(len(data_packet["previous_query_result"]["rows"]), expected_count)
+    def test_12_llm_input_reuses_jf_base_code(self):
+        # Only the business namespace changes; LLM request/prompt machinery remains JF baseline.
+        jf_doc, _ = merger.load_doc("JF_CAPACITOR")
+        jf_code = next(n["data"]["code"] for n in jf_doc["workflow"]["graph"]["nodes"] if n["id"] == "llm_input")
+        ic_code = next(n["data"]["code"] for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == "llm_input")
+        adapted = jf_code.replace("jf_capacitor", "integration_competition").replace("JF_CAPACITOR", "INTEGRATION_COMPETITION").replace("JF电容对比", "整机集成度")
+        self.assertEqual(ic_code, adapted)
 
-    def test_13_oversized_prompt_guard_does_not_forward_large_prompt(self):
+    def test_13_multivalue_area_is_preserved_in_llm_input(self):
         _, parsed = self.build_runtime_registry()
-        plan_result = self.plan("查询 iPhone17 Pro Max 的整机总面积", parsed)
+        planned = self.plan("查询 iPhone17 Pro Max 的小系统面积构成", parsed)
+        sql_plan = json.loads(planned["integration_competition_sql_plan_json"])
+        self.assertNotIn("SUM(", sql_plan["sql"].upper())
         result = run_code_node(
             self.doc, "llm_input",
-            context_json=json.dumps({"question": "查询整机面积", "user": "regression-test"}, ensure_ascii=False),
-            mysql_query_result_json=json.dumps({"rows": [{"large_value": "x" * 12000}], "sql_plan": json.loads(plan_result["integration_competition_sql_plan_json"])}, ensure_ascii=False),
-            integration_competition_selected_field_meta_json="{}",
+            context_json=json.dumps({"question": "查询 iPhone17 Pro Max 的小系统面积构成", "user": "regression-test"}, ensure_ascii=False),
+            mysql_query_result_json=json.dumps({
+                "rows": [{"device_model": "iPhone17 Pro Max", "small_system_total_area_mm2": "42.77,16.59"}],
+                "sql_plan": sql_plan,
+            }, ensure_ascii=False),
+            integration_competition_selected_field_meta_json=planned["integration_competition_selected_field_meta_json"],
             integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
-            analysis_system_prompt="system", analysis_user_prompt="rules",
-            integration_competition_current_execution_context_json="{}",
+            analysis_system_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"],
+            analysis_user_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"],
+            integration_competition_current_execution_context_json=planned["integration_competition_current_execution_context_json"],
             integration_competition_previous_query_result_json="{}",
-            local_context_tokens="32", local_max_predict_tokens="16", prompt_token_safety_margin="8",
+            local_context_tokens="131072",
+            local_max_predict_tokens="4096",
+            prompt_token_safety_margin="1024",
         )
-        payload = json.loads(result["llm_handler_input_json"])
-        self.assertEqual(payload["status"], "error")
-        self.assertEqual(result["llm_system_prompt"], "")
-        self.assertTrue(result["llm_user_prompt"].startswith("LLM_INPUT_TOO_LARGE"))
-        self.assertLess(len(result["llm_user_prompt"]), 200)
+        self.assertEqual(json.loads(result["llm_handler_input_json"])["status"], "ok")
+        self.assertIn("42.77,16.59", result["llm_user_prompt"])
 
-    def test_14_ambiguous_fuzzy_device_model_fails_closed(self):
-        rows = [
-            {"manufacturer": "Apple", "platform": "A19", "device_type": "phone", "device_model": "iPhone17 Pro Max A"},
-            {"manufacturer": "Apple", "platform": "A19", "device_type": "phone", "device_model": "iPhone17 Pro Max B"},
-        ]
-        _, parsed = self.build_runtime_registry(rows)
-        result = run_code_node(
-            self.doc, "integration_competition_sql_plan",
-            context_json=json.dumps({"question": "查询 iPhone17 Pro Max 的整机总面积", "user": "regression-test"}, ensure_ascii=False),
-            integration_competition_registry_json=parsed["integration_competition_registry_json"],
-            integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
-            integration_competition_registry_parse_status=parsed["integration_competition_registry_parse_status"],
-            integration_competition_registry_error=parsed["integration_competition_registry_error"],
-            integration_competition_query_memory_json="{}",
-        )
-        self.assertEqual(result["integration_competition_sql_compile_status"], "error")
-        self.assertIn("多个候选值", result["integration_competition_sql_compile_error_answer"])
+    def test_14_sql_planner_reuses_jf_core(self):
+        # Core query-scope and fuzzy algorithms must remain identical to the JF baseline.
+        jf_doc, _ = merger.load_doc("JF_CAPACITOR")
+        jf_code = next(n["data"]["code"] for n in jf_doc["workflow"]["graph"]["nodes"] if n["id"] == "jf_capacitor_sql_plan")
+        ic_code = next(n["data"]["code"] for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == "integration_competition_sql_plan")
+        adapted = jf_code.replace("jf_capacitor", "integration_competition").replace("JF_CAPACITOR", "INTEGRATION_COMPETITION").replace("JF电容对比", "整机集成度")
+        for start, end in (
+            ("    def normalize_semantic_filters(", "    def fail("),
+            ("    def find_alias_hit_items(", "    def display_hit_text("),
+        ):
+            self.assertIn(start, adapted)
+            self.assertIn(end, adapted)
+            self.assertIn(start, ic_code)
+            self.assertIn(end, ic_code)
+            self.assertEqual(
+                ic_code[ic_code.index(start):ic_code.index(end, ic_code.index(start))],
+                adapted[adapted.index(start):adapted.index(end, adapted.index(start))],
+            )
+        self.assertIn("小系统", self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"])
+
 
 
 if __name__ == "__main__":
