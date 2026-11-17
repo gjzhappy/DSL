@@ -25,12 +25,12 @@ try {
         throw 'GITHUB_PIN_FAILED'
     }
     $expected = [ordered]@{
-        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_00.yml' = 'a414ae4adbe0286e9a1ee5ed3498a2de1c75ce0e'
+        'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_00.yml' = '0357f076c62bc6a9882cf81449222360150502d6'
         'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_01.yml' = '0e908e00c21fe2b241a50cb5a0075119ff394b10'
         'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_02.yml' = 'bf9d51d0bf4c09fa31db7dd8620670f07c941a10'
         'NL2SEARCH_CHATFLOW_DSL/INTEGRATION_COMPETITION_CHATFLOW/INTEGRATION_COMPETITION_CHATFLOW_03.yml' = 'e1d2c6baa134edb1cd4748da816e0a843e4d21b3'
         'NL2SEARCH_CHATFLOW_DSL/tools/merge_business_chatflow.py' = 'f73acab735349757e8552497af87bb945fc7399d'
-        'NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py' = 'be1e6ff675a180f60f44f39d988934f77738daf9'
+        'NL2SEARCH_CHATFLOW_DSL/tools/test_integration_competition_chatflow.py' = '3bff53e832e8e4f0f6b13057f895118bf458fa73'
         'scripts/dify_dsl_schema_check.py' = '8ffc4b35b7dac90d7b9459709a5da44d5fde6bb9'
     }
     foreach($path in $expected.Keys){
@@ -51,14 +51,14 @@ try {
 
     Push-Location $src
     try {
-        Write-Host '========== 3. RUN 15 TESTS =========='
+        Write-Host '========== 3. RUN 16 TESTS =========='
         $py = (Get-Command python.exe -ErrorAction Stop).Source
         $process = Start-Process -FilePath $py -ArgumentList 'NL2SEARCH_CHATFLOW_DSL\tools\test_integration_competition_chatflow.py' -WorkingDirectory $src -Wait -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $run 'test.stdout.log') -RedirectStandardError (Join-Path $run 'test.stderr.log')
         $testExit = $process.ExitCode
         $testLog = (Get-Content -LiteralPath (Join-Path $run 'test.stdout.log') -Raw) + (Get-Content -LiteralPath (Join-Path $run 'test.stderr.log') -Raw)
         Write-Host "TEST_EXIT=$testExit"
         Get-Content -LiteralPath (Join-Path $run 'test.stderr.log') -Tail 18
-        if($testExit -ne 0 -or $testLog -notmatch 'Ran 15 tests' -or $testLog -notmatch '(?m)^OK\s*$'){
+        if($testExit -ne 0 -or $testLog -notmatch 'Ran 16 tests' -or $testLog -notmatch '(?m)^OK\s*$'){
             throw 'REGRESSION_FAILED'
         }
         Write-Host 'REGRESSION_TEST=PASS'
