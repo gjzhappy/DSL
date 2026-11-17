@@ -1,0 +1,384 @@
+动电路。；与马达驱动（音频）仅括号字符不同，疑似同义，不自动相加。\",[\"马达驱动(音频)\"]],[\"audio_motor_driver_audio_fullwidth_area_mm2\",\"音频 → 马达驱动（音频）面积\",\"音频系统相关马达驱动电路；与马达驱动(音频)仅括号字符不同，疑似同义，不自动相加。\",[\"马达驱动（音频）\"]],[\"device_design_attributes\",\"设备设计属性\",\"非面积型设备/PCB设计属性保留区。保存不代表电路面积的标识和结构信息。例如HL1PNHSHA作为board_variant/design_variant属性保存原始值；业务备注中HL通常表示直板机、SH结尾通常表示产品板三明治板、Ver A表示版本。这些解析仅作待核实属性，不生成DECIMAL面积列，不参与任何面积汇总。\",[\"设计属性\",\"PCB设计属性\"]],[\"raw_value_annotations\",\"原始值注释\",\"非纯数值原始值/备注保留区。JSON对象以本表最终字段名为key，value保存来源单元格原始文本；例如“1（低轨）”“546（模组）”可将确认数值写入对应DECIMAL列并在此保留完整原文；“/”“Na”等非数值文本对应面积列为NULL并在此保留。本字段用于追溯解释，不替代面积列；不存放非面积型设备属性。\",[\"面积原始值\",\"原始文本注释\"]],[\"additional_metrics\",\"附加指标\",\"非面积类扩展指标保留区，承接来源detail[].other.info中的metric_name/metric_value及PMU多组指标。JSON数组元素建议包含business_path、module_name、sub_module_name、metric_name、metric_value、group_key、label；不参与面积汇总。\",[\"非面积指标\",\"扩展指标\"]],[\"module_chip_models\",\"模块芯片型号\",\"模块对应芯片/器件型号信息；JSON对象以统一业务路径为key，以芯片/器件型号为value。\",[\"模块器件型号\",\"芯片型号信息\"]],[\"unmapped_integration_values\",\"未映射集成度数据\",\"尚未纳入统一业务Tree或业务含义尚未确认的模块/子模块原始值保留区；JSON元素建议包含module_name、sub_module_name、raw_value、unit、reason、observed_at。例如PMU5可暂存于此，完成业务确认后再决定是否增加正式字段；不自动参与任何汇总。\",[\"未映射模块数据\",\"未归类集成度数据\"]]]",
+        "value_type": "string"
+      }
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "start",
+          "type": "custom",
+          "data": {
+            "title": "开始",
+            "type": "start",
+            "variables": []
+          },
+          "position": {
+            "x": 0,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 0,
+            "y": 300
+          },
+          "width": 244,
+          "height": 90
+        },
+        {
+          "id": "ctx",
+          "type": "custom",
+          "data": {
+            "title": "理解问题",
+            "type": "code",
+            "outputs": {
+              "context_json": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(sys_query='', sys_user_id=''):\n    import json\n    return {\n        'context_json': json.dumps({\n            'question': str(sys_query or ''),\n            'user': str(sys_user_id or '')\n        }, ensure_ascii=False)\n    }\n",
+            "variables": [
+              {
+                "variable": "sys_query",
+                "value_selector": [
+                  "sys",
+                  "query"
+                ]
+              },
+              {
+                "variable": "sys_user_id",
+                "value_selector": [
+                  "sys",
+                  "user_id"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(sys_query='', sys_user_id=''):\n    import json\n    return {\n        'context_json': json.dumps({\n            'question': str(sys_query or ''),\n            'user': str(sys_user_id or '')\n        }, ensure_ascii=False)\n    }\n"
+          },
+          "position": {
+            "x": 360,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 360,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "integration_competition_registry_load",
+          "type": "custom",
+          "data": {
+            "title": "加载整机集成度Registry",
+            "type": "code",
+            "outputs": {
+              "integration_competition_registry_raw_json": {
+                "type": "string"
+              },
+              "integration_competition_registry_load_status": {
+                "type": "string"
+              },
+              "integration_competition_registry_load_error": {
+                "type": "string"
+              },
+              "integration_competition_registry_source": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(integration_competition_query_registry_json='', integration_competition_query_registry_fields_00_json='', integration_competition_query_registry_fields_01_json='', integration_competition_query_registry_fields_02_json=''):\n    import json\n    def fail(message):\n        return {'integration_competition_registry_raw_json':'{}','integration_competition_registry_load_status':'error','integration_competition_registry_load_error':message,'integration_competition_registry_source':'invalid'}\n    try:\n        registry=json.loads(integration_competition_query_registry_json or '{}')\n        chunks=[json.loads(integration_competition_query_registry_fields_00_json or '[]'),json.loads(integration_competition_query_registry_fields_01_json or '[]'),json.loads(integration_competition_query_registry_fields_02_json or '[]')]\n    except Exception:\n        return fail('REGISTRY_BASE_OR_FIELD_CHUNK_JSON_INVALID')\n    if not isinstance(registry,dict) or registry.get('table')!='sn_cis_integration_competition_wide':\n        return fail('REGISTRY_TABLE_INVALID')\n    fields=registry.get('fields')\n    if not isinstance(fields,dict) or fields:\n        return fail('REGISTRY_BASE_FIELDS_MUST_BE_EMPTY_OBJECT')\n    for chunk in chunks:\n        if not isinstance(chunk,list):\n            return fail('REGISTRY_FIELD_CHUNK_NOT_ARRAY')\n        for item in chunk:\n            if not isinstance(item,list) or len(item)!=4:\n                return fail('REGISTRY_FIELD_ROW_INVALID')\n            name,label,description,aliases=item\n            if not isinstance(name,str) or not name or name in fields:\n                return fail('REGISTRY_FIELD_NAME_INVALID_OR_DUPLICATE')\n            if not isinstance(label,str) or not label.strip() or not isinstance(description,str) or not description.strip():\n                return fail('REGISTRY_FIELD_METADATA_INVALID')\n            if not isinstance(aliases,list) or any(not isinstance(a,str) or not a.strip() for a in aliases):\n                return fail('REGISTRY_FIELD_ALIASES_INVALID')\n            fields[name]={'label':label,'description':description,'aliases':aliases or [label]}\n    if len(fields)!=282 or sum(1 for name in fields if name.endswith('_area_mm2'))!=267:\n        return fail('REGISTRY_FIELD_INVENTORY_MISMATCH')\n    required_json={'device_design_attributes','raw_value_annotations','additional_metrics','module_chip_models','unmapped_integration_values'}\n    if not required_json<=set(fields):\n        return fail('REGISTRY_JSON_FIELD_INVENTORY_MISMATCH')\n    composites=registry.get('composite_fields')\n    if not isinstance(composites,dict) or not composites:\n        return fail('REGISTRY_COMPOSITES_MISSING')\n    for name,composite in composites.items():\n        if not isinstance(composite,dict):\n            return fail('REGISTRY_COMPOSITE_INVALID')\n        expand_to=composite.get('expand_to')\n        if not isinstance(expand_to,list) or not expand_to:\n            return fail('REGISTRY_COMPOSITE_EXPAND_TO_INVALID')\n        if len(expand_to)!=len(set(expand_to)):\n            return fail('REGISTRY_COMPOSITE_EXPAND_TO_DUPLICATE')\n        if any(not isinstance(field,str) or field not in fields for field in expand_to):\n            return fail('REGISTRY_COMPOSITE_FIELD_UNKNOWN')\n    roles=registry.get('query_roles') or {}\n    if roles.get('sql_select_fields')!='all_fields' or roles.get('sql_filter_fields')!=['manufacturer','platform','device_type','device_model']:\n        return fail('REGISTRY_QUERY_ROLES_INVALID')\n    value_aliases=registry.get('value_aliases')\n    if not isinstance(value_aliases,dict):\n        return fail('REGISTRY_VALUE_ALIASES_INVALID')\n    for field,definitions in value_aliases.items():\n        if field not in roles.get('sql_filter_fields',[]) or not isinstance(definitions,dict):\n            return fail('REGISTRY_VALUE_ALIAS_FIELD_INVALID')\n        for canonical,definition in definitions.items():\n            vals=definition.get('aliases') if isinstance(definition,dict) else None\n            if not isinstance(canonical,str) or not isinstance(vals,list) or any(not isinstance(a,str) or not a.strip() for a in vals):\n                return fail('REGISTRY_VALUE_ALIAS_DEFINITION_INVALID')\n    return {'integration_competition_registry_raw_json':json.dumps(registry,ensure_ascii=False,separators=(',',':')),'integration_competition_registry_load_status':'ok','integration_competition_registry_load_error':'','integration_competition_registry_source':'env.base+3fieldchunks'}\n",
+            "variables": [
+              {
+                "variable": "integration_competition_query_registry_json",
+                "value_selector": [
+                  "env",
+                  "INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON"
+                ]
+              },
+              {
+                "variable": "integration_competition_query_registry_fields_00_json",
+                "value_selector": [
+                  "env",
+                  "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_00_JSON"
+                ]
+              },
+              {
+                "variable": "integration_competition_query_registry_fields_01_json",
+                "value_selector": [
+                  "env",
+                  "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_01_JSON"
+                ]
+              },
+              {
+                "variable": "integration_competition_query_registry_fields_02_json",
+                "value_selector": [
+                  "env",
+                  "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_02_JSON"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(integration_competition_query_registry_json='', integration_competition_query_registry_fields_00_json='', integration_competition_query_registry_fields_01_json='', integration_competition_query_registry_fields_02_json=''):\n    import json\n    def fail(message):\n        return {'integration_competition_registry_raw_json':'{}','integration_competition_registry_load_status':'error','integration_competition_registry_load_error':message,'integration_competition_registry_source':'invalid'}\n    try:\n        registry=json.loads(integration_competition_query_registry_json or '{}')\n        chunks=[json.loads(integration_competition_query_registry_fields_00_json or '[]'),json.loads(integration_competition_query_registry_fields_01_json or '[]'),json.loads(integration_competition_query_registry_fields_02_json or '[]')]\n    except Exception:\n        return fail('REGISTRY_BASE_OR_FIELD_CHUNK_JSON_INVALID')\n    if not isinstance(registry,dict) or registry.get('table')!='sn_cis_integration_competition_wide':\n        return fail('REGISTRY_TABLE_INVALID')\n    fields=registry.get('fields')\n    if not isinstance(fields,dict) or fields:\n        return fail('REGISTRY_BASE_FIELDS_MUST_BE_EMPTY_OBJECT')\n    for chunk in chunks:\n        if not isinstance(chunk,list):\n            return fail('REGISTRY_FIELD_CHUNK_NOT_ARRAY')\n        for item in chunk:\n            if not isinstance(item,list) or len(item)!=4:\n                return fail('REGISTRY_FIELD_ROW_INVALID')\n            name,label,description,aliases=item\n            if not isinstance(name,str) or not name or name in fields:\n                return fail('REGISTRY_FIELD_NAME_INVALID_OR_DUPLICATE')\n            if not isinstance(label,str) or not label.strip() or not isinstance(description,str) or not description.strip():\n                return fail('REGISTRY_FIELD_METADATA_INVALID')\n            if not isinstance(aliases,list) or any(not isinstance(a,str) or not a.strip() for a in aliases):\n                return fail('REGISTRY_FIELD_ALIASES_INVALID')\n            fields[name]={'label':label,'description':description,'aliases':aliases or [label]}\n    if len(fields)!=282 or sum(1 for name in fields if name.endswith('_area_mm2'))!=267:\n        return fail('REGISTRY_FIELD_INVENTORY_MISMATCH')\n    required_json={'device_design_attributes','raw_value_annotations','additional_metrics','module_chip_models','unmapped_integration_values'}\n    if not required_json<=set(fields):\n        return fail('REGISTRY_JSON_FIELD_INVENTORY_MISMATCH')\n    composites=registry.get('composite_fields')\n    if not isinstance(composites,dict) or not composites:\n        return fail('REGISTRY_COMPOSITES_MISSING')\n    for name,composite in composites.items():\n        if not isinstance(composite,dict):\n            return fail('REGISTRY_COMPOSITE_INVALID')\n        expand_to=composite.get('expand_to')\n        if not isinstance(expand_to,list) or not expand_to:\n            return fail('REGISTRY_COMPOSITE_EXPAND_TO_INVALID')\n        if len(expand_to)!=len(set(expand_to)):\n            return fail('REGISTRY_COMPOSITE_EXPAND_TO_DUPLICATE')\n        if any(not isinstance(field,str) or field not in fields for field in expand_to):\n            return fail('REGISTRY_COMPOSITE_FIELD_UNKNOWN')\n    roles=registry.get('query_roles') or {}\n    if roles.get('sql_select_fields')!='all_fields' or roles.get('sql_filter_fields')!=['manufacturer','platform','device_type','device_model']:\n        return fail('REGISTRY_QUERY_ROLES_INVALID')\n    value_aliases=registry.get('value_aliases')\n    if not isinstance(value_aliases,dict):\n        return fail('REGISTRY_VALUE_ALIASES_INVALID')\n    for field,definitions in value_aliases.items():\n        if field not in roles.get('sql_filter_fields',[]) or not isinstance(definitions,dict):\n            return fail('REGISTRY_VALUE_ALIAS_FIELD_INVALID')\n        for canonical,definition in definitions.items():\n            vals=definition.get('aliases') if isinstance(definition,dict) else None\n            if not isinstance(canonical,str) or not isinstance(vals,list) or any(not isinstance(a,str) or not a.strip() for a in vals):\n                return fail('REGISTRY_VALUE_ALIAS_DEFINITION_INVALID')\n    return {'integration_competition_registry_raw_json':json.dumps(registry,ensure_ascii=False,separators=(',',':')),'integration_competition_registry_load_status':'ok','integration_competition_registry_load_error':'','integration_competition_registry_source':'env.base+3fieldchunks'}\n"
+          },
+          "position": {
+            "x": 720,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 720,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "integration_competition_identity_catalog_prepare",
+          "type": "custom",
+          "data": {
+            "title": "读取设备标准值目录查询",
+            "type": "code",
+            "outputs": {
+              "integration_competition_identity_catalog_request_body_json": {
+                "type": "string"
+              },
+              "catalog_body_json": {
+                "type": "string"
+              },
+              "integration_competition_identity_catalog_request_status": {
+                "type": "string"
+              },
+              "integration_competition_identity_catalog_request_error": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(context_json=''):\n    import json\n    try:\n        context=json.loads(context_json or '{}')\n        if not isinstance(context,dict):context={}\n    except Exception:context={}\n    sql=(\"SELECT DISTINCT manufacturer, platform, device_type, device_model FROM sn_cis_integration_competition_wide WHERE manufacturer IS NOT NULL AND platform IS NOT NULL AND device_type IS NOT NULL AND device_model IS NOT NULL ORDER BY manufacturer, platform, device_type, device_model\")\n    body_json=json.dumps({'sql':sql,'params':[],'user':str(context.get('user') or '').strip()},ensure_ascii=False,separators=(',',':'))\n    return {'catalog_body_json':body_json,'integration_competition_identity_catalog_request_body_json':body_json,'integration_competition_identity_catalog_request_status':'ok','integration_competition_identity_catalog_request_error':''}\n",
+            "variables": [
+              {
+                "variable": "context_json",
+                "value_selector": [
+                  "ctx",
+                  "context_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(context_json=''):\n    import json\n    try:\n        context=json.loads(context_json or '{}')\n        if not isinstance(context,dict):context={}\n    except Exception:context={}\n    sql=(\"SELECT DISTINCT manufacturer, platform, device_type, device_model FROM sn_cis_integration_competition_wide WHERE manufacturer IS NOT NULL AND platform IS NOT NULL AND device_type IS NOT NULL AND device_model IS NOT NULL ORDER BY manufacturer, platform, device_type, device_model\")\n    body_json=json.dumps({'sql':sql,'params':[],'user':str(context.get('user') or '').strip()},ensure_ascii=False,separators=(',',':'))\n    return {'catalog_body_json':body_json,'integration_competition_identity_catalog_request_body_json':body_json,'integration_competition_identity_catalog_request_status':'ok','integration_competition_identity_catalog_request_error':''}\n"
+          },
+          "position": {
+            "x": 1080,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 1080,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "http_identity_catalog",
+          "type": "custom",
+          "data": {
+            "title": "读取设备身份标准值目录",
+            "type": "http-request",
+            "method": "POST",
+            "url": "{{#env.SN_MYSQL_QUERY_URLS#}}",
+            "body": {
+              "type": "raw-text",
+              "data": "{{#integration_competition_identity_catalog_prepare.catalog_body_json#}}"
+            },
+            "headers": "Content-Type: application/json\nAccept: application/json",
+            "params": "",
+            "variables": [],
+            "authorization": {
+              "type": "no-auth",
+              "config": null
+            },
+            "timeout": {
+              "max_connect_timeout": 10000,
+              "max_read_timeout": 120000,
+              "max_write_timeout": 10000
+            },
+            "ssl_verify": true,
+            "retry_config": {
+              "retry_enabled": true,
+              "max_retries": 2,
+              "retry_interval": 1000
+            }
+          },
+          "position": {
+            "x": 1440,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 1440,
+            "y": 300
+          },
+          "width": 320,
+          "height": 140
+        },
+        {
+          "id": "integration_competition_identity_catalog_merge",
+          "type": "custom",
+          "data": {
+            "title": "合并MySQL真实设备标准值",
+            "type": "code",
+            "outputs": {
+              "integration_competition_registry_enriched_json": {
+                "type": "string"
+              },
+              "integration_competition_registry_load_status": {
+                "type": "string"
+              },
+              "integration_competition_registry_load_error": {
+                "type": "string"
+              },
+              "integration_competition_identity_catalog_row_count": {
+                "type": "string"
+              },
+              "integration_competition_identity_catalog_warning_count": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(registry_raw_json='', body='', status_code=0, request_status='ok'):\n    import json\n    import re\n    import unicodedata\n    def fail(message,raw='{}'):\n        return {'integration_competition_registry_enriched_json':raw or '{}','integration_competition_registry_load_status':'error','integration_competition_registry_load_error':message,'integration_competition_identity_catalog_row_count':'0','integration_competition_identity_catalog_warning_count':'0'}\n    if str(request_status or '')!='ok':\n        return fail('IDENTITY_CATALOG_REQUEST_NOT_READY',registry_raw_json)\n    try:\n        registry=json.loads(registry_raw_json or '{}')\n        payload=body if isinstance(body,dict) else json.loads(body or '{}')\n        http_status=int(status_code or 0)\n    except Exception:\n        return fail('IDENTITY_CATALOG_RESPONSE_INVALID',registry_raw_json)\n    if not isinstance(registry,dict) or registry.get('table')!='sn_cis_integration_competition_wide':\n        return fail('REGISTRY_TABLE_INVALID',registry_raw_json)\n    if http_status<200 or http_status>=300 or not isinstance(payload,dict):\n        return fail('IDENTITY_CATALOG_HTTP_INVALID',registry_raw_json)\n    if payload.get('code') not in (None,0,200,'0','200'):\n        return fail('IDENTITY_CATALOG_BACKEND_ERROR',registry_raw_json)\n    data=payload.get('data')\n    if not isinstance(data,dict):\n        return fail('IDENTITY_CATALOG_DATA_INVALID',registry_raw_json)\n    rows=data.get('rows')\n    if rows is None: rows=[]\n    if not isinstance(rows,list):\n        return fail('IDENTITY_CATALOG_ROWS_INVALID',registry_raw_json)\n    identity_fields=('manufacturer','platform','device_type','device_model')\n    fields=registry.get('fields') if isinstance(registry.get('fields'),dict) else {}\n    if any(field not in fields for field in identity_fields):\n        return fail('IDENTITY_CATALOG_FIELDS_INVALID',registry_raw_json)\n    approved_aliases={'manufacturer':{'Apple':['苹果'],'Xiaomi':['小米']},'platform':{'A16':['Apple A16','苹果A16'],'A17':['Apple A17','苹果A17'],'A18':['Apple A18','苹果A18'],'A19':['Apple A19','苹果A19']},'device_type':{'phone':['手机','智能手机']},'device_model':{}}\n    def normalize(value):\n        return re.sub(r'[\\s_-]+','',unicodedata.normalize('NFKC',str(value or '')).strip().casefold())\n    canonical={field:[] for field in identity_fields}\n    for row in rows:\n        if not isinstance(row,dict):\n            return fail('IDENTITY_CATALOG_ROW_INVALID',registry_raw_json)\n        for field in identity_fields:\n            value=row.get(field)\n            if value is None: continue\n            if isinstance(value,(dict,list,bool)):\n                return fail('IDENTITY_CATALOG_VALUE_TYPE_INVALID',registry_raw_json)\n            value=str(value)\n            if value.strip() and value not in canonical[field]:\n                canonical[field].append(value)\n    value_aliases={}\n    warning_count=0\n    for field in identity_fields:\n        approved_field=approved_aliases.get(field) if isinstance(approved_aliases.get(field),dict) else {}\n        proposed={}\n        for value in canonical[field]:\n            aliases=approved_field.get(value,[])\n            if not isinstance(aliases,list) or any(not isinstance(a,str) or not a.strip() for a in aliases):\n                return fail('IDENTITY_CATALOG_APPROVED_ALIASES_INVALID',registry_raw_json)\n            proposed[value]=[value]+aliases\n        alias_owners={}\n        for value,aliases in proposed.items():\n            for alias in aliases:\n                alias_owners.setdefault(normalize(alias),set()).add(value)\n        definitions={}\n        for value,aliases in proposed.items():\n            safe=[alias for alias in aliases if len(alias_owners.get(normalize(alias),set()))==1]\n            if not safe or normalize(value) in {key for key,owners in alias_owners.items() if len(owners)>1}:\n                warning_count+=1\n                continue\n            definitions[value]={'aliases':safe}\n        value_aliases[field]=definitions\n    registry['value_aliases']=value_aliases\n    registry['runtime_identity_catalog']={'source':'mysql_distinct','row_count':len(rows),'normalization_collision_count':warning_count}\n    return {'integration_competition_registry_enriched_json':json.dumps(registry,ensure_ascii=False,separators=(',',':')),'integration_competition_registry_load_status':'ok','integration_competition_registry_load_error':'','integration_competition_identity_catalog_row_count':str(len(rows)),'integration_competition_identity_catalog_warning_count':str(warning_count)}\n",
+            "variables": [
+              {
+                "variable": "registry_raw_json",
+                "value_selector": [
+                  "integration_competition_registry_load",
+                  "integration_competition_registry_raw_json"
+                ]
+              },
+              {
+                "variable": "body",
+                "value_selector": [
+                  "http_identity_catalog",
+                  "body"
+                ]
+              },
+              {
+                "variable": "status_code",
+                "value_selector": [
+                  "http_identity_catalog",
+                  "status_code"
+                ]
+              },
+              {
+                "variable": "request_status",
+                "value_selector": [
+                  "integration_competition_identity_catalog_prepare",
+                  "integration_competition_identity_catalog_request_status"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(registry_raw_json='', body='', status_code=0, request_status='ok'):\n    import json\n    import re\n    import unicodedata\n    def fail(message,raw='{}'):\n        return {'integration_competition_registry_enriched_json':raw or '{}','integration_competition_registry_load_status':'error','integration_competition_registry_load_error':message,'integration_competition_identity_catalog_row_count':'0','integration_competition_identity_catalog_warning_count':'0'}\n    if str(request_status or '')!='ok':\n        return fail('IDENTITY_CATALOG_REQUEST_NOT_READY',registry_raw_json)\n    try:\n        registry=json.loads(registry_raw_json or '{}')\n        payload=body if isinstance(body,dict) else json.loads(body or '{}')\n        http_status=int(status_code or 0)\n    except Exception:\n        return fail('IDENTITY_CATALOG_RESPONSE_INVALID',registry_raw_json)\n    if not isinstance(registry,dict) or registry.get('table')!='sn_cis_integration_competition_wide':\n        return fail('REGISTRY_TABLE_INVALID',registry_raw_json)\n    if http_status<200 or http_status>=300 or not isinstance(payload,dict):\n        return fail('IDENTITY_CATALOG_HTTP_INVALID',registry_raw_json)\n    if payload.get('code') not in (None,0,200,'0','200'):\n        return fail('IDENTITY_CATALOG_BACKEND_ERROR',registry_raw_json)\n    data=payload.get('data')\n    if not isinstance(data,dict):\n        return fail('IDENTITY_CATALOG_DATA_INVALID',registry_raw_json)\n    rows=data.get('rows')\n    if rows is None: rows=[]\n    if not isinstance(rows,list):\n        return fail('IDENTITY_CATALOG_ROWS_INVALID',registry_raw_json)\n    identity_fields=('manufacturer','platform','device_type','device_model')\n    fields=registry.get('fields') if isinstance(registry.get('fields'),dict) else {}\n    if any(field not in fields for field in identity_fields):\n        return fail('IDENTITY_CATALOG_FIELDS_INVALID',registry_raw_json)\n    approved_aliases={'manufacturer':{'Apple':['苹果'],'Xiaomi':['小米']},'platform':{'A16':['Apple A16','苹果A16'],'A17':['Apple A17','苹果A17'],'A18':['Apple A18','苹果A18'],'A19':['Apple A19','苹果A19']},'device_type':{'phone':['手机','智能手机']},'device_model':{}}\n    def normalize(value):\n        return re.sub(r'[\\s_-]+','',unicodedata.normalize('NFKC',str(value or '')).strip().casefold())\n    canonical={field:[] for field in identity_fields}\n    for row in rows:\n        if not isinstance(row,dict):\n            return fail('IDENTITY_CATALOG_ROW_INVALID',registry_raw_json)\n        for field in identity_fields:\n            value=row.get(field)\n            if value is None: continue\n            if isinstance(value,(dict,list,bool)):\n                return fail('IDENTITY_CATALOG_VALUE_TYPE_INVALID',registry_raw_json)\n            value=str(value)\n            if value.strip() and value not in canonical[field]:\n                canonical[field].append(value)\n    value_aliases={}\n    warning_count=0\n    for field in identity_fields:\n        approved_field=approved_aliases.get(field) if isinstance(approved_aliases.get(field),dict) else {}\n        proposed={}\n        for value in canonical[field]:\n            aliases=approved_field.get(value,[])\n            if not isinstance(aliases,list) or any(not isinstance(a,str) or not a.strip() for a in aliases):\n                return fail('IDENTITY_CATALOG_APPROVED_ALIASES_INVALID',registry_raw_json)\n            proposed[value]=[value]+aliases\n        alias_owners={}\n        for value,aliases in proposed.items():\n            for alias in aliases:\n                alias_owners.setdefault(normalize(alias),set()).add(value)\n        definitions={}\n        for value,aliases in proposed.items():\n            safe=[alias for alias in aliases if len(alias_owners.get(normalize(alias),set()))==1]\n            if not safe or normalize(value) in {key for key,owners in alias_owners.items() if len(owners)>1}:\n                warning_count+=1\n                continue\n            definitions[value]={'aliases':safe}\n        value_aliases[field]=definitions\n    registry['value_aliases']=value_aliases\n    registry['runtime_identity_catalog']={'source':'mysql_distinct','row_count':len(rows),'normalization_collision_count':warning_count}\n    return {'integration_competition_registry_enriched_json':json.dumps(registry,ensure_ascii=False,separators=(',',':')),'integration_competition_registry_load_status':'ok','integration_competition_registry_load_error':'','integration_competition_identity_catalog_row_count':str(len(rows)),'integration_competition_identity_catalog_warning_count':str(warning_count)}\n"
+          },
+          "position": {
+            "x": 1800,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 1800,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "integration_competition_registry_parse",
+          "type": "custom",
+          "data": {
+            "title": "解析整机集成度查询规则",
+            "type": "code",
+            "outputs": {
+              "integration_competition_registry_json": {
+                "type": "string"
+              },
+              "integration_competition_alias_index_json": {
+                "type": "string"
+              },
+              "integration_competition_registry_parse_status": {
+                "type": "string"
+              },
+              "integration_competition_registry_warnings_json": {
+                "type": "string"
+              },
+              "integration_competition_registry_error": {
+                "type": "string"
+              }
+            },
+            "source_code": "def main(integration_competition_registry_raw_json='', integration_competition_registry_load_status='', context_json=''):\n    import json\n    import re\n    import unicodedata\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def fail(status, message, warnings=None):\n        return {\n            'integration_competition_registry_json': '{}',\n            'integration_competition_alias_index_json': '{}',\n            'integration_competition_registry_parse_status': status,\n            'integration_competition_registry_warnings_json': dump(warnings or []),\n            'integration_competition_registry_error': message,\n        }\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    try:\n        question_context = json.loads(context_json or '{}')\n        question = str(question_context.get('question') or '') if isinstance(question_context, dict) else ''\n    except Exception:\n        question = ''\n    question_norm = normalize(question)\n\n    if str(integration_competition_registry_load_status or '') != 'ok':\n        return fail(str(integration_competition_registry_load_status or 'missing'), '整机集成度竞分查询配置未加载，无法生成 SQL 查询。')\n\n    try:\n        registry = json.loads(integration_competition_registry_raw_json or '{}')\n    except Exception as exc:\n        return fail('error', 'INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON 不是合法 JSON：%s' % exc)\n\n    if not isinstance(registry, dict):\n        return fail('error', 'INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON 顶层不是对象。')\n\n    table = str(registry.get('table') or '').strip()\n    fields = registry.get('fields') if isinstance(registry.get('fields'), dict) else {}\n    composites = registry.get('composite_fields') if isinstance(registry.get('composite_fields'), dict) else {}\n    query_roles = registry.get('query_roles') if isinstance(registry.get('query_roles'), dict) else {}\n    value_aliases = registry.get('value_aliases') if isinstance(registry.get('value_aliases'), dict) else {}\n    match_policies = registry.get('match_policies') if isinstance(registry.get('match_policies'), dict) else {}\n\n    warnings = []\n    errors = []\n\n    if 'match_policies' in registry and not isinstance(registry.get('match_policies'), dict):\n        errors.append('registry.match_policies 不是对象')\n    if not table or not valid_identifier(table):\n        errors.append('registry.table 缺失或不是安全 SQL 标识符')\n    if not fields:\n        errors.append('registry.fields 缺失或为空')\n\n    sql_filter_fields = query_roles.get('sql_filter_fields') if isinstance(query_roles.get('sql_filter_fields'), list) else []\n    for field in sql_filter_fields:\n        if field not in fields:\n            errors.append('sql_filter_fields 包含未定义字段: %s' % field)\n        if not valid_identifier(field):\n            errors.append('sql_filter_fields 包含非法字段名: %s' % field)\n\n    for field_name, field_cfg in fields.items():\n        if not valid_identifier(field_name):\n            errors.append('fields 包含非法字段名: %s' % field_name)\n        aliases = field_cfg.get('aliases') if isinstance(field_cfg, dict) else []\n        if not isinstance(aliases, list) or not aliases:\n            errors.append('字段缺少 aliases: %s' % field_name)\n\n    for composite_name, composite_cfg in composites.items():\n        if not isinstance(composite_cfg, dict):\n            errors.append('composite_fields.%s 不是对象' % composite_name)\n            continue\n        for ref in composite_cfg.get('expand_to') or []:\n            if ref not in fields:\n                errors.append('composite_fields.%s.expand_to 引用未定义字段: %s' % (composite_name, ref))\n\n    for value_field in value_aliases.keys():\n        if value_field not in fields:\n            warnings.append({'type': 'value_aliases_field_not_in_fields', 'field': value_field})\n        if value_field not in sql_filter_fields:\n            warnings.append({'type': 'value_aliases_field_not_sql_filter_field', 'field': value_field})\n\n    for policy_field, policy_cfg in match_policies.items():\n        if policy_field not in fields:\n            errors.append('match_policies 包含未定义字段: %s' % policy_field)\n        if not isinstance(policy_cfg, dict):\n            errors.append('match_policies.%s 不是对象' % policy_field)\n            continue\n        fuzzy = policy_cfg.get('fuzzy')\n        if fuzzy is None:\n            continue\n        if not isinstance(fuzzy, dict):\n            errors.append('match_policies.%s.fuzzy 不是对象' % policy_field)\n            continue\n        if not isinstance(fuzzy.get('enabled'), bool):\n            errors.append('match_policies.%s.fuzzy.enabled 必须为布尔值' % policy_field)\n            continue\n        if fuzzy.get('enabled') is not True:\n            continue\n        for boolean_key in ('require_same_digits', 'require_protected_tokens_equal'):\n            if not isinstance(fuzzy.get(boolean_key), bool):\n                errors.append('match_policies.%s.fuzzy.%s 必须为布尔值' % (policy_field, boolean_key))\n        min_alias_length = fuzzy.get('min_alias_length')\n        min_score_gap = fuzzy.get('min_score_gap')\n        rules = fuzzy.get('distance_rules')\n        tokens = fuzzy.get('protected_tokens')\n        if isinstance(min_alias_length, bool) or not isinstance(min_alias_length, int) or min_alias_length < 1:\n            errors.append('match_policies.%s.fuzzy.min_alias_length 必须为大于等于 1 的整数' % policy_field)\n        if isinstance(min_score_gap, bool) or not isinstance(min_score_gap, (int, float)) or not 0 <= min_score_gap <= 1:\n            errors.append('match_policies.%s.fuzzy.min_score_gap 必须在 [0,1] 内' % policy_field)\n        if not isinstance(rules, list) or not rules:\n            errors.append('match_policies.%s.fuzzy.distance_rules 必须为非空列表' % policy_field)\n        else:\n            for index, rule in enumerate(rules):\n                if not isinstance(rule, dict):\n                    errors.append('match_policies.%s.fuzzy.distance_rules[%s] 不是对象' % (policy_field, index))\n                    continue\n                max_length = rule.get('max_length')\n                max_distance = rule.get('max_distance')\n                if isinstance(max_length, bool) or not isinstance(max_length, int) or max_length < 1:\n                    errors.append('match_policies.%s.fuzzy.distance_rules[%s].max_length 非法' % (policy_field, index))\n                if isinstance(max_distance, bool) or not isinstance(max_distance, int) or max_distance < 0:\n                    errors.append('match_policies.%s.fuzzy.distance_rules[%s].max_distance 非法' % (policy_field, index))\n        if not isinstance(tokens, list) or not tokens or any(not isinstance(token, str) or not token.strip() for token in tokens):\n            errors.append('match_policies.%s.fuzzy.protected_tokens 必须为非空字符串列表' % policy_field)\n        token_fuzzy = fuzzy.get('protected_token_fuzzy')\n        if token_fuzzy is not None:\n            if not isinstance(token_fuzzy, dict):\n                errors.append('match_policies.%s.fuzzy.protected_token_fuzzy 不是对象' % policy_field)\n            elif not isinstance(token_fuzzy.get('enabled'), bool):\n                errors.append('match_policies.%s.fuzzy.protected_token_fuzzy.enabled 必须为布尔值' % policy_field)\n            elif token_fuzzy.get('enabled') is True:\n                token_max_distance = token_fuzzy.get('max_distance')\n                if isinstance(token_max_distance, bool) or not isinstance(token_max_distance, int) or token_max_distance < 0:\n                    errors.append('match_policies.%s.fuzzy.protected_token_fuzzy.max_distance 非法' % policy_field)\n\n    if errors:\n        return fail('error', '；'.join(errors), warnings)\n\n    def build_unique_alias_map(items):\n        buckets = {}\n        for target, aliases in items:\n            for alias in aliases:\n                key = normalize(alias)\n                if not key:\n                    continue\n                buckets.setdefault(key, set()).add(target)\n        unique = {}\n        conflicts = {}\n        for key, targets in buckets.items():\n            if len(targets) == 1:\n                unique[key] = next(iter(targets))\n            else:\n                conflicts[key] = sorted(targets)\n        return unique, conflicts\n\n    field_items = []\n    field_meta = {}\n    for field_name, field_cfg in fields.items():\n        aliases = [field_name]\n        if isinstance(field_cfg, dict):\n            aliases.append(str(field_cfg.get('label') or ''))\n            aliases.extend(str(a) for a in field_cfg.get('aliases') or [])\n            field_meta[field_name] = {\n                'label': field_cfg.get('label') or field_name,\n                'description': field_cfg.get('description') or '',\n            }\n        field_items.append((field_name, aliases))\n\n    composite_items = []\n    composite_meta = {}\n    for name, cfg in composites.items():\n        aliases = [name]\n        if isinstance(cfg, dict):\n            aliases.append(str(cfg.get('label') or ''))\n            aliases.extend(str(a) for a in cfg.get('aliases') or [])\n            composite_meta[name] = {\n                'label': cfg.get('label') or name,\n                'description': cfg.get('description') or '',\n                'aliases': cfg.get('aliases') or [],\n                'expand_to': cfg.get('expand_to') or [],\n            }\n        composite_items.append((name, aliases))\n\n    value_alias_to_filter = {}\n    value_alias_conflicts = {}\n    for field_name, field_values in value_aliases.items():\n        if not isinstance(field_values, dict):\n            continue\n        items = []\n        for canonical, cfg in field_values.items():\n            aliases = [canonical]\n            if isinstance(cfg, dict):\n                aliases.extend(str(a) for a in cfg.get('aliases') or [])\n            elif isinstance(cfg, list):\n                aliases.extend(str(a) for a in cfg)\n            items.append((canonical, aliases))\n        alias_map, conflicts = build_unique_alias_map(items)\n        if conflicts:\n            value_alias_conflicts[field_name] = conflicts\n        value_alias_to_filter[field_name] = alias_map\n\n    field_alias_to_field, field_conflicts = build_unique_alias_map(field_items)\n    composite_alias_to_name, composite_conflicts = build_unique_alias_map(composite_items)\n\n    if field_conflicts:\n        warnings.append({'type': 'field_alias_conflict_ignored', 'items': field_conflicts})\n    if composite_conflicts:\n        warnings.append({'type': 'composite_alias_conflict_ignored', 'items': composite_conflicts})\n    if value_alias_conflicts:\n        return fail(\n            'error',\n            'value_aliases 存在冲突，不能安全编译 SQL 查询。',\n            warnings + [{'type': 'value_alias_conflict', 'items': value_alias_conflicts}]\n        )\n\n    cross_conflicts = []\n    for alias in sorted(set(field_alias_to_field) & set(composite_alias_to_name)):\n        cross_conflicts.append({\n            'alias': alias,\n            'field': field_alias_to_field.get(alias),\n            'composite': composite_alias_to_name.get(alias),\n        })\n    if cross_conflicts:\n        warnings.append({'type': 'field_composite_alias_overlap', 'items': cross_conflicts})\n\n    # The unchanged SQL Planner only uses aliases for substring matching\n    # against the current question. Do not emit aliases that cannot match.\n    # This preserves matching semantics and avoids the 80k Dify Code output cap.\n    # Keep every dynamic identity alias: fuzzy matching relies on them.\n    field_alias_to_field = {\n        alias: field for alias, field in field_alias_to_field.items()\n        if question_norm and alias in question_norm\n    }\n    composite_alias_to_name = {\n        alias: name for alias, name in composite_alias_to_name.items()\n        if question_norm and alias in question_norm\n    }\n\n    alias_index = {\n        'normalization': 'NFKC + casefold + remove spaces/underscore/hyphen; plus sign is preserved',\n        'field_alias_to_field': field_alias_to_field,\n        'composite_alias_to_name': composite_alias_to_name,\n        'value_alias_to_filter': value_alias_to_filter,\n        'field_meta': field_meta,\n        'composite_meta': composite_meta,\n    }\n\n    registry_min = {\n        'version': registry.get('version') or '',\n        'table': table,\n        'query_roles': query_roles,\n        'fields': fields,\n        'composite_fields': composites,\n        'value_aliases': value_aliases,\n        'match_policies': match_policies,\n    }\n\n    compact_registry_json = dump(registry_min)\n    compact_alias_index_json = dump(alias_index)\n    if len(compact_registry_json) > 78000 or len(compact_alias_index_json) > 78000:\n        return fail('error', 'INTEGRATION_REGISTRY_PARSE_OUTPUT_BUDGET_EXCEEDED', warnings)\n\n    return {\n        'integration_competition_registry_json': compact_registry_json,\n        'integration_competition_alias_index_json': compact_alias_index_json,\n        'integration_competition_registry_parse_status': 'ok',\n        'integration_competition_registry_warnings_json': dump(warnings),\n        'integration_competition_registry_error': '',\n    }\n",
+            "variables": [
+              {
+                "variable": "integration_competition_registry_raw_json",
+                "value_selector": [
+                  "integration_competition_identity_catalog_merge",
+                  "integration_competition_registry_enriched_json"
+                ]
+              },
+              {
+                "variable": "integration_competition_registry_load_status",
+                "value_selector": [
+                  "integration_competition_identity_catalog_merge",
+                  "integration_competition_registry_load_status"
+                ]
+              },
+              {
+                "variable": "context_json",
+                "value_selector": [
+                  "ctx",
+                  "context_json"
+                ]
+              }
+            ],
+            "code_language": "python3",
+            "code": "def main(integration_competition_registry_raw_json='', integration_competition_registry_load_status='', context_json=''):\n    import json\n    import re\n    import unicodedata\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def fail(status, message, warnings=None):\n        return {\n            'integration_competition_registry_json': '{}',\n            'integration_competition_alias_index_json': '{}',\n            'integration_competition_registry_parse_status': status,\n            'integration_competition_registry_warnings_json': dump(warnings or []),\n            'integration_competition_registry_error': message,\n        }\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    try:\n        question_context = json.loads(context_json or '{}')\n        question = str(question_context.get('question') or '') if isinstance(question_context, dict) else ''\n    except Exception:\n        question = ''\n    question_norm = normalize(question)\n\n    if str(integration_competition_registry_load_status or '') != 'ok':\n        return fail(str(integration_competition_registry_load_status or 'missing'), '整机集成度竞分查询配置未加载，无法生成 SQL 查询。')\n\n    try:\n        registry = json.loads(integration_competition_registry_raw_json or '{}')\n    except Exception as exc:\n        return fail('error', 'INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON 不是合法 JSON：%s' % exc)\n\n    if not isinstance(registry, dict):\n        return fail('error', 'INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON 顶层不是对象。')\n\n    table = str(registry.get('table') or '').strip()\n    fields = registry.get('fields') if isinstance(registry.get('fields'), dict) else {}\n    composites = registry.get('composite_fields') if isinstance(registry.get('composite_fields'), dict) else {}\n    query_roles = registry.get('query_roles') if isinstance(registry.get('query_roles'), dict) else {}\n    value_aliases = registry.get('value_aliases') if isinstance(registry.get('value_aliases'), dict) else {}\n    match_policies = registry.get('match_policies') if isinstance(registry.get('match_policies'), dict) else {}\n\n    warnings = []\n    errors = []\n\n    if 'match_policies' in registry and not isinstance(registry.get('match_policies'), dict):\n        errors.append('registry.match_policies 不是对象')\n    if not table or not valid_identifier(table):\n        errors.append('registry.table 缺失或不是安全 SQL 标识符')\n    if not fields:\n        errors.append('registry.fields 缺失或为空')\n\n    sql_filter_fields = query_roles.get('sql_filter_fields') if isinstance(query_roles.get('sql_filter_fields'), list) else []\n    for field in sql_filter_fields:\n        if field not in fields:\n            errors.append('sql_filter_fields 包含未定义字段: %s' % field)\n        if not valid_identifier(field):\n            errors.append('sql_filter_fields 包含非法字段名: %s' % field)\n\n    for field_name, field_cfg in fields.items():\n        if not valid_identifier(field_name):\n            errors.append('fields 包含非法字段名: %s' % field_name)\n        aliases = field_cfg.get('aliases') if isinstance(field_cfg, dict) else []\n        if not isinstance(aliases, list) or not aliases:\n            errors.append('字段缺少 aliases: %s' % field_name)\n\n    for composite_name, composite_cfg in composites.items():\n        if not isinstance(composite_cfg, dict):\n            errors.append('composite_fields.%s 不是对象' % composite_name)\n            continue\n        for ref in composite_cfg.get('expand_to') or []:\n            if ref not in fields:\n                errors.append('composite_fields.%s.expand_to 引用未定义字段: %s' % (composite_name, ref))\n\n    for value_field in value_aliases.keys():\n        if value_field not in fields:\n            warnings.append({'type': 'value_aliases_field_not_in_fields', 'field': value_field})\n        if value_field not in sql_filter_fields:\n            warnings.append({'type': 'value_aliases_field_not_sql_filter_field', 'field': value_field})\n\n    for policy_field, policy_cfg in match_policies.items():\n        if policy_field not in fields:\n            errors.append('match_policies 包含未定义字段: %s' % policy_field)\n        if not isinstance(policy_cfg, dict):\n            errors.append('match_policies.%s 不是对象' % policy_field)\n            continue\n        fuzzy = policy_cfg.get('fuzzy')\n        if fuzzy is None:\n            continue\n        if not isinstance(fuzzy, dict):\n            errors.append('match_policies.%s.fuzzy 不是对象' % policy_field)\n            continue\n        if not isinstance(fuzzy.get('enabled'), bool):\n            errors.append('match_policies.%s.fuzzy.enabled 必须为布尔值' % policy_field)\n            continue\n        if fuzzy.get('enabled') is not True:\n            continue\n        for boolean_key in ('require_same_digits', 'require_protected_tokens_equal'):\n            if not isinstance(fuzzy.get(boolean_key), bool):\n                errors.append('match_policies.%s.fuzzy.%s 必须为布尔值' % (policy_field, boolean_key))\n        min_alias_length = fuzzy.get('min_alias_length')\n        min_score_gap = fuzzy.get('min_score_gap')\n        rules = fuzzy.get('distance_rules')\n        tokens = fuzzy.get('protected_tokens')\n        if isinstance(min_alias_length, bool) or not isinstance(min_alias_length, int) or min_alias_length < 1:\n            errors.append('match_policies.%s.fuzzy.min_alias_length 必须为大于等于 1 的整数' % policy_field)\n        if isinstance(min_score_gap, bool) or not isinstance(min_score_gap, (int, float)) or not 0 <= min_score_gap <= 1:\n            errors.append('match_policies.%s.fuzzy.min_score_gap 必须在 [0,1] 内' % policy_field)\n        if not isinstance(rules, list) or not rules:\n            errors.append('match_policies.%s.fuzzy.distance_rules 必须为非空列表' % policy_field)\n        else:\n            for index, rule in enumerate(rules):\n                if not isinstance(rule, dict):\n                    errors.append('match_policies.%s.fuzzy.distance_rules[%s] 不是对象' % (policy_field, index))\n                    continue\n                max_length = rule.get('max_length')\n                max_distance = rule.get('max_distance')\n                if isinstance(max_length, bool) or not isinstance(max_length, int) or max_length < 1:\n                    errors.append('match_policies.%s.fuzzy.distance_rules[%s].max_length 非法' % (policy_field, index))\n                if isinstance(max_distance, bool) or not isinstance(max_distance, int) or max_distance < 0:\n                    errors.append('match_policies.%s.fuzzy.distance_rules[%s].max_distance 非法' % (policy_field, index))\n        if not isinstance(tokens, list) or not tokens or any(not isinstance(token, str) or not token.strip() for token in tokens):\n            errors.append('match_policies.%s.fuzzy.protected_tokens 必须为非空字符串列表' % policy_field)\n        token_fuzzy = fuzzy.get('protected_token_fuzzy')\n        if token_fuzzy is not None:\n            if not isinstance(token_fuzzy, dict):\n                errors.append('match_policies.%s.fuzzy.protected_token_fuzzy 不是对象' % policy_field)\n            elif not isinstance(token_fuzzy.get('enabled'), bool):\n                errors.append('match_policies.%s.fuzzy.protected_token_fuzzy.enabled 必须为布尔值' % policy_field)\n            elif token_fuzzy.get('enabled') is True:\n                token_max_distance = token_fuzzy.get('max_distance')\n                if isinstance(token_max_distance, bool) or not isinstance(token_max_distance, int) or token_max_distance < 0:\n                    errors.append('match_policies.%s.fuzzy.protected_token_fuzzy.max_distance 非法' % policy_field)\n\n    if errors:\n        return fail('error', '；'.join(errors), warnings)\n\n    def build_unique_alias_map(items):\n        buckets = {}\n        for target, aliases in items:\n            for alias in aliases:\n                key = normalize(alias)\n                if not key:\n                    continue\n                buckets.setdefault(key, set()).add(target)\n        unique = {}\n        conflicts = {}\n        for key, targets in buckets.items():\n            if len(targets) == 1:\n                unique[key] = next(iter(targets))\n            else:\n                conflicts[key] = sorted(targets)\n        return unique, conflicts\n\n    field_items = []\n    field_meta = {}\n    for field_name, field_cfg in fields.items():\n        aliases = [field_name]\n        if isinstance(field_cfg, dict):\n            aliases.append(str(field_cfg.get('label') or ''))\n            aliases.extend(str(a) for a in field_cfg.get('aliases') or [])\n            field_meta[field_name] = {\n                'label': field_cfg.get('label') or field_name,\n                'description': field_cfg.get('description') or '',\n            }\n        field_items.append((field_name, aliases))\n\n    composite_items = []\n    composite_meta = {}\n    for name, cfg in composites.items():\n        aliases = [name]\n        if isinstance(cfg, dict):\n            aliases.append(str(cfg.get('label') or ''))\n            aliases.extend(str(a) for a in cfg.get('aliases') or [])\n            composite_meta[name] = {\n                'label': cfg.get('label') or name,\n                'description': cfg.get('description') or '',\n                'aliases': cfg.get('aliases') or [],\n                'expand_to': cfg.get('expand_to') or [],\n            }\n        composite_items.append((name, aliases))\n\n    value_alias_to_filter = {}\n    value_alias_conflicts = {}\n    for field_name, field_values in value_aliases.items():\n        if not isinstance(field_values, dict):\n            continue\n        items = []\n        for canonical, cfg in field_values.items():\n            aliases = [canonical]\n            if isinstance(cfg, dict):\n                aliases.extend(str(a) for a in cfg.get('aliases') or [])\n            elif isinstance(cfg, list):\n                aliases.extend(str(a) for a in cfg)\n            items.append((canonical, aliases))\n        alias_map, conflicts = build_unique_alias_map(items)\n        if conflicts:\n            value_alias_conflicts[field_name] = conflicts\n        value_alias_to_filter[field_name] = alias_map\n\n    field_alias_to_field, field_conflicts = build_unique_alias_map(field_items)\n    composite_alias_to_name, composite_conflicts = build_unique_alias_map(composite_items)\n\n    if field_conflicts:\n        warnings.append({'type': 'field_alias_conflict_ignored', 'items': field_conflicts})\n    if composite_conflicts:\n        warnings.append({'type': 'composite_alias_conflict_ignored', 'items': composite_conflicts})\n    if value_alias_conflicts:\n        return fail(\n            'error',\n            'value_aliases 存在冲突，不能安全编译 SQL 查询。',\n            warnings + [{'type': 'value_alias_conflict', 'items': value_alias_conflicts}]\n        )\n\n    cross_conflicts = []\n    for alias in sorted(set(field_alias_to_field) & set(composite_alias_to_name)):\n        cross_conflicts.append({\n            'alias': alias,\n            'field': field_alias_to_field.get(alias),\n            'composite': composite_alias_to_name.get(alias),\n        })\n    if cross_conflicts:\n        warnings.append({'type': 'field_composite_alias_overlap', 'items': cross_conflicts})\n\n    # The unchanged SQL Planner only uses aliases for substring matching\n    # against the current question. Do not emit aliases that cannot match.\n    # This preserves matching semantics and avoids the 80k Dify Code output cap.\n    # Keep every dynamic identity alias: fuzzy matching relies on them.\n    field_alias_to_field = {\n        alias: field for alias, field in field_alias_to_field.items()\n        if question_norm and alias in question_norm\n    }\n    composite_alias_to_name = {\n        alias: name for alias, name in composite_alias_to_name.items()\n        if question_norm and alias in question_norm\n    }\n\n    alias_index = {\n        'normalization': 'NFKC + casefold + remove spaces/underscore/hyphen; plus sign is preserved',\n        'field_alias_to_field': field_alias_to_field,\n        'composite_alias_to_name': composite_alias_to_name,\n        'value_alias_to_filter': value_alias_to_filter,\n        'field_meta': field_meta,\n        'composite_meta': composite_meta,\n    }\n\n    registry_min = {\n        'version': registry.get('version') or '',\n        'table': table,\n        'query_roles': query_roles,\n        'fields': fields,\n        'composite_fields': composites,\n        'value_aliases': value_aliases,\n        'match_policies': match_policies,\n    }\n\n    compact_registry_json = dump(registry_min)\n    compact_alias_index_json = dump(alias_index)\n    if len(compact_registry_json) > 78000 or len(compact_alias_index_json) > 78000:\n        return fail('error', 'INTEGRATION_REGISTRY_PARSE_OUTPUT_BUDGET_EXCEEDED', warnings)\n\n    return {\n        'integration_competition_registry_json': compact_registry_json,\n        'integration_competition_alias_index_json': compact_alias_index_json,\n        'integration_competition_registry_parse_status': 'ok',\n        'integration_competition_registry_warnings_json': dump(warnings),\n        'integration_competition_registry_error': '',\n    }\n"
+          },
+          "position": {
+            "x": 2160,
+            "y": 300
+          },
+          "positionAbsolute": {
+            "x": 2160,
+            "y": 300
+          },
+          "width": 320,
+          "height": 150
+        },
+        {
+          "id": "integration_competition_sql_plan",
+          "type": "custom",
+          "data": {
+            "title": "规划整机集成度查询方案",
+            "type": "code",
+            "outputs": {
+              "integration_competition_sql_plan_json": {
+                "type": "string",
+                "children": null
+              },
+              "integration_competition_sql_compile_status": {
+                "type": "string",
+                "children": null
+              },
+              "integration_competition_sql_compile_error_answer": {
+                "type": "string",
+                "children": null
+              },
+              "integration_competition_selected_field_meta_json": {
+                "type": "string",
+                "children": null
+              },
+              "integration_competition_select_field_summary": {
+                "type": "string",
+                "children": null
+              },
+              "integration_competition_current_execution_context_json": {
+                "children": null,
+                "type": "string"
+              },
+              "integration_competition_memory_write_ready": {
+                "children": null,
+                "type": "boolean"
+              }
+            },
+            "source_code": "def main(context_json='', integration_competition_registry_json='', integration_competition_alias_index_json='', integration_competition_registry_parse_status='', integration_competition_registry_error='', integration_competition_query_memory_json=''):\n    import json\n    import re\n    import unicodedata\n\n    def load_json(raw, default):\n        try:\n            obj = json.loads(raw or '')\n            return obj if isinstance(obj, type(default)) else default\n        except Exception:\n            return default\n\n    def dump(obj):\n        return json.dumps(obj, ensure_ascii=False, separators=(',', ':'))\n\n    def normalize(value):\n        text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()\n        return re.sub(r'[\\s_\\-]+', '', text)\n\n    def valid_identifier(value):\n        return bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', str(value or '')))\n\n    def as_int(value, default):\n        try:\n            n = int(value)\n            return n if n > 0 else default\n        except Exception:\n            return default\n\n    def stable_unique(values):\n        result = []\n        for value in values:\n            if value not in result:\n                result.append(value)\n        return result\n\n    REFERENCE_WORDS = (\n        '它们', '他们', '这些', '那些', '上述',\n        '前面', '之前', '刚才', '上次', '上一轮',\n    )\n    REFERENCE_PHRASES = (\n        '这些设备', '这些机型', '这些型号', '这些厂商', '这些平台', '这些设备类型',\n        '这些集成度数据', '这些模块配置', '上述设备', '上述机型', '上述型号',\n        '上述厂商', '上述平台', '刚才的设备', '刚才的结果',\n        '之前的设备', '之前的机型', '上一轮结果', '上次查询结果',\n    )\n\n    def has_reference_expression(question_norm):\n        # 短语优先；轻量指代只影响 scope 决策，不参与字段/别名解析。\n        if any(normalize(phrase) in question_norm for phrase in REFERENCE_PHRASES):\n            return True\n        return any(normalize(word) in question_norm for word in REFERENCE_WORDS)\n\n    def normalize_semantic_filters(items, allowed_fields, allowed_composites):\n        if not isinstance(items, list):\n            raise ValueError('memory semantic filters invalid')\n        result = []\n        for item in items:\n            if not isinstance(item, dict):\n                raise ValueError('memory semantic filter invalid')\n            target_type, target, operator = item.get('target_type'), item.get('target'), item.get('operator')\n            if operator not in ('exists', 'empty'):\n                raise ValueError('memory semantic operator invalid')\n            if (target_type == 'field' and target not in allowed_fields) or (target_type == 'composite' and target not in allowed_composites):\n                raise ValueError('memory semantic target invalid')\n            if target_type not in ('field', 'composite'):\n                raise ValueError('memory semantic target type invalid')\n            normalized = {'target_type': target_type, 'target': target, 'operator': operator}\n            if normalized not in result:\n                result.append(normalized)\n        return result\n\n    def normalize_scope(scope, allowed_fields, filter_fields, canonical_values, allowed_composites):\n        if not isinstance(scope, dict) or not isinstance(scope.get('where_filters'), dict) or not isinstance(scope.get('select_fields'), list) or not isinstance(scope.get('selected_composites'), list):\n            raise ValueError('scope contract invalid')\n        where = {}\n        for field, values in scope['where_filters'].items():\n            if field not in filter_fields or not isinstance(values, list) or not values:\n                raise ValueError('memory filter invalid')\n            if any(not isinstance(value, str) or value not in canonical_values.get(field, ()) for value in values):\n                raise ValueError('memory canonical value invalid')\n            where[field] = stable_unique(values)\n        selected = stable_unique(scope['select_fields'])\n        if any(not isinstance(field, str) or field not in allowed_fields for field in selected):\n            raise ValueError('memory select field invalid')\n        composites = stable_unique(scope['selected_composites'])\n        if any(not isinstance(name, str) or name not in allowed_composites for name in composites):\n            raise ValueError('memory composite invalid')\n        semantics = normalize_semantic_filters(scope.get('semantic_filters', []), allowed_fields, allowed_composites)\n        return {'source_user_query': str(scope.get('source_user_query') or ''), 'where_filters': where, 'semantic_filters': semantics, 'select_fields': selected, 'selected_composites': composites}\n\n    def safe_parse_query_memory(raw, allowed_fields, filter_fields, canonical_values, allowed_composites):\n        if not raw or str(raw).strip() in ('', 'null', '{}'):\n            return [], '', False\n        try:\n            memory = json.loads(raw)\n            if not isinstance(memory, dict) or memory.get('version') != 'integration_competition_query_memory_v1':\n                raise ValueError('memory envelope invalid')\n            raw_scope = memory.get('last_scope')\n            # 只为读取已部署的 v1 记忆保留旧 query_scopes 兼容入口。\n            if raw_scope is None and isinstance(memory.get('query_scopes'), list) and memory['query_scopes']:\n                raw_scope = memory['query_scopes'][-1]\n            if raw_scope is None:\n                return [], str(memory.get('current_user_query') or ''), False\n            scope = normalize_scope(raw_scope, allowed_fields, filter_fields, canonical_values, allowed_composites)\n            return [scope], str(memory.get('current_user_query') or ''), False\n        except Exception:\n            return [], '', True\n\n    def resolve_query_scope(history, question, behavior, where_filters, semantic_filters, select_fields, selected_composites):\n        base = history[-1] if history and behavior in ('inherit', 'extend') else {}\n        effective_where = dict(base.get('where_filters') or {})\n        effective_semantics = list(base.get('semantic_filters') or [])\n        if behavior == 'reset':\n            effective_where = dict(where_filters)\n            effective_semantics = list(semantic_filters)\n        elif behavior == 'extend':\n            effective_where.update(where_filters)\n            for item in semantic_filters:\n                if item not in effective_semantics:\n                    effective_semantics.append(item)\n        effective = {\n            'source_user_query': question,\n            'where_filters': effective_where,\n            'semantic_filters': effective_semantics,\n            'select_fields': list(select_fields),\n            'selected_composites': list(selected_composites),\n        }\n        return effective\n\n    def compile_scoped_where(scopes, filter_fields):\n        clauses, params, seen = [], [], []\n        for scope in scopes:\n            signature = tuple((field, tuple(scope['where_filters'].get(field) or [])) for field in filter_fields if scope['where_filters'].get(field))\n            if not signature or signature in seen:\n                continue\n            seen.append(signature)\n            parts = []\n            for field, values in signature:\n                parts.append('`%s` IN (%s)' % (field, ','.join(['?'] * len(values))))\n                params.extend(values)\n            clauses.append('(' + ' AND '.join(parts) + ')')\n        return clauses, params\n\n    def parse_presence_filters(question_norm, alias_hits, allowed_fields, allowed_composites):\n        # 通用存在性语义属于 Query Parser；Registry 仍仅提供字段和 composite 别名。\n        empty_words = ('不存在', '未提供', '没有', '缺少', '为空', '空值', '无')\n        exists_words = ('不为空', '存在', '具备', '拥有', '带有', '包含', '非空', '有值', '有')\n        filters = []\n        consumed_operator_positions = set()\n        for hit in alias_hits:\n            target = hit.get('target') if isinstance(hit, dict) else None\n            if not isinstance(target, dict) or target.get('kind') not in ('field', 'composite'):\n                continue\n            target_type = target.get('kind')\n            name = target.get('name')\n            if (target_type == 'field' and name not in allowed_fields) or (target_type == 'composite' and name not in allowed_composites):\n                continue\n            left = question_norm[max(0, hit['start'] - 4):hit['start']]\n            right = question_norm[hit['end']:hit['end'] + 4]\n            candidates = []\n            for operator, words in (('empty', empty_words), ('exists', exists_words)):\n                for word in words:\n                    if right.startswith(word):\n                        candidates.append((operator, hit['end'], 0, -len(word)))\n                    if left.endswith(word):\n                        candidates.append((operator, hit['start'] - len(word), 1, -len(word)))\n            # 同侧短语按长度优先，避免“不为空”降级命中“为空”、\n            # “不存在”降级命中“存在”。\n            candidates.sort(key=lambda item: (item[2], item[3], 0 if item[0] == 'empty' else 1))\n            chosen = next((item for item in candidates if item[1] not in consumed_operator_positions), None)\n            if right.startswith('有哪些'):\n                chosen = None\n            if chosen:\n                semantic_filter = {'target_type': target_type, 'target': name, 'operator': chosen[0]}\n                if semantic_filter not in filters:\n                    filters.append(semantic_filter)\n                    consumed_operator_positions.add(chosen[1])\n        return filters\n\n    def compile_presence_where(filters, composite_meta, allowed_fields):\n        clauses = []\n        for item in filters:\n            operator = item.get('operator')\n            target_type = item.get('target_type')\n            target = item.get('target')\n            if target_type == 'composite':\n                meta = composite_meta.get(target) if isinstance(composite_meta.get(target), dict) else {}\n                fields = [field for field in meta.get('expand_to') or [] if field in allowed_fields and valid_identifier(field)]\n            elif target_type == 'field' and target in allowed_fields and valid_identifier(target):\n                fields = [target]\n            else:\n                fields = []\n            field_clauses = []\n            for field in fields:\n                if operator == 'exists':\n                    field_clauses.append(\"(`%s` IS NOT NULL AND `%s` != '')\" % (field, field))\n                elif operator == 'empty':\n                    field_clauses.append(\"(`%s` IS NULL OR `%s` = '')\" % (field, field))\n            if field_clauses:\n                joiner = ' OR ' if operator == 'exists' else ' AND '\n                clauses.append('(' + joiner.join(field_clauses) + ')')\n        return clauses\n\n    def fail(status, message):\n        payload = {\n            'status': status,\n            'backend': 'mysql_http',\n            'readonly': True,\n            'error': message,\n        }\n        return {\n            'integration_competition_sql_plan_json': dump(payload),\n            'integration_competition_sql_compile_status': status,\n            'integration_competition_sql_compile_error_answer': '整机集成度 SQL 查询计划生成失败，原因：%s' % message,\n            'integration_competition_selected_field_meta_json': '{}',\n            'integration_competition_select_field_summary': '',\n            'integration_competition_current_execution_context_json': '{}',\n            'integration_competition_memory_write_ready': False,\n        }\n\n    if str(integration_competition_registry_parse_status or '') != 'ok':\n        return fail(str(integration_competition_registry_parse_status or 'error'), integration_competition_registry_error or '整机集成度 registry 未成功解析。')\n\n    ctx = load_json(context_json, {})\n    registry = load_json(integration_competition_registry_json, {})\n    alias_index = load_json(integration_competition_alias_index_json, {})\n\n    question = str(ctx.get('question') or '')\n    table = str(registry.get('table') or '').strip()\n    fields = registry.get('fields') if isinstance(registry.get('fields'), dict) else {}\n    query_roles = registry.get('query_roles') if isinstance(registry.get('query_roles'), dict) else {}\n    sql_filter_fields = query_roles.get('sql_filter_fields') if isinstance(query_roles.get('sql_filter_fields'), list) else []\n    sql_select_mode = query_roles.get('sql_select_fields') or 'all_fields'\n    normalized_question = unicodedata.normalize('NFKC', question)\n    result_limit_match = re.search(\n        r'(?:只看|仅看|只返回|仅返回|返回|最多返回|给我|限制(?:为|到)?|只查询|仅查询|查询|仅显示|只显示|显示|只取|仅取)\\s*(?:前\\s*)?(\\d+)\\s*(?:条(?:数据|结果)?|个结果|行(?:数据)?)',\n        normalized_question,\n    )\n    ranking_intent = re.search(\n        r'(?i)top\\s*\\d+|最高|最低|最大|最小|最少|排名|排行|(?:前|后)\\s*\\d+\\s*名|第\\s*\\d+',\n        normalized_question,\n    )\n    limit = as_int(result_limit_match.group(1), None) if result_limit_match and not ranking_intent else None\n\n    if not question.strip():\n        return fail('error', '用户问题为空。')\n    if not table or not valid_identifier(table):\n        return fail('error', 'registry.table 缺失或非法。')\n    if not fields:\n        return fail('error', 'registry.fields 为空。')\n\n    allowed_fields = set(fields.keys())\n    filter_fields = [f for f in sql_filter_fields if f i

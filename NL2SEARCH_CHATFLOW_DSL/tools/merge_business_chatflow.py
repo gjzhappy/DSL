@@ -37,7 +37,325 @@ CONFIGS = {
         "filter_fields": ["manufacturer", "platform", "power_domain", "pin_net_name", "inductor"],
         "prompt_terms": ["电源域", "Pin/Net", "近端电容", "远端电容", "far_total_capacitance"],
         "forbidden_terms": ["PHONE_MODULE_JF_CHATFLOW", "摄像模组", "HDR模式", "这些手机", "这些机型"]
-    }
+    },
+    "INTEGRATION_COMPETITION": {
+        "stem": "INTEGRATION_COMPETITION_CHATFLOW",
+        "directory": "INTEGRATION_COMPETITION_CHATFLOW",
+        "app_name": "INTEGRATION_COMPETITION_CHATFLOW",
+        "prefix": "integration_competition_",
+        "registry_env": "INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON",
+        "field_chunk_envs": ["INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_00_JSON", "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_01_JSON", "INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_02_JSON"],
+        "area_field_count": 267,
+        "json_fields": ["device_design_attributes", "raw_value_annotations", "additional_metrics", "module_chip_models", "unmapped_integration_values"],
+        "system_env": "INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT",
+        "user_env": "INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT",
+        "table": "sn_cis_integration_competition_wide",
+        "fields": [
+            "manufacturer",
+            "platform",
+            "device_type",
+            "device_model",
+            "release_date",
+            "release_date_text",
+            "device_pic_url",
+            "source_document_id",
+            "area_unit",
+            "semantic_version",
+            "integration_total_area_mm2",
+            "small_system_total_area_mm2",
+            "peripheral_total_area_mm2",
+            "wireless_total_area_mm2",
+            "wireless_rf_total_area_mm2",
+            "wireless_nc_total_area_mm2",
+            "camera_total_area_mm2",
+            "fpc_total_area_mm2",
+            "io_expansion_total_area_mm2",
+            "wireless_nc_nfc_total_area_mm2",
+            "pmu_total_area_mm2",
+            "scharger_total_area_mm2",
+            "sensor_lowercase_group_total_area_mm2",
+            "sensor_uppercase_group_total_area_mm2",
+            "sim_total_area_mm2",
+            "test_point_total_area_mm2",
+            "storage_total_area_mm2",
+            "battery_total_area_mm2",
+            "analog_phy_total_area_mm2",
+            "wireless_rf_frontend_total_area_mm2",
+            "wireless_antenna_total_area_mm2",
+            "temperature_detection_total_area_mm2",
+            "display_total_area_mm2",
+            "audio_total_area_mm2",
+            "small_system_modem_area_mm2",
+            "small_system_modem_pmu_area_mm2",
+            "small_system_pmk_area_mm2",
+            "small_system_pmu1_area_mm2",
+            "small_system_pmu2_area_mm2",
+            "small_system_rfic_pmu_area_mm2",
+            "small_system_soc_total_area_mm2",
+            "small_system_ufs_total_area_mm2",
+            "peripheral_composite_area_mm2",
+            "power_charger_area_mm2",
+            "audio_codec_area_mm2",
+            "display_lcd_driver_power_area_mm2",
+            "power_scharger_area_mm2",
+            "power_wireless_charger_area_mm2",
+            "wireless_nc_uwb_area_mm2",
+            "wireless_nc_wifi_bt_baseband_area_mm2",
+            "wireless_rf_et_power_area_mm2",
+            "wireless_rf_mmw_smr_frontend_area_mm2",
+            "wireless_rf_rfic_mmw_peripherals_area_mm2",
+            "wireless_rf_cellular_rf_frontend_area_mm2",
+            "wireless_rf_tiantong_beidou_area_mm2",
+            "wireless_rf_satcom_tiantong_beidou_xingwang_area_mm2",
+            "wireless_rf_xingwang_1_0_area_mm2",
+            "power_5v_boost_area_mm2",
+            "camera_pwr_area_mm2",
+            "camera_front_cam_area_mm2",
+            "camera_front_camera_area_mm2",
+            "camera_points_sub_cam_lga_area_mm2",
+            "camera_rear_cam1_area_mm2",
+            "camera_rear_cam2_area_mm2",
+            "camera_rear_camera1_area_mm2",
+            "camera_rear_camera2_area_mm2",
+            "interface_fpc_interface_area_mm2",
+            "interface_fpc_interface_1_area_mm2",
+            "interface_fpc_interface_2_area_mm2",
+            "interface_fpc_interface_main_area_mm2",
+            "interface_fpc_interface_main_rf_area_mm2",
+            "interface_fpc_ntc_fpc_interface_main_area_mm2",
+            "interface_fpc_interface_typec_area_mm2",
+            "interface_io_expansion_iodie_area_mm2",
+            "wireless_nc_nfc_nfc_area_mm2",
+            "wireless_nc_nfc_110t_area_mm2",
+            "wireless_nc_nfc_fe_area_mm2",
+            "wireless_nc_nfc_fe_2_area_mm2",
+            "power_pmu_pmu0_buck1_area_mm2",
+            "power_pmu_pmu0_buck2_area_mm2",
+            "power_pmu_pmu0_digital_clk_area_mm2",
+            "power_pmu_pmu0_ldo_area_mm2",
+            "power_pmu_pmu1_buck1_area_mm2",
+            "power_pmu_pmu1_buck2_area_mm2",
+            "power_pmu_pmu2_buck1_area_mm2",
+            "power_pmu_pmu2_buck2_area_mm2",
+            "power_scharger_charger_res_uppercase_area_mm2",
+            "power_scharger_charger2_area_mm2",
+            "power_scharger_buck_charger_area_mm2",
+            "power_scharger_charger_res_titlecase_area_mm2",
+            "power_scharger_charger1_v700_area_mm2",
+            "power_scharger_sc1_area_mm2",
+            "power_scharger_sc2_area_mm2",
+            "power_scharger_scharger_v510_area_mm2",
+            "power_scharger_wl_charger_area_mm2",
+            "sensor_lowercase_group_sensor_area_mm2",
+            "sensor_uppercase_group_sensor_area_mm2",
+            "sensor_ambient_light_and_proximity_area_mm2",
+            "sensor_ambientandproximity_area_mm2",
+            "sensor_sar_1_area_mm2",
+            "sensor_sar_sensor_area_mm2",
+            "interface_sim_main_area_mm2",
+            "interface_sim_sd_area_mm2",
+            "interface_sim_sd_ioexp_area_mm2",
+            "small_system_soc_gnd_area_mm2",
+            "small_system_soc_gpio_interface_area_mm2",
+            "small_system_soc_hs_interface_area_mm2",
+            "small_system_soc_pwr1_area_mm2",
+            "small_system_soc_pwr2_area_mm2",
+            "small_system_soc_pwr3_area_mm2",
+            "small_system_soc_pwr4_area_mm2",
+            "small_system_ufs_memory_area_mm2",
+            "test_point_sim_lga_point_area_mm2",
+            "test_point_test_point_lowercase_area_mm2",
+            "test_point_test_point_titlecase_area_mm2",
+            "test_point_test_point_shields_area_mm2",
+            "storage_memory_area_mm2",
+            "power_battery_battery_area_mm2",
+            "power_battery_battery_1_protection_area_mm2",
+            "power_battery_battery_bjeh_protection_area_mm2",
+            "power_battery_battery_main_area_mm2",
+            "power_battery_bjeh_area_mm2",
+            "wireless_nc_gnss_bds_baseband_area_mm2",
+            "wireless_rf_satellite_bds_trx_area_mm2",
+            "wireless_rf_satellite_bds_trx_pa_area_mm2",
+            "wireless_rf_satellite_bds_trx1_rf_end_area_mm2",
+            "wireless_rf_satellite_bds_trx2_rf_end_area_mm2",
+            "wireless_nc_connectivity_1106_control_area_mm2",
+            "wireless_nc_connectivity_1106_power1_area_mm2",
+            "wireless_nc_connectivity_1106_power2_area_mm2",
+            "wireless_nc_connectivity_1107_control_area_mm2",
+            "wireless_nc_connectivity_1107_power1_area_mm2",
+            "wireless_nc_connectivity_1107_power2_area_mm2",
+            "wireless_nc_connectivity_control_1_area_mm2",
+            "wireless_nc_connectivity_control_bb_area_mm2",
+            "wireless_nc_connectivity_control_1107_area_mm2",
+            "wireless_nc_connectivity_power_1107_area_mm2",
+            "wireless_nc_connectivity_power_6506_area_mm2",
+            "wireless_nc_connectivity_power1_area_mm2",
+            "wireless_nc_connectivity_power1_1_area_mm2",
+            "wireless_nc_connectivity_power2_area_mm2",
+            "wireless_nc_connectivity_power2_1_area_mm2",
+            "wireless_nc_satellite_fxz_bbic_power_area_mm2",
+            "wireless_rf_satellite_fxz_bbic_rf_area_mm2",
+            "wireless_rf_satellite_fxz_rf_area_mm2",
+            "wireless_rf_satellite_fxz_rf_1_area_mm2",
+            "wireless_rf_satellite_fxz_rf_2_area_mm2",
+            "wireless_nc_gnss_gps_l1_l5_area_mm2",
+            "wireless_rf_band_path_lb_main_area_mm2",
+            "wireless_antenna_lds_ant_area_mm2",
+            "wireless_rf_composite_mhb_main_gpsl1_wifi_c0_nr1_area_mm2",
+            "wireless_rf_satellite_pgy_nsv_drx_area_mm2",
+            "wireless_nc_satellite_pgy_bb_main_area_mm2",
+            "wireless_rf_satellite_pgy_drx_area_mm2",
+            "wireless_rf_satellite_pgy_drx_1_area_mm2",
+            "wireless_rf_satellite_pgy_trx_area_mm2",
+            "wireless_rf_satellite_pgy_trx_1_area_mm2",
+            "wireless_rf_satellite_pgy_trx_pa_area_mm2",
+            "wireless_satellite_pgy212r_unclassified_area_mm2",
+            "wireless_rf_satellite_pgy21tx_candidate_area_mm2",
+            "wireless_nc_rf_path_rf0_2g4_c0_area_mm2",
+            "wireless_nc_rf_path_rf1_5g_c0_area_mm2",
+            "wireless_nc_rf_path_rf2_2g4_c1_area_mm2",
+            "wireless_nc_rf_path_rf3_5g_c1_area_mm2",
+            "wireless_antenna_side_ant_area_mm2",
+            "wireless_nc_wifi_2g4_c0_area_mm2",
+            "wireless_nc_wifi_2g4_c1_area_mm2",
+            "wireless_nc_wifi_5g_c0_area_mm2",
+            "wireless_nc_wifi_5g_c1_area_mm2",
+            "wireless_rf_shared_xrz_gg_fxz_1t3r_area_mm2",
+            "wireless_rf_satellite_xrz_prx_drx_area_mm2",
+            "wireless_rf_satellite_xrz_trx_pa_area_mm2",
+            "interface_analog_phy_usb_interface_area_mm2",
+            "interface_analog_phy_usb_protection_titlecase_area_mm2",
+            "interface_analog_phy_usb_protection_lowercase_area_mm2",
+            "wireless_rf_frontend_afl_3_lb_trx_area_mm2",
+            "wireless_rf_frontend_afl_3_mhb_trx_area_mm2",
+            "wireless_rf_frontend_afl_6_tx0_prx_area_mm2",
+            "wireless_rf_frontend_afl_6_tx1_mimo_p_area_mm2",
+            "wireless_rf_frontend_boost_bypass_area_mm2",
+            "wireless_rf_frontend_gsm_pa_area_mm2",
+            "wireless_rf_frontend_gsm_pa_1_area_mm2",
+            "wireless_rf_frontend_lb_l_pamid_area_mm2",
+            "wireless_rf_frontend_lb_lpamid_area_mm2",
+            "wireless_rf_frontend_lb_lpamid_1_area_mm2",
+            "wireless_rf_frontend_lb_rf_switch_area_mm2",
+            "wireless_rf_frontend_lb_rf_switch_1_area_mm2",
+            "wireless_rf_frontend_lmhb_ldifem_area_mm2",
+            "wireless_rf_frontend_lmhb_l_difem_area_mm2",
+            "wireless_rf_frontend_lmhb_ldifem_1_area_mm2",
+            "wireless_rf_frontend_mhb_l_pamid_area_mm2",
+            "wireless_rf_frontend_mhb_l_pamid_1_area_mm2",
+            "wireless_rf_frontend_mhb_rf_switch_area_mm2",
+            "wireless_rf_frontend_mhb_rf_switch_1_area_mm2",
+            "wireless_rf_frontend_mhb_trx_area_mm2",
+            "wireless_rf_frontend_mimo_drx_area_mm2",
+            "wireless_rf_frontend_mimo_drx_2_area_mm2",
+            "wireless_rf_frontend_mimo_drx_lna_area_mm2",
+            "wireless_rf_frontend_mimo_lna_area_mm2",
+            "wireless_rf_frontend_mimo_prx_lna_area_mm2",
+            "wireless_rf_frontend_mimo_prx_lna_1_area_mm2",
+            "wireless_rf_frontend_rf_bypass_area_mm2",
+            "wireless_rf_frontend_rf_pa_pmu_0_area_mm2",
+            "wireless_rf_frontend_rf_pa_pmu_1_area_mm2",
+            "wireless_rf_frontend_rf_pa_pmu1_apt_1_area_mm2",
+            "wireless_rf_frontend_rf_pa_pmu1_et_area_mm2",
+            "wireless_rf_frontend_rf_pmu0_et_area_mm2",
+            "wireless_rf_frontend_rf_pmu0_et_1_area_mm2",
+            "wireless_rf_frontend_rf_pwr_area_mm2",
+            "wireless_rf_frontend_rfic_pmu_area_mm2",
+            "wireless_rf_frontend_rfic_port_area_mm2",
+            "wireless_rf_frontend_rfic_port_1_area_mm2",
+            "wireless_rf_frontend_rfic_power_area_mm2",
+            "wireless_rf_frontend_rfic_power_1_area_mm2",
+            "wireless_rf_frontend_sub_3g_mhb_trx_area_mm2",
+            "wireless_rf_frontend_sub_3g_mhb_trx_1_area_mm2",
+            "wireless_rf_frontend_sub3g_lb_trx_area_mm2",
+            "wireless_rf_frontend_sub6g_tx0_prx_area_mm2",
+            "wireless_rf_frontend_sub6g_tx0_prx_1_area_mm2",
+            "wireless_rf_frontend_sub6g_tx1_mimo_p_area_mm2",
+            "wireless_rf_frontend_sub6g_tx1_mimo_p_1_area_mm2",
+            "wireless_antenna_ant_lb_area_mm2",
+            "wireless_antenna_ant_lb1_area_mm2",
+            "wireless_antenna_ant_mhb_1_afl_3_1_m77_2_m79_2_area_mm2",
+            "wireless_antenna_ant_mhb_1_m77_1_m79_1_m77_6_m79_3_area_mm2",
+            "wireless_antenna_ant_mhb_3_afl_3_3_m77_1_n79_1_pgy_1_area_mm2",
+            "wireless_antenna_ant_mhb_3_afl_3_3_m77_1_n79_1_pgy_1_1_area_mm2",
+            "wireless_antenna_ant_mhb_3_m77_2_m79_2_pgy_area_mm2",
+            "wireless_antenna_ant_mhb_4_m77_3_5g_abf1_area_mm2",
+            "wireless_antenna_ant_mhb_4_m77_3_uwb_area_mm2",
+            "wireless_antenna_ant_mhb_4_m77_3_uwb_1_area_mm2",
+            "wireless_antenna_ant_nc1_area_mm2",
+            "wireless_antenna_ant_nc1_1_area_mm2",
+            "wireless_antenna_ant_nc1_l1_m7879_3_area_mm2",
+            "wireless_antenna_ant_nc2_area_mm2",
+            "wireless_antenna_ant_nc2_lb2_area_mm2",
+            "wireless_antenna_ant_pgy_2_77_4_77_5_77_6_79_3_79_4_area_mm2",
+            "wireless_antenna_ant_pgy_2_77_4_77_5_77_6_79_3_79_4_1_area_mm2",
+            "wireless_antenna_ant_xrz_drx_79_4_77_5_core2_uwb_area_mm2",
+            "wireless_antenna_ant0_mhb_prx_mr7879_2_xrz_fxz_trx_r1_area_mm2",
+            "wireless_antenna_ant0_mhb_1_afl_3_1_m77_4_area_mm2",
+            "wireless_antenna_ant0_mhb_1_m78_5_m79_3_l5_m7879_2_area_mm2",
+            "wireless_antenna_ant10_ant_11_area_mm2",
+            "wireless_antenna_ant11_pgy_trx_mhb_up_nc_parasitic_area_mm2",
+            "wireless_antenna_ant2_mhb_3_afl_3_3_m77_3_n79_3_pgy_1_area_mm2",
+            "wireless_antenna_ant2_mhb_3_m7879_1_area_mm2",
+            "wireless_antenna_ant2_switch_area_mm2",
+            "wireless_antenna_ant3_mhb_mimod_mr7879_3_area_mm2",
+            "wireless_antenna_ant3_mhb_prx_mr7879_2_xrz_fxz_trx_sw_area_mm2",
+            "wireless_antenna_ant3_mhb_4_m77_2_m79_2_lb_3_area_mm2",
+            "wireless_antenna_ant3_mhb_4_m7879_4_abf1_area_mm2",
+            "wireless_antenna_ant4_lb_prx_area_mm2",
+            "wireless_antenna_ant6_gpsl1_wifi2_4g_c0_gg_trx_area_mm2",
+            "wireless_antenna_ant7_wifi_5g_c0_area_mm2",
+            "wireless_antenna_ant8_wifi2_4g_c1_gps_l5_area_mm2",
+            "wireless_antenna_ant9_wifi5g_c1_area_mm2",
+            "sensor_temperature_key_titlecase_area_mm2",
+            "sensor_temperature_key_uppercase_area_mm2",
+            "display_display_interface_area_mm2",
+            "display_display_pwr_area_mm2",
+            "display_display_pwr_solor_area_mm2",
+            "display_lcd_area_mm2",
+            "display_lcd_bypass_area_mm2",
+            "display_lcd_power_area_mm2",
+            "display_mlcd_fp_area_mm2",
+            "display_mlcd_pwr_area_mm2",
+            "display_mslcd_fp_area_mm2",
+            "audio_audio_bypass_area_mm2",
+            "audio_headphone_mic_vib_area_mm2",
+            "audio_mic_headphone_vib_area_mm2",
+            "audio_prosmart_pa_area_mm2",
+            "audio_smart_pa_3_area_mm2",
+            "audio_smartpa_area_mm2",
+            "audio_smartpa_tdd_area_mm2",
+            "audio_smartpa_tdd_noise_area_mm2",
+            "audio_motor_driver_audio_halfwidth_area_mm2",
+            "audio_motor_driver_audio_fullwidth_area_mm2",
+            "device_design_attributes",
+            "raw_value_annotations",
+            "additional_metrics",
+            "module_chip_models",
+            "unmapped_integration_values"
+        ],
+        "filter_fields": [
+            "manufacturer",
+            "platform",
+            "device_type",
+            "device_model"
+        ],
+        "prompt_terms": [
+            "整机集成度",
+            "逗号分隔",
+            "无线",
+            "RF",
+            "NC",
+            "NULL"
+        ],
+        "forbidden_terms": [
+            "JF_CAPACITOR",
+            "jf_capacitor_",
+            "JF电容对比",
+            "电容对比",
+            "PHONE_MODULE_JF_CHATFLOW"
+        ]
+    },
 }
 
 ENV_TEMPLATE_RE = re.compile(r"\{\{#env\.([A-Za-z_][A-Za-z0-9_]*)#\}\}")
@@ -111,6 +429,7 @@ def validate_doc(key: str, doc: dict) -> dict:
         "ENABLE_FULL_LLM", "SN_FULL_LLM_CHAT_URLS", "SN_MYSQL_QUERY_URLS",
         "LOCAL_CONTEXT_TOKENS", "LOCAL_MAX_PREDICT_TOKENS", "PROMPT_TOKEN_SAFETY_MARGIN"
     ]
+    required_envs.extend(cfg.get("field_chunk_envs") or [])
     for name in required_envs:
         if name not in env_defs or not str(env_defs[name].get("value") or "").strip():
             fail(key + ": required environment variable missing or empty: " + name)
@@ -119,11 +438,67 @@ def validate_doc(key: str, doc: dict) -> dict:
         registry = json.loads(env_defs[cfg["registry_env"]]["value"])
     except Exception as exc:
         fail(key + ": Registry JSON invalid: " + str(exc))
+    if key == "INTEGRATION_COMPETITION":
+        base_fields = registry.get("fields")
+        if not isinstance(base_fields, dict) or base_fields:
+            fail(key + ": Registry base fields must be an empty object")
+        for chunk_name in cfg["field_chunk_envs"]:
+            try:
+                chunk = json.loads(env_defs[chunk_name]["value"])
+            except Exception as exc:
+                fail(key + ": Registry field chunk invalid: " + chunk_name + " " + str(exc))
+            if not isinstance(chunk, list):
+                fail(key + ": Registry field chunk must be an array: " + chunk_name)
+            for item in chunk:
+                if not isinstance(item, list) or len(item) != 4:
+                    fail(key + ": Registry field row invalid: " + chunk_name)
+                name, label, description, aliases = item
+                if not isinstance(name, str) or not name or name in registry["fields"]:
+                    fail(key + ": duplicate or invalid Registry field: " + repr(name))
+                if not isinstance(label, str) or not label.strip() or not isinstance(description, str) or not description.strip():
+                    fail(key + ": Registry field metadata missing: " + name)
+                if not isinstance(aliases, list):
+                    fail(key + ": Registry field aliases invalid: " + name)
+                if any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+                    fail(key + ": Registry field alias invalid: " + name)
+                registry["fields"][name] = {
+                    "label": label,
+                    "description": description,
+                    "aliases": aliases or [label],
+                }
+        for composite_name, composite in (registry.get("composite_fields") or {}).items():
+            if not isinstance(composite, dict):
+                fail(key + ": invalid composite definition: " + composite_name)
+            expand_to = composite.get("expand_to")
+            if not isinstance(expand_to, list) or not expand_to:
+                fail(key + ": composite expand_to missing: " + composite_name)
+            if len(expand_to) != len(set(expand_to)):
+                fail(key + ": duplicate composite expand_to field: " + composite_name)
+            if any(not isinstance(name, str) or name not in registry["fields"] for name in expand_to):
+                fail(key + ": composite references unknown fields: " + composite_name)
+
     if registry.get("table") != cfg["table"]:
         fail(key + ": Registry table mismatch")
     fields = registry.get("fields") or {}
     if set(fields) != set(cfg["fields"]):
         fail(key + ": Registry field set mismatch: " + repr(sorted(set(cfg["fields"]) ^ set(fields))))
+    if key == "INTEGRATION_COMPETITION":
+        if sum(1 for name in fields if name.endswith("_area_mm2")) != cfg["area_field_count"]:
+            fail(key + ": Registry area field count mismatch")
+        if not set(cfg["json_fields"]) <= set(fields):
+            fail(key + ": Registry JSON field inventory mismatch")
+        for name, field in fields.items():
+            if not str(field.get("label") or "").strip() or not str(field.get("description") or "").strip():
+                fail(key + ": Registry field metadata missing: " + name)
+            if not isinstance(field.get("aliases"), list) or not field.get("aliases"):
+                fail(key + ": Registry field aliases missing: " + name)
+            if name.endswith("_area_mm2") and "面积" not in str(field.get("label") or ""):
+                fail(key + ": area field label missing area semantics: " + name)
+        # Production Dify Code node output must stay below its configured
+        # 80,000-character string cap. Reserve headroom for runtime aliases.
+        registry_chars = len(json.dumps(registry, ensure_ascii=False, separators=(",", ":")))
+        if registry_chars > 75000:
+            fail(key + ": Dify Registry Code output budget exceeded: " + str(registry_chars))
     roles = registry.get("query_roles") or {}
     if roles.get("sql_select_fields") != "all_fields":
         fail(key + ": sql_select_fields must be all_fields")
@@ -138,6 +513,11 @@ def validate_doc(key: str, doc: dict) -> dict:
     for field_name, values in (registry.get("value_aliases") or {}).items():
         if field_name not in fields or field_name not in cfg["filter_fields"] or not isinstance(values, dict):
             fail(key + ": invalid value_aliases field: " + field_name)
+        for canonical, definition in values.items():
+            if not isinstance(canonical, str) or not isinstance(definition, dict) or not isinstance(definition.get("aliases"), list):
+                fail(key + ": invalid value_alias definition: " + field_name + "." + str(canonical))
+            if any(not isinstance(alias, str) or not alias.strip() for alias in definition["aliases"]):
+                fail(key + ": invalid value_alias alias: " + field_name + "." + str(canonical))
 
     conversations = workflow.get("conversation_variables") or []
     conv_names = [item.get("name") for item in conversations]
@@ -354,6 +734,48 @@ def validate_doc(key: str, doc: dict) -> dict:
     actual_edges = {(edge["source"], edge.get("sourceHandle"), edge["target"]) for edge in edges}
     if not required_edges <= actual_edges:
         fail(key + ": query-memory graph wiring mismatch")
+    if key == "INTEGRATION_COMPETITION":
+        if set((registry.get("value_aliases") or {}).keys()) != set(cfg["filter_fields"]):
+            fail(key + ": dynamic value_aliases must cover all four identity fields")
+        if any((registry.get("value_aliases") or {}).get(field) for field in cfg["filter_fields"]):
+            fail(key + ": static canonical identity values are forbidden")
+        if set((registry.get("match_policies") or {}).keys()) != {"device_model"}:
+            fail(key + ": only device_model fuzzy matching is allowed")
+        system_prompt = env_defs[cfg["system_env"]]["value"]
+        user_prompt = env_defs[cfg["user_env"]]["value"]
+        for term in ("42.77,16.59", "不强制等于RF+NC", "NULL", "GG", "SUM"):
+            if term not in system_prompt + user_prompt:
+                fail(key + ": area semantic prompt rule missing: " + term)
+        if "不是无线下第三个可加总业务域" not in fields["wireless_antenna_total_area_mm2"]["description"]:
+            fail(key + ": antenna cross-domain rule missing")
+        catalog_nodes = (
+            "integration_competition_identity_catalog_prepare",
+            "http_identity_catalog",
+            "integration_competition_identity_catalog_merge",
+        )
+        if any(node_id not in by_id for node_id in catalog_nodes):
+            fail(key + ": dynamic identity catalog nodes missing")
+        prepare_code = by_id[catalog_nodes[0]]["data"].get("code") or ""
+        merge_code = by_id[catalog_nodes[2]]["data"].get("code") or ""
+        if "SELECT DISTINCT" not in prepare_code or cfg["table"] not in prepare_code:
+            fail(key + ": identity catalog must query live DISTINCT values")
+        if any(word in prepare_code.upper() for word in ("UPDATE ", "DELETE ", "INSERT ", "DROP ", "TRUNCATE ")):
+            fail(key + ": identity catalog query must be read-only")
+        if "normalization_collision_count" not in merge_code or "approved_aliases" not in merge_code:
+            fail(key + ": dynamic alias normalization/collision guard missing")
+        if by_id[catalog_nodes[1]]["data"].get("url") != by_id["http_mysql_query"]["data"].get("url"):
+            fail(key + ": identity catalog must reuse the configured MySQL endpoint")
+        catalog_edges = {
+            ("integration_competition_registry_load", "source", "integration_competition_identity_catalog_prepare"),
+            ("integration_competition_identity_catalog_prepare", "source", "http_identity_catalog"),
+            ("http_identity_catalog", "source", "integration_competition_identity_catalog_merge"),
+            ("integration_competition_identity_catalog_merge", "source", "integration_competition_registry_parse"),
+        }
+        if not catalog_edges <= actual_edges:
+            fail(key + ": dynamic identity catalog graph wiring mismatch")
+        load_code = by_id["integration_competition_registry_load"]["data"].get("code") or ""
+        if "REGISTRY_FIELD_INVENTORY_MISMATCH" not in load_code or "282" not in load_code or "267" not in load_code:
+            fail(key + ": runtime Registry schema gate missing")
 
     return {
         "nodes": len(nodes),

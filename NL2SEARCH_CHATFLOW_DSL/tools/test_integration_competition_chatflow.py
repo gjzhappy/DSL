@@ -1,0 +1,414 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Regression tests for INTEGRATION_COMPETITION_CHATFLOW."""
+
+from __future__ import annotations
+
+import json
+import sys
+import unittest
+from pathlib import Path
+
+TOOLS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(TOOLS_DIR))
+import merge_business_chatflow as merger  # noqa: E402
+
+KEY = "INTEGRATION_COMPETITION"
+
+
+def run_code_node(doc: dict, node_id: str, **kwargs) -> dict:
+    node = next(item for item in doc["workflow"]["graph"]["nodes"] if item["id"] == node_id)
+    namespace = {}
+    exec(compile(node["data"]["code"], "<%s>" % node_id, "exec"), namespace)
+    return namespace["main"](**kwargs)
+
+
+class IntegrationCompetitionChatflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.doc, cls.shard_text = merger.load_doc(KEY)
+        cls.summary = merger.validate_doc(KEY, cls.doc)
+        cls.envs = {item["name"]: item for item in cls.doc["workflow"]["environment_variables"]}
+
+    def load_runtime_registry(self):
+        result = run_code_node(
+            self.doc,
+            "integration_competition_registry_load",
+            integration_competition_query_registry_json=self.envs["INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON"]["value"],
+            integration_competition_query_registry_fields_00_json=self.envs["INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_00_JSON"]["value"],
+            integration_competition_query_registry_fields_01_json=self.envs["INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_01_JSON"]["value"],
+            integration_competition_query_registry_fields_02_json=self.envs["INTEGRATION_COMPETITION_QUERY_REGISTRY_FIELDS_02_JSON"]["value"],
+        )
+        self.assertEqual(result["integration_competition_registry_load_status"], "ok")
+        self.assertEqual(result["integration_competition_registry_load_error"], "")
+        return json.loads(result["integration_competition_registry_raw_json"])
+
+    def catalog_fixture(self, rows=None):
+        if rows is None:
+            rows = [
+                {"manufacturer": "Apple", "platform": "A18", "device_type": "phone", "device_model": "iPhone16 Pro Max"},
+                {"manufacturer": "Apple", "platform": "A19", "device_type": "phone", "device_model": "iPhone17 Pro Max"},
+                {"manufacturer": "Xiaomi", "platform": "Snapdragon 8 Elite", "device_type": "phone", "device_model": "mi15pro"},
+                {"manufacturer": "Xiaomi", "platform": "Snapdragon 8 Gen5", "device_type": "phone", "device_model": "mi17Promax"},
+            ]
+        return {"code": 200, "data": {"rows": rows, "rowCount": len(rows)}}
+
+    def build_runtime_registry(self, rows=None):
+        base = self.load_runtime_registry()
+        merged = run_code_node(
+            self.doc,
+            "integration_competition_identity_catalog_merge",
+            registry_raw_json=json.dumps(base, ensure_ascii=False),
+            body=json.dumps(self.catalog_fixture(rows), ensure_ascii=False),
+            status_code=200,
+            request_status="ok",
+        )
+        self.assertEqual(merged["integration_competition_registry_load_status"], "ok")
+        self.assertEqual(merged["integration_competition_registry_load_error"], "")
+        enriched = json.loads(merged["integration_competition_registry_enriched_json"])
+        parsed = run_code_node(
+            self.doc,
+            "integration_competition_registry_parse",
+            integration_competition_registry_raw_json=json.dumps(enriched, ensure_ascii=False),
+            integration_competition_registry_load_status="ok",
+            context_json=json.dumps({"question": ""}, ensure_ascii=False),
+        )
+        self.assertEqual(parsed["integration_competition_registry_parse_status"], "ok")
+        return enriched, parsed
+
+    def plan(self, question: str, parsed: dict, memory: str = "{}") -> dict:
+        # Production Registry parser receives the current question from ctx.
+        # Rebuild a question-specific alias view for each regression query.
+        parsed = run_code_node(
+            self.doc, "integration_competition_registry_parse",
+            integration_competition_registry_raw_json=parsed["integration_competition_registry_json"],
+            integration_competition_registry_load_status="ok",
+            context_json=json.dumps({"question": question}, ensure_ascii=False),
+        )
+        self.assertEqual(parsed["integration_competition_registry_parse_status"], "ok")
+        result = run_code_node(
+            self.doc,
+            "integration_competition_sql_plan",
+            context_json=json.dumps({"question": question, "user": "regression-test"}, ensure_ascii=False),
+            integration_competition_registry_json=parsed["integration_competition_registry_json"],
+            integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
+            integration_competition_registry_parse_status=parsed["integration_competition_registry_parse_status"],
+            integration_competition_registry_error=parsed["integration_competition_registry_error"],
+            integration_competition_query_memory_json=memory,
+        )
+        self.assertEqual(result["integration_competition_sql_compile_status"], "ok")
+        return result
+
+    def test_01_schema_inventory_and_top_level_scope(self):
+        registry = self.load_runtime_registry()
+        self.assertEqual(len(registry["fields"]), 282)
+        self.assertEqual(sum(1 for name in registry["fields"] if name.endswith("_area_mm2")), 267)
+        self.assertEqual(set(registry["value_aliases"]), {"manufacturer", "platform", "device_type", "device_model"})
+        self.assertTrue(all(not values for values in registry["value_aliases"].values()))
+        self.assertEqual(
+            registry["composite_fields"]["integration_overview"]["expand_to"],
+            ["integration_total_area_mm2", "small_system_total_area_mm2", "peripheral_total_area_mm2", "wireless_total_area_mm2"],
+        )
+        self.assertEqual(
+            registry["composite_fields"]["top_level_domains"]["expand_to"],
+            ["small_system_total_area_mm2", "peripheral_total_area_mm2", "wireless_total_area_mm2"],
+        )
+        self.assertEqual(len(registry["composite_fields"]), 28)
+        self.assertEqual(len(registry["composite_fields"]["small_system"]["expand_to"]), 17)
+        self.assertEqual(len(registry["composite_fields"]["wireless"]["expand_to"]), 150)
+        self.assertEqual(registry["composite_fields"]["peripheral"]["expand_to"], ["peripheral_total_area_mm2", "peripheral_composite_area_mm2"])
+        self.assertEqual(registry["composite_fields"]["release_information"]["expand_to"], ["release_date", "release_date_text"])
+        self.assertIn("device_pic_url", registry["composite_fields"]["identity"]["expand_to"])
+        self.assertIn("整机总面积", registry["fields"]["integration_total_area_mm2"]["aliases"])
+        base_registry = json.loads(self.envs["INTEGRATION_COMPETITION_QUERY_REGISTRY_JSON"]["value"])
+        self.assertTrue(all(isinstance(item.get("expand_to"), list) and item["expand_to"] for item in base_registry["composite_fields"].values()))
+        self.assertFalse(any(key.startswith("_expand_") for item in base_registry["composite_fields"].values() for key in item))
+
+    def test_02_all_area_fields_have_ddl_semantics(self):
+        registry = self.load_runtime_registry()
+        area = [field for name, field in registry["fields"].items() if name.endswith("_area_mm2")]
+        self.assertEqual(len(area), 267)
+        self.assertTrue(all(field["description"].strip() and "面积" in field["label"] for field in area))
+        self.assertIn("不与下级明细", registry["fields"]["small_system_soc_total_area_mm2"]["description"])
+        self.assertIn("分列", registry["fields"]["small_system_pmu1_area_mm2"]["description"])
+        self.assertIn("不是无线下第三个可加总业务域", registry["fields"]["wireless_antenna_total_area_mm2"]["description"])
+        self.assertIn("不得", registry["fields"]["peripheral_total_area_mm2"]["description"])
+
+    def test_03_identity_catalog_query_is_read_only(self):
+        result = run_code_node(
+            self.doc,
+            "integration_competition_identity_catalog_prepare",
+            context_json=json.dumps({"user": "regression-test"}),
+        )
+        request = json.loads(result["integration_competition_identity_catalog_request_body_json"])
+        self.assertEqual(result["catalog_body_json"], result["integration_competition_identity_catalog_request_body_json"])
+        sql = request["sql"]
+        self.assertIn("SELECT DISTINCT", sql)
+        self.assertIn("sn_cis_integration_competition_wide", sql)
+        for field in ("manufacturer", "platform", "device_type", "device_model"):
+            self.assertIn(field, sql)
+        for word in ("UPDATE ", "DELETE ", "INSERT ", "DROP ", "TRUNCATE "):
+            self.assertNotIn(word, sql.upper())
+        # Production regression: Dify JSON body mode sends an array to the
+        # Spring Boot DTO endpoint. The already encoded object must go raw.
+        for node_id, variable_ref in (
+            ("http_identity_catalog", "{{#integration_competition_identity_catalog_prepare.catalog_body_json#}}"),
+            ("http_mysql_query", "{{#mysql_request.mysql_request_body_json#}}"),
+        ):
+            node = next(n for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == node_id)
+            self.assertEqual(node["data"]["method"], "POST")
+            self.assertEqual(node["data"]["body"], {"type": "raw-text", "data": variable_ref})
+            self.assertIn("Content-Type: application/json", node["data"]["headers"])
+            # Dify 1.13.2 VariablePool regex: node <= 50; each field <= 30.
+            import re
+            m = re.fullmatch(r"\{\{#([a-zA-Z0-9_]{1,50})(?:\.([a-zA-Z_][a-zA-Z0-9_]{0,29}))#\}\}", variable_ref)
+            self.assertIsNotNone(m, "Dify HTTP template selector is not substitutable")
+
+    def test_04_runtime_aliases_are_database_derived(self):
+        enriched, _ = self.build_runtime_registry()
+        self.assertEqual(set(enriched["value_aliases"]["manufacturer"]), {"Apple", "Xiaomi"})
+        self.assertEqual(set(enriched["value_aliases"]["device_model"]), {"iPhone16 Pro Max", "iPhone17 Pro Max", "mi15pro", "mi17Promax"})
+        self.assertEqual(enriched["value_aliases"]["manufacturer"]["Apple"]["aliases"], ["Apple", "苹果"])
+        self.assertIn("苹果A18", enriched["value_aliases"]["platform"]["A18"]["aliases"])
+        self.assertEqual(enriched["value_aliases"]["device_type"]["phone"]["aliases"], ["phone", "手机", "智能手机"])
+        self.assertEqual(enriched["value_aliases"]["platform"]["Snapdragon 8 Elite"]["aliases"], ["Snapdragon 8 Elite"])
+        self.assertNotIn("Apple A19", enriched["value_aliases"]["platform"]["Snapdragon 8 Gen5"]["aliases"])
+        self.assertNotIn("Apple", enriched["value_aliases"]["manufacturer"].get("Unknown", {}))
+
+    def test_05_normalization_collision_is_not_guessed(self):
+        payload = {"code": 200, "data": {"rows": [
+            {"manufacturer": "Maker", "platform": "P1", "device_type": "phone", "device_model": "Model-A"},
+            {"manufacturer": "Maker", "platform": "P1", "device_type": "phone", "device_model": "model a"},
+        ]}}
+        result = run_code_node(
+            self.doc,
+            "integration_competition_identity_catalog_merge",
+            registry_raw_json=json.dumps(self.load_runtime_registry(), ensure_ascii=False),
+            body=json.dumps(payload, ensure_ascii=False),
+            status_code=200,
+            request_status="ok",
+        )
+        enriched = json.loads(result["integration_competition_registry_enriched_json"])
+        self.assertEqual(enriched["value_aliases"]["device_model"], {})
+        self.assertGreater(int(result["integration_competition_identity_catalog_warning_count"]), 0)
+        self.assertNotIn("Apple", enriched["value_aliases"]["manufacturer"])
+        self.assertNotIn("A19", enriched["value_aliases"]["platform"])
+
+    def test_06_catalog_failure_fails_closed(self):
+        result = run_code_node(
+            self.doc,
+            "integration_competition_identity_catalog_merge",
+            registry_raw_json=json.dumps(self.load_runtime_registry(), ensure_ascii=False),
+            body="{}",
+            status_code=503,
+            request_status="ok",
+        )
+        self.assertEqual(result["integration_competition_registry_load_status"], "error")
+        parsed = run_code_node(
+            self.doc,
+            "integration_competition_registry_parse",
+            integration_competition_registry_raw_json=result["integration_competition_registry_enriched_json"],
+            integration_competition_registry_load_status=result["integration_competition_registry_load_status"],
+        )
+        self.assertNotEqual(parsed["integration_competition_registry_parse_status"], "ok")
+
+    def test_07_total_alias_and_no_sum_planning(self):
+        _, parsed = self.build_runtime_registry()
+        result = self.plan("查询手机 iPhone17 Pro Max 的整机总面积", parsed)
+        plan = json.loads(result["integration_competition_sql_plan_json"])
+        self.assertEqual(plan["where_filters"]["device_model"], ["iPhone17 Pro Max"])
+        self.assertEqual(plan["where_filters"]["device_type"], ["phone"])
+        self.assertIn("integration_total_area_mm2", plan["select_fields"])
+        self.assertTrue(plan["sql"].startswith("SELECT "))
+        self.assertNotIn("SUM(", plan["sql"].upper())
+
+    def test_08_composite_expansion_uses_real_fields(self):
+        _, parsed = self.build_runtime_registry()
+        result = self.plan("查询 iPhone17 Pro Max 的小系统面积构成", parsed)
+        plan = json.loads(result["integration_competition_sql_plan_json"])
+        self.assertIn("small_system", plan["selected_composites"])
+        self.assertIn("small_system_total_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_soc_total_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_pmk_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_pmu1_area_mm2", plan["select_fields"])
+        self.assertIn("small_system_pmu2_area_mm2", plan["select_fields"])
+
+    def test_09_followup_inherits_device_scope(self):
+        _, parsed = self.build_runtime_registry()
+        first = self.plan("查询 iPhone17 Pro Max 的整机总面积", parsed)
+        second = self.plan("这些机型的无线总面积", parsed, first["integration_competition_current_execution_context_json"])
+        plan = json.loads(second["integration_competition_sql_plan_json"])
+        self.assertEqual(plan["where_filters"]["device_model"], ["iPhone17 Pro Max"])
+        self.assertIn("wireless_total_area_mm2", plan["select_fields"])
+
+    def test_10_area_rules_are_present_in_prompts(self):
+        prompt = self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"] + "\n" + self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"]
+        for term in ("42.77,16.59", "不强制等于RF+NC", "不是无线下第三个可加总业务域", "天线不是第三个加数", "NULL", "GG", "SUM"):
+            self.assertIn(term, prompt)
+
+
+    def test_11_other_words_do_not_inherit_previous_device_scope(self):
+        _, parsed = self.build_runtime_registry()
+        first = self.plan("查询 iPhone17 Pro Max 的整机总面积", parsed)
+        memory = first["integration_competition_current_execution_context_json"]
+        for question in ("查询其他模块的无线总面积", "查询其它模块的无线总面积", "查询其余模块的无线总面积"):
+            result = self.plan(question, parsed, memory)
+            plan = json.loads(result["integration_competition_sql_plan_json"])
+            self.assertEqual(plan["query_intent_meta"]["query_scope_behavior"], "reset")
+            self.assertNotIn("device_model", plan["where_filters"])
+
+    def test_12_llm_input_reuses_jf_base_code(self):
+        # Only the business namespace changes; LLM request/prompt machinery remains JF baseline.
+        jf_doc, _ = merger.load_doc("JF_CAPACITOR")
+        jf_code = next(n["data"]["code"] for n in jf_doc["workflow"]["graph"]["nodes"] if n["id"] == "llm_input")
+        ic_code = next(n["data"]["code"] for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == "llm_input")
+        adapted = jf_code.replace("jf_capacitor", "integration_competition").replace("JF_CAPACITOR", "INTEGRATION_COMPETITION").replace("JF电容对比", "整机集成度")
+        self.assertEqual(ic_code, adapted)
+
+    def test_13_multivalue_area_is_preserved_in_llm_input(self):
+        _, parsed = self.build_runtime_registry()
+        planned = self.plan("查询 iPhone17 Pro Max 的小系统面积构成", parsed)
+        sql_plan = json.loads(planned["integration_competition_sql_plan_json"])
+        self.assertNotIn("SUM(", sql_plan["sql"].upper())
+        result = run_code_node(
+            self.doc, "llm_input",
+            context_json=json.dumps({"question": "查询 iPhone17 Pro Max 的小系统面积构成", "user": "regression-test"}, ensure_ascii=False),
+            mysql_query_result_json=json.dumps({
+                "rows": [{"device_model": "iPhone17 Pro Max", "small_system_total_area_mm2": "42.77,16.59"}],
+                "sql_plan": sql_plan,
+            }, ensure_ascii=False),
+            integration_competition_selected_field_meta_json=planned["integration_competition_selected_field_meta_json"],
+            integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
+            analysis_system_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"],
+            analysis_user_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"],
+            integration_competition_current_execution_context_json=planned["integration_competition_current_execution_context_json"],
+            integration_competition_previous_query_result_json="{}",
+            local_context_tokens="131072",
+            local_max_predict_tokens="4096",
+            prompt_token_safety_margin="1024",
+        )
+        self.assertEqual(json.loads(result["llm_handler_input_json"])["status"], "ok")
+        self.assertIn("42.77,16.59", result["llm_user_prompt"])
+
+    def test_14_sql_planner_reuses_jf_core(self):
+        # Core query-scope and fuzzy algorithms must remain identical to the JF baseline.
+        jf_doc, _ = merger.load_doc("JF_CAPACITOR")
+        jf_code = next(n["data"]["code"] for n in jf_doc["workflow"]["graph"]["nodes"] if n["id"] == "jf_capacitor_sql_plan")
+        ic_code = next(n["data"]["code"] for n in self.doc["workflow"]["graph"]["nodes"] if n["id"] == "integration_competition_sql_plan")
+        adapted = jf_code.replace("jf_capacitor", "integration_competition").replace("JF_CAPACITOR", "INTEGRATION_COMPETITION").replace("JF电容对比", "整机集成度")
+        for start, end in (
+            ("    def normalize_semantic_filters(", "    def fail("),
+            ("    def find_alias_hit_items(", "    def display_hit_text("),
+        ):
+            self.assertIn(start, adapted)
+            self.assertIn(end, adapted)
+            self.assertIn(start, ic_code)
+            self.assertIn(end, ic_code)
+            self.assertEqual(
+                ic_code[ic_code.index(start):ic_code.index(end, ic_code.index(start))],
+                adapted[adapted.index(start):adapted.index(end, adapted.index(start))],
+            )
+        self.assertIn("小系统", self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"])
+
+
+
+    def test_15_runtime_registry_outputs_fit_dify_code_budget(self):
+        # Reproduces production failure of the 80k Code node string limit.
+        # Enforce additional headroom for catalog-derived identity aliases.
+        registry = self.load_runtime_registry()
+        serialized = json.dumps(registry, ensure_ascii=False, separators=(",", ":"))
+        self.assertLessEqual(len(serialized), 75000)
+        enriched, parsed = self.build_runtime_registry()
+        self.assertLessEqual(
+            len(json.dumps(enriched, ensure_ascii=False, separators=(",", ":"))), 78000
+        )
+        self.assertLessEqual(
+            len(parsed["integration_competition_registry_json"]), 78000
+        )
+        self.assertLessEqual(
+            len(parsed["integration_competition_alias_index_json"]), 78000
+        )
+        self.assertEqual(len(enriched["fields"]), 282)
+        self.assertEqual(len(enriched["composite_fields"]), 28)
+        for question, expected_kind, expected_key in (
+            ("查询iPhone17 Pro Max的小系统面积构成", "composite_alias_to_name", "小系统"),
+            ("查询iPhone17 Pro Max的无线总面积", "field_alias_to_field", "无线总面积"),
+        ):
+            scoped = run_code_node(
+                self.doc, "integration_competition_registry_parse",
+                integration_competition_registry_raw_json=parsed["integration_competition_registry_json"],
+                integration_competition_registry_load_status="ok",
+                context_json=json.dumps({"question": question}, ensure_ascii=False),
+            )
+            self.assertEqual(scoped["integration_competition_registry_parse_status"], "ok")
+            packed = scoped["integration_competition_alias_index_json"]
+            self.assertLessEqual(len(packed), 78000)
+            alias_map = json.loads(packed)[expected_kind]
+            self.assertIn(expected_key, alias_map)
+            self.assertLess(len(alias_map), 40)
+        # Identity values must remain available for fuzzy matching, even
+        # when the current question does not literally contain their alias.
+        aliases = json.loads(parsed["integration_competition_alias_index_json"])
+        self.assertIn("iphone17promax", aliases["value_alias_to_filter"]["device_model"])
+
+
+    def test_16_explicit_soc_alias_is_selected_and_forwarded_to_llm(self):
+        _, parsed = self.build_runtime_registry()
+        question = "查询IPhone16 Pro Max的小系统总面积，以及SOC、PMK、PMU1、PMU2的面积；只根据实际数据库记录回答。"
+        planned = self.plan(question, parsed)
+        plan = json.loads(planned["integration_competition_sql_plan_json"])
+        expected = {
+            "small_system_total_area_mm2",
+            "small_system_soc_total_area_mm2",
+            "small_system_pmk_area_mm2",
+            "small_system_pmu1_area_mm2",
+            "small_system_pmu2_area_mm2",
+        }
+        selected_small_system_fields = {
+            field for field in plan["select_fields"] if field.startswith("small_system_")
+        }
+        self.assertEqual(selected_small_system_fields, expected)
+        self.assertEqual(plan["selected_composites"], [])
+        self.assertIn("small_system_soc_total_area_mm2", plan["sql"])
+        self.assertNotIn("small_system_soc_gnd_area_mm2", plan["select_fields"])
+        self.assertNotIn("small_system_ufs_total_area_mm2", plan["select_fields"])
+
+        synthetic_result = {
+            "rows": [{
+                "manufacturer": "Maker",
+                "platform": "Platform-X",
+                "device_type": "phone",
+                "device_model": "IPhone16 Pro Max",
+                "small_system_total_area_mm2": "123.45",
+                "small_system_soc_total_area_mm2": "67.89",
+                "small_system_pmk_area_mm2": "12.34",
+                "small_system_pmu1_area_mm2": "45.67",
+                "small_system_pmu2_area_mm2": None,
+            }],
+            "sql_plan": plan,
+        }
+        llm_input = run_code_node(
+            self.doc, "llm_input",
+            context_json=json.dumps({"question": question, "user": "regression-test"}, ensure_ascii=False),
+            mysql_query_result_json=json.dumps(synthetic_result, ensure_ascii=False),
+            integration_competition_selected_field_meta_json=planned["integration_competition_selected_field_meta_json"],
+            integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
+            analysis_system_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"],
+            analysis_user_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"],
+            integration_competition_current_execution_context_json=planned["integration_competition_current_execution_context_json"],
+            integration_competition_previous_query_result_json="{}",
+            local_context_tokens="131072",
+            local_max_predict_tokens="4096",
+            prompt_token_safety_margin="1024",
+        )
+        self.assertEqual(json.loads(llm_input["llm_handler_input_json"])["status"], "ok")
+        self.assertIn("small_system_soc_total_area_mm2", llm_input["llm_user_prompt"])
+        self.assertIn("67.89", llm_input["llm_user_prompt"])
+        self.assertIn("12.34", llm_input["llm_user_prompt"])
+        self.assertIn("45.67", llm_input["llm_user_prompt"])
+        self.assertIn("NULL", llm_input["llm_user_prompt"])
+
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
