@@ -352,6 +352,63 @@ class IntegrationCompetitionChatflowTests(unittest.TestCase):
         self.assertIn("iphone17promax", aliases["value_alias_to_filter"]["device_model"])
 
 
+    def test_16_explicit_soc_alias_is_selected_and_forwarded_to_llm(self):
+        _, parsed = self.build_runtime_registry()
+        question = "查询IPhone16 Pro Max的小系统总面积，以及SOC、PMK、PMU1、PMU2的面积；只根据实际数据库记录回答。"
+        planned = self.plan(question, parsed)
+        plan = json.loads(planned["integration_competition_sql_plan_json"])
+        expected = {
+            "small_system_total_area_mm2",
+            "small_system_soc_total_area_mm2",
+            "small_system_pmk_area_mm2",
+            "small_system_pmu1_area_mm2",
+            "small_system_pmu2_area_mm2",
+        }
+        selected_small_system_fields = {
+            field for field in plan["select_fields"] if field.startswith("small_system_")
+        }
+        self.assertEqual(selected_small_system_fields, expected)
+        self.assertEqual(plan["selected_composites"], [])
+        self.assertIn("small_system_soc_total_area_mm2", plan["sql"])
+        self.assertNotIn("small_system_soc_gnd_area_mm2", plan["select_fields"])
+        self.assertNotIn("small_system_ufs_total_area_mm2", plan["select_fields"])
+
+        synthetic_result = {
+            "rows": [{
+                "manufacturer": "Maker",
+                "platform": "Platform-X",
+                "device_type": "phone",
+                "device_model": "IPhone16 Pro Max",
+                "small_system_total_area_mm2": "123.45",
+                "small_system_soc_total_area_mm2": "67.89",
+                "small_system_pmk_area_mm2": "12.34",
+                "small_system_pmu1_area_mm2": "45.67",
+                "small_system_pmu2_area_mm2": None,
+            }],
+            "sql_plan": plan,
+        }
+        llm_input = run_code_node(
+            self.doc, "llm_input",
+            context_json=json.dumps({"question": question, "user": "regression-test"}, ensure_ascii=False),
+            mysql_query_result_json=json.dumps(synthetic_result, ensure_ascii=False),
+            integration_competition_selected_field_meta_json=planned["integration_competition_selected_field_meta_json"],
+            integration_competition_alias_index_json=parsed["integration_competition_alias_index_json"],
+            analysis_system_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_SYSTEM_PROMPT"]["value"],
+            analysis_user_prompt=self.envs["INTEGRATION_COMPETITION_ANALYSIS_USER_PROMPT"]["value"],
+            integration_competition_current_execution_context_json=planned["integration_competition_current_execution_context_json"],
+            integration_competition_previous_query_result_json="{}",
+            local_context_tokens="131072",
+            local_max_predict_tokens="4096",
+            prompt_token_safety_margin="1024",
+        )
+        self.assertEqual(json.loads(llm_input["llm_handler_input_json"])["status"], "ok")
+        self.assertIn("small_system_soc_total_area_mm2", llm_input["llm_user_prompt"])
+        self.assertIn("67.89", llm_input["llm_user_prompt"])
+        self.assertIn("12.34", llm_input["llm_user_prompt"])
+        self.assertIn("45.67", llm_input["llm_user_prompt"])
+        self.assertIn("NULL", llm_input["llm_user_prompt"])
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
